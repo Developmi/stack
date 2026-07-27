@@ -1,0 +1,31 @@
+# ---
+# COMPLIANCE WARNING:
+# This role manages Restic backup infrastructure including binary installation,
+# encrypted credentials (R2 API keys + repo passwords), backup scripts, systemd
+# timers, and log rotation. Credentials are deployed via Ansible Vault with
+# no_log: true. Do NOT expose or override vault variables in plaintext group_vars.
+# ---
+---
+- name: "Include Restic binary installation"
+  ansible.builtin.include_tasks: install.yml
+  tags: [l6-runtime, stack_backup, restic, restic_install]
+
+- name: "Include credential configuration"
+  ansible.builtin.include_tasks: credentials.yml
+  tags: [l6-runtime, stack_backup, restic, restic_creds]
+
+- name: "Include script deployment"
+  ansible.builtin.include_tasks: scripts.yml
+  tags: [l6-runtime, stack_backup, restic, restic_scripts]
+
+- name: "Include repository initialization"
+  ansible.builtin.include_tasks: repo-init.yml
+  tags: [l6-runtime, stack_backup, restic, restic_init]
+
+- name: "Include systemd unit deployment"
+  ansible.builtin.include_tasks: systemd.yml
+  tags: [l6-runtime, stack_backup, restic, restic_systemd]
+
+- name: "Include logrotate configuration"
+  ansible.builtin.include_tasks: logrotate.yml
+  tags: [l6-runtime, stack_backup, restic, restic_logrotate]

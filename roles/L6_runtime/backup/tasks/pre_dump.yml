@@ -1,0 +1,266 @@
+---
+# =============================================================================
+# PRE-DUMP: Database and Valkey Dump Collection
+# =============================================================================
+# Tags: backup_pre_dump, backup
+# Error handling: ignore_errors + accumulator pattern (ADR-07)
+# =============================================================================
+
+# ── Phase A: PostgreSQL discovery + pg_dump -Fc ──
+
+- name: "Discover PostgreSQL containers by label"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: >
+      docker ps
+      --filter label=com.nist.type=postgresql
+      --format '{% raw %}{{.Names}}{% endraw %}'
+  register: pg_containers
+  changed_when: false
+  failed_when: false
+  tags: [backup_pre_dump, backup]
+
+- name: "Log when no PostgreSQL containers found"
+  ansible.builtin.debug:
+    msg: "No PostgreSQL containers with label com.nist.type=postgresql discovered - skipping PG dump"
+  when: pg_containers.stdout_lines | length == 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Ensure dump directories exist per container"
+  ansible.builtin.file:
+    path: "{{ backup_dump_dir }}/{{ item }}"
+    state: directory
+    mode: "0750"
+    owner: root
+    group: root
+  loop: "{{ pg_containers.stdout_lines }}"
+  when: pg_containers.stdout_lines | length > 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Execute pg_dump -Fc for each PostgreSQL container"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: |
+      CONTAINER="{{ item }}"
+      DB_NAME=$(docker exec "$CONTAINER" printenv POSTGRES_DB 2>/dev/null || echo "postgres")
+      DB_USER=$(docker exec "$CONTAINER" printenv POSTGRES_USER 2>/dev/null || echo "postgres")
+      mkdir -p "{{ backup_dump_dir }}/$CONTAINER"
+      docker exec "$CONTAINER" pg_dump -Fc -d "$DB_NAME" -U "$DB_USER" -h localhost \
+        > "{{ backup_dump_dir }}/$CONTAINER/$DB_NAME-{{ ansible_date_time.date }}.dump"
+  loop: "{{ pg_containers.stdout_lines }}"
+  register: pg_dump_result
+  changed_when: false
+  ignore_errors: true
+  when: pg_containers.stdout_lines | length > 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Record PG dump errors"
+  ansible.builtin.set_fact:
+    backup_errors: >-
+      {{ backup_errors
+         + ['pg_dump failed on ' ~ item.item ~ ': '
+            ~ item.stderr | default('exit code ' ~ item.rc | string) ] }}
+  loop: "{{ pg_dump_result.results | default([]) }}"
+  when: item is failed
+  tags: [backup_pre_dump, backup]
+
+# ── Phase B: MySQL discovery + mysqldump ──
+
+- name: "Discover MySQL containers by label"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: >
+      docker ps
+      --filter label=com.nist.type=mysql
+      --format '{% raw %}{{.Names}}{% endraw %}'
+  register: mysql_containers
+  changed_when: false
+  failed_when: false
+  tags: [backup_pre_dump, backup]
+
+- name: "Log when no MySQL containers found"
+  ansible.builtin.debug:
+    msg: "No MySQL containers with label com.nist.type=mysql discovered - skipping MySQL dump"
+  when: mysql_containers.stdout_lines | length == 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Ensure MySQL dump directories exist per container"
+  ansible.builtin.file:
+    path: "{{ backup_dump_dir }}/{{ item }}"
+    state: directory
+    mode: "0750"
+    owner: root
+    group: root
+  loop: "{{ mysql_containers.stdout_lines }}"
+  when: mysql_containers.stdout_lines | length > 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Execute mysqldump for each MySQL container"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: |
+      CONTAINER="{{ item }}"
+      DB_NAME=$(docker exec "$CONTAINER" printenv MYSQL_DATABASE 2>/dev/null || echo "mysql")
+      DB_USER=$(docker exec "$CONTAINER" printenv MYSQL_USER 2>/dev/null || echo "root")
+      DB_PASS=$(docker exec "$CONTAINER" printenv MYSQL_PASSWORD 2>/dev/null || echo "")
+      mkdir -p "{{ backup_dump_dir }}/$CONTAINER"
+      docker exec "$CONTAINER" mysqldump -u "$DB_USER" ${DB_PASS:+-p"$DB_PASS"} "$DB_NAME" \
+        > "{{ backup_dump_dir }}/$CONTAINER/$DB_NAME-{{ ansible_date_time.date }}.sql"
+  loop: "{{ mysql_containers.stdout_lines }}"
+  register: mysql_dump_result
+  changed_when: false
+  ignore_errors: true
+  when: mysql_containers.stdout_lines | length > 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Record MySQL dump errors"
+  ansible.builtin.set_fact:
+    backup_errors: >-
+      {{ backup_errors
+         + ['mysqldump failed on ' ~ item.item ~ ': '
+            ~ item.stderr | default('exit code ' ~ item.rc | string) ] }}
+  loop: "{{ mysql_dump_result.results | default([]) }}"
+  when: item is failed
+  tags: [backup_pre_dump, backup]
+
+# ── Phase C: SQLite discovery (dynamic via docker inspect) + .backup ──
+
+- name: "Resolve SQLite volume mount sources via docker inspect"  # noqa: command-instead-of-shell
+  ansible.builtin.shell: |
+    SQLITE_CONTAINERS=$(docker ps --filter label=com.nist.type=sqlite --format '{% raw %}{{.Names}}{% endraw %}' 2>/dev/null)
+    for c in $SQLITE_CONTAINERS; do
+      docker inspect "$c" \
+        --format '{% raw %}{{ range .Mounts }}{{ .Source }}{{ "\n" }}{{ end }}{% endraw %}' \
+        2>/dev/null || true
+    done
+  register: sqlite_mount_sources
+  changed_when: false
+  failed_when: false
+  tags: [backup_pre_dump, backup]
+
+- name: "Set empty sqlite_dbs when no mount sources resolved"
+  ansible.builtin.set_fact:
+    sqlite_dbs:
+      files: []
+  when: sqlite_mount_sources.stdout_lines | reject('match', '^$') | list | length == 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Discover SQLite databases in resolved mount paths"
+  ansible.builtin.find:
+    paths: "{{ sqlite_mount_sources.stdout_lines | reject('match', '^$') | list }}"
+    patterns: "*.db"
+    file_type: file
+    recurse: true
+  register: sqlite_dbs
+  failed_when: false
+  when: sqlite_mount_sources.stdout_lines | reject('match', '^$') | list | length > 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Log when no SQLite databases found"
+  ansible.builtin.debug:
+    msg: "No SQLite databases discovered via docker inspect mount resolution - skipping SQLite backup"
+  when: sqlite_dbs.files | length == 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Ensure SQLite dump directories exist"
+  ansible.builtin.file:
+    path: "{{ backup_dump_dir }}/{{ item.path | regex_replace('^/var/lib/docker/volumes/', '') | regex_replace('/_data/.*$', '') }}"
+    state: directory
+    mode: "0750"
+    owner: root
+    group: root
+  loop: "{{ sqlite_dbs.files }}"
+  when: sqlite_dbs.files | length > 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Backup each SQLite database"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: >
+      sqlite3
+      "{{ item.path }}"
+      ".backup {{ backup_dump_dir }}/{{ item.path | regex_replace('^/var/lib/docker/volumes/', '') | regex_replace('/_data/(.*\\.db)$', '/\\1') }}"
+  loop: "{{ sqlite_dbs.files }}"
+  register: sqlite_backup_result
+  changed_when: false
+  ignore_errors: true
+  when: sqlite_dbs.files | length > 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Record SQLite backup errors"
+  ansible.builtin.set_fact:
+    backup_errors: >-
+      {{ backup_errors
+         + ['SQLite backup failed on ' ~ item.item.path ~ ': '
+            ~ item.stderr | default('exit code ' ~ item.rc | string) ] }}
+  loop: "{{ sqlite_backup_result.results | default([]) }}"
+  when: item is failed
+  tags: [backup_pre_dump, backup]
+
+# ── Phase D: Valkey discovery + SAVE + copy dump.rdb ──
+
+- name: "Discover Valkey containers by label"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: >
+      docker ps
+      --filter label=com.nist.type=valkey
+      --format '{% raw %}{{.Names}}{% endraw %}'
+  register: valkey_containers
+  changed_when: false
+  failed_when: false
+  tags: [backup_pre_dump, backup]
+
+- name: "Log when no Valkey containers found"
+  ansible.builtin.debug:
+    msg: "No Valkey containers with label com.nist.type=valkey discovered - skipping Valkey SAVE"
+  when: valkey_containers.stdout_lines | length == 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Ensure Valkey dump directory exists"
+  ansible.builtin.file:
+    path: "{{ backup_dump_dir }}/valkey"
+    state: directory
+    mode: "0750"
+    owner: root
+    group: root
+  when: valkey_containers.stdout_lines | length > 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Execute SAVE on Valkey containers"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: "docker exec {{ item }} valkey-cli SAVE"
+  loop: "{{ valkey_containers.stdout_lines }}"
+  register: valkey_save_result
+  changed_when: false
+  ignore_errors: true
+  when: valkey_containers.stdout_lines | length > 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Copy dump.rdb from Valkey containers"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: |
+      CONTAINER="{{ item }}"
+      mkdir -p "{{ backup_dump_dir }}/valkey"
+      docker cp "$CONTAINER:/data/dump.rdb" \
+        "{{ backup_dump_dir }}/valkey/dump-{{ ansible_date_time.date }}.rdb"
+  loop: "{{ valkey_containers.stdout_lines }}"
+  register: valkey_copy_result
+  changed_when: false
+  ignore_errors: true
+  when: valkey_containers.stdout_lines | length > 0
+  tags: [backup_pre_dump, backup]
+
+- name: "Record Valkey SAVE errors"
+  ansible.builtin.set_fact:
+    backup_errors: >-
+      {{ backup_errors
+         + ['Valkey SAVE failed on ' ~ item.item ~ ': '
+            ~ item.stderr | default('exit code ' ~ item.rc | string) ] }}
+  loop: "{{ valkey_save_result.results | default([]) }}"
+  when: item is failed
+  tags: [backup_pre_dump, backup]
+
+- name: "Record Valkey copy errors"
+  ansible.builtin.set_fact:
+    backup_errors: >-
+      {{ backup_errors
+         + ['Valkey dump.rdb copy failed on ' ~ item.item ~ ': '
+            ~ item.stderr | default('exit code ' ~ item.rc | string) ] }}
+  loop: "{{ valkey_copy_result.results | default([]) }}"
+  when: item is failed
+  tags: [backup_pre_dump, backup]

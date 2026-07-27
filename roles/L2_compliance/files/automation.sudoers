@@ -1,0 +1,1 @@
+automation ALL=(ALL:ALL) NOPASSWD:ALL

@@ -1,0 +1,271 @@
+---
+# ==============================================================================
+# SECURITY - SSH Hardening (NIST AC-2)
+# ==============================================================================
+# Disables password auth, root login, challenge-response, empty passwords.
+# Enforces key-only auth from admin_cidr. Heartbeat prevents idle disconnect.
+# ==============================================================================
+
+- name: "AC-2 | Configure SSH ClientAliveInterval (heartbeat 60s)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?ClientAliveInterval"
+    line: "ClientAliveInterval 60"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Configure SSH ClientAliveCountMax"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?ClientAliveCountMax"
+    line: "ClientAliveCountMax 3"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Disable password authentication"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PasswordAuthentication"
+    line: "PasswordAuthentication no"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Restrict root login to key-only (prohibit-password)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PermitRootLogin"
+    line: "PermitRootLogin prohibit-password"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Disable challenge-response authentication"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?ChallengeResponseAuthentication"
+    line: "ChallengeResponseAuthentication no"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Disable empty passwords"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PermitEmptyPasswords"
+    line: "PermitEmptyPasswords no"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Remove obsolete SSH Protocol directive"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?Protocol"
+    state: absent
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Disable X11Forwarding"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?X11Forwarding"
+    line: "X11Forwarding no"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+# ─── SSH Crypto Hardening (CIS 5.2.14-5.2.16) ──────────────────────────
+
+- name: "AC-2 | Configure SSH Ciphers (CIS 5.2.14)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?Ciphers"
+    line: "Ciphers {{ ssh_ciphers }}"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Configure SSH MACs (CIS 5.2.15)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?MACs"
+    line: "MACs {{ ssh_macs }}"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Configure SSH KexAlgorithms (CIS 5.2.16)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?KexAlgorithms"
+    line: "KexAlgorithms {{ ssh_kex_algorithms }}"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+# ─── SSH Security Options (CIS 5.2.x) ────────────────────────────────────
+
+- name: "AC-2 | Set SSH LogLevel VERBOSE (CIS 5.2.2)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?LogLevel"
+    line: "LogLevel VERBOSE"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Set SSH MaxAuthTries 6 (CIS 5.2.5)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?MaxAuthTries"
+    line: "MaxAuthTries 6"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Set SSH MaxSessions 10 (CIS 5.2.6)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?MaxSessions"
+    line: "MaxSessions 10"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Set SSH MaxStartups 3:50:10 (CIS 5.2.7)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?MaxStartups"
+    line: "MaxStartups 3:50:10"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Set SSH LoginGraceTime 60 (CIS 5.2.17)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?LoginGraceTime"
+    line: "LoginGraceTime 60"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Disable SSH PermitUserEnvironment (CIS 5.2.10)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PermitUserEnvironment"
+    line: "PermitUserEnvironment no"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Disable SSH AllowAgentForwarding"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?AllowAgentForwarding"
+    line: "AllowAgentForwarding no"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Disable SSH AllowTcpForwarding"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?AllowTcpForwarding"
+    line: "AllowTcpForwarding no"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Disable SSH TCPKeepAlive"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?TCPKeepAlive"
+    line: "TCPKeepAlive no"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Disable SSH HostbasedAuthentication (CIS 5.2.13)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?HostbasedAuthentication"
+    line: "HostbasedAuthentication no"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Disable SSH GSSAPIAuthentication (CIS 5.1.9)"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?GSSAPIAuthentication"
+    line: "GSSAPIAuthentication no"
+    state: present
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+# ─── SSH Boot Race Fix (sshd waits for tailscaled) ─────────────────────
+
+- name: "AC-2 | Ensure sshd waits for Tailscale before starting"
+  ansible.builtin.blockinfile:
+    path: /etc/systemd/system/ssh.service.d/override.conf
+    marker: "# {mark} ANSIBLE MANAGED - sshd tailscale dependency"
+    block: |
+      [Unit]
+      After=network-online.target tailscaled.service
+      Wants=network-online.target
+    create: true
+    mode: "0644"
+  when: l2_tailscale_enabled | default(true)
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Restrict SSH access by source IP (bootstrap-aware)"
+  ansible.builtin.blockinfile:
+    path: /etc/ssh/sshd_config
+    marker: "# {mark} ANSIBLE MANAGED - AllowUsers bootstrap-aware"
+    block: |
+      {% if nist_bootstrap | default(false) %}
+      AllowUsers automation@{{ controller_ip }} dev_admin@{{ controller_ip }} breakglass@{{ controller_ip }}
+      {% else %}
+      AllowUsers automation@100.64.0.0/10 dev_admin@100.64.0.0/10 breakglass@100.64.0.0/10
+      {% endif %}
+    state: present
+    create: true
+    insertbefore: BOF
+    validate: "sshd -t -f %s"
+  notify: Restart SSH
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Cleanup orphaned AllowUsers marker (pre-v2)"
+  ansible.builtin.blockinfile:
+    path: /etc/ssh/sshd_config
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - security-hardening-fix"
+    block: ""
+    state: absent
+  tags: [ssh, l2-compliance, nist, ac-2]

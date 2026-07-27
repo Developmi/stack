@@ -1,0 +1,86 @@
+---
+# ==============================================================================
+# COMPLIANCE - Lynis Security Auditing (NIST AU-12)
+# ==============================================================================
+# Opt-in compliance audit via Lynis. Installs lynis, runs audit, saves report.
+# All tasks except install are non-blocking (failed_when: false).
+# Gate: l2_lynis_enabled (default: false).
+# ==============================================================================
+
+- name: "AU-12 | Install lynis"
+  ansible.builtin.apt:
+    name: lynis
+    state: present
+    lock_timeout: 600
+  register: _lynis_install
+  ignore_errors: true
+  when: l2_lynis_enabled | bool
+  tags: [compliance, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Run lynis audit system --quick"
+  ansible.builtin.command:
+    argv:
+      - lynis
+      - audit
+      - system
+      - --quick
+  register: _lynis_audit
+  changed_when: false
+  failed_when: false
+  when:
+    - l2_lynis_enabled | bool
+    - _lynis_install is success
+  tags: [compliance, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Ensure lynis report directory exists"
+  ansible.builtin.file:
+    path: /var/log/lynis
+    state: directory
+    mode: "0755"
+  when:
+    - l2_lynis_enabled | bool
+    - _lynis_install is success
+  tags: [compliance, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Save lynis audit report"
+  ansible.builtin.copy:
+    dest: "/var/log/lynis/audit-{{ ansible_date_time.date }}.log"
+    content: "{{ _lynis_audit.stdout | default('(lynis audit skipped)') }}"
+    mode: "0640"
+  when:
+    - l2_lynis_enabled | bool
+    - _lynis_install is success
+  tags: [compliance, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Extract lynis warnings"
+  ansible.builtin.shell: |
+    set -o pipefail
+    echo "{{ _lynis_audit.stdout | default('') }}" | grep -iE '(warning|suggestion|recommendation)' | head -20 || echo "(no warnings or suggestions)"
+  args:
+    executable: /bin/bash
+  register: _lynis_warnings
+  changed_when: false
+  failed_when: false
+  when:
+    - l2_lynis_enabled | bool
+    - _lynis_install is success
+  tags: [compliance, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Display lynis audit summary"
+  ansible.builtin.debug:
+    msg:
+      - "Lynis audit complete - report: /var/log/lynis/audit-{{ ansible_date_time.date }}.log"
+      - "Warnings / Suggestions:"
+      - "{{ _lynis_warnings.stdout_lines | default(['(no output)']) | join('\n') }}"
+  when:
+    - l2_lynis_enabled | bool
+    - _lynis_install is success
+  tags: [compliance, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Warn if lynis package unavailable"
+  ansible.builtin.debug:
+    msg: "WARNING: Lynis package unavailable - skipping audit"
+  when:
+    - l2_lynis_enabled | bool
+    - _lynis_install is failed
+  tags: [compliance, l2-compliance, nist, au-12]

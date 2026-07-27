@@ -1,0 +1,63 @@
+# ---
+# COMPLIANCE WARNING:
+# Systemd units deploy backup timer infrastructure. The backup-all timer is
+# enabled immediately. Check and prune timers are deployed but DISABLED per
+# design D.9 - they are enabled manually after the first successful backup
+# cycle to avoid running check/prune against an empty or unverified repository.
+# ---
+---
+- name: "Deploy systemd service units"
+  ansible.builtin.template:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item | basename | replace('.j2', '') }}"
+    mode: "0644"
+    owner: root
+    group: root
+  loop:
+    - restic-backup-all.service.j2
+    - restic-check.service.j2
+    - restic-prune.service.j2
+  no_log: true
+  notify: reload systemd
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Deploy systemd timer units"
+  ansible.builtin.template:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item | basename | replace('.j2', '') }}"
+    mode: "0644"
+    owner: root
+    group: root
+  loop:
+    - restic-backup-all.timer.j2
+    - restic-check.timer.j2
+    - restic-prune.timer.j2
+  no_log: true
+  notify: reload systemd
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Reload systemd daemon (flush handlers)"
+  ansible.builtin.meta: flush_handlers
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Enable and start backup-all timer"
+  ansible.builtin.systemd_service:
+    name: restic-backup-all.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Deploy check timer (disabled - enable after first successful backup, per design D.9)"
+  ansible.builtin.systemd_service:
+    name: restic-check.timer
+    state: stopped
+    enabled: false
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Deploy prune timer (disabled - enable after first successful backup, per design D.9)"
+  ansible.builtin.systemd_service:
+    name: restic-prune.timer
+    state: stopped
+    enabled: false
+  tags: [l6-runtime, stack_backup, restic]

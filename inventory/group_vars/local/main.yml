@@ -1,0 +1,46 @@
+---
+# =============================================================================
+# LOCAL DEVICE - WORKSTATION CONFIGURATION
+# =============================================================================
+# Personal devices (desktops, laptops) with manual Tailscale auth.
+# Uses workstation-appropriate hardening - less aggressive than servers.
+# =============================================================================
+
+# Device role identification
+server_role: local
+server_type: workstation
+host_class: local
+
+# L1-L2 hardening profile - workstation-grade (lenient fail2ban, detection-only CrowdSec)
+crowdsec_mode: detection_only
+hardening_profile: workstation
+
+# Security profile (workstation-appropriate)
+# UFW policy: deny (Zero Trust base layer).
+# Outbound is allowed by default. Inbound DHCP/mDNS are explicitly handled in the security role.
+ufw_policy: deny
+# Fail2ban: shorter bantime for laptops (avoid lockout without IPMI/console access)
+fail2ban_bantime: 10m
+fail2ban_maxretry: 5
+
+# Disable server-only features
+enable_observability_stack: false
+enable_metrics_exporters: false
+enable_backups: false
+
+# Tailscale auth is manual on local workstations - skip auth key validation
+tailscale_manual_auth: true
+
+# No cloud provider (personal hardware)
+cloud_provider: none
+
+# =============================================================================
+# Supported OS distributions for local devices:
+#   - Ubuntu 22.04 / 24.04 (x86_64 + ARM64)
+#   - Debian 11 / 12 (x86_64 + ARM64)
+#   - Pop OS 22.04 (Ubuntu-based - uses same apt repos and packages)
+#
+# Pop OS reports ansible_facts['distribution'] as 'Pop' or 'Pop!_OS'.
+# The playbook normalizes this to 'Ubuntu' for docker/tailscale repo lookups.
+# All apt packages (UFW, fail2ban, etc.) are fully compatible.
+# =============================================================================

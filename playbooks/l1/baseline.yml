@@ -1,0 +1,61 @@
+---
+# ==============================================================================
+# Developmi Stack - L1 OS Baseline
+# ==============================================================================
+# L1 (OS Baseline) - extracted from site.yml Play 1.
+# Independently runnable: ansible-playbook -i inventory/hosts.ini playbooks/l1/baseline.yml --ask-vault-pass
+# Tag-filterable: --tags l1-os-baseline
+# ==============================================================================
+
+- name: "L1 | OS Baseline"
+  hosts: all
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  tags: [l1-os-baseline]
+
+  pre_tasks:
+    - name: "L1 | Pre-flight: APT lock detection and cleanup"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../_shared/apt_lock_preflight.yml"
+      tags: [always]
+
+  tasks:
+    - block:
+        - name: "L1 | Stop APT systemd timers"
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: stopped
+            enabled: false
+          loop:
+            - apt-daily.timer
+            - apt-daily-upgrade.timer
+          failed_when: false
+          tags: [always]
+
+        - name: "L1 | Track timer state for rescue"
+          ansible.builtin.set_fact:
+            _apt_timers_stopped: true
+            cacheable: false
+          tags: [always]
+
+        - name: "L1 | Apply OS baseline role"
+          ansible.builtin.include_role:
+            name: L1_os_baseline
+            apply:
+              tags: [l1-os-baseline]
+      rescue:
+        - name: "L1 | Recovery: Restore APT systemd timers"
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: started
+            enabled: true
+          loop:
+            - apt-daily.timer
+            - apt-daily-upgrade.timer
+          when: _apt_timers_stopped | default(false)
+          failed_when: false
+          tags: [always]
+
+        - name: "L1 | Re-raise original failure"
+          ansible.builtin.fail:  # yamllint disable-line rule:empty-values

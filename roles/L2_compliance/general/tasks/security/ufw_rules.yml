@@ -1,0 +1,250 @@
+---
+# ==============================================================================
+# SECURITY - UFW Firewall Rules (NIST SC-7) - Ubuntu / Pop OS
+# ==============================================================================
+# Port whitelist driven by allowed_ports variable. Admin CIDR safe harbor.
+# Default-deny incoming, allow outgoing. Docker bridge allowed.
+# ==============================================================================
+
+- name: "L2 | Fail-safe - SSH must not be in allowed_ports (handled separately via ssh_allowed_sources)"
+  ansible.builtin.assert:
+    that:
+      - 22 not in allowed_ports
+    fail_msg: "CRITICAL: Port 22 found in allowed_ports. Remove it - SSH access is controlled by ssh_allowed_sources (admin_cidr only per L2 contract §Promise 2)."
+  tags: [l2-hardening]
+
+- name: "SC-7 | Install UFW package"
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    lock_timeout: 600
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# ─── IPv6 support ─────────────────────────────────────────────────────────
+- name: "SC-7 | Enable IPv6 in UFW defaults"
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: '^IPV6='
+    line: 'IPV6=yes'
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# ─── SSH lockout prevention - dual defense-in-depth ────────────────────
+# CGNAT source-IP ACCEPT always present. Bootstrap: ACCEPT from controller_ip
+# Steady-state: DROP scoped to non-tailscale0 interfaces only.
+- name: "SC-7 | Bootstrap - Allow SSH from controller IP in before.rules"
+  ansible.builtin.blockinfile:
+    path: /etc/ufw/before.rules
+    marker: "# {mark} ANSIBLE MANAGED - SSH bootstrap gate"
+    insertbefore: "^# End required lines"
+    block: |
+      # Bootstrap: allow SSH from controller IP on all interfaces
+      -A ufw-before-input -p tcp --dport 22 -s {{ controller_ip | default('127.0.0.1') }} -j ACCEPT
+    mode: "0640"
+  when:
+    - l2_tailscale_enabled | default(true)
+    - nist_bootstrap | default(false)
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Allow SSH from Tailscale CGNAT subnet (defense-in-depth)"
+  ansible.builtin.blockinfile:
+    path: /etc/ufw/before.rules
+    marker: "# {mark} ANSIBLE MANAGED - SSH CGNAT safe harbor"
+    insertbefore: "^# End required lines"
+    block: |
+      # Tailscale CGNAT: allow SSH from 100.64.0.0/10 on all interfaces
+      -A ufw-before-input -p tcp --dport 22 -s 100.64.0.0/10 -j ACCEPT
+    mode: "0640"
+  when: l2_tailscale_enabled | default(true)
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Steady-state - DROP SSH on non-Tailscale interfaces"
+  ansible.builtin.blockinfile:
+    path: /etc/ufw/before.rules
+    marker: "# {mark} ANSIBLE MANAGED - SSH interface DROP"
+    insertbefore: "^# End required lines"
+    block: |
+      # Steady-state: DROP SSH on all interfaces except tailscale0
+      -A ufw-before-input -p tcp --dport 22 ! -i tailscale0 -j DROP
+    mode: "0640"
+  when:
+    - l2_tailscale_enabled | default(true)
+    - not (nist_bootstrap | default(false))
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Cleanup - Remove orphaned blanket SSH DROP marker"
+  ansible.builtin.blockinfile:
+    path: /etc/ufw/before.rules
+    marker: "# {mark} ANSIBLE MANAGED - SSH public DROP"
+    block: ""
+    state: absent
+  when: l2_tailscale_enabled | default(true)
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Allow Tailscale WireGuard direct connections (UDP 41641)"
+  community.general.ufw:
+    rule: allow
+    port: "41641"
+    proto: udp
+    direction: in
+  when: l2_tailscale_enabled | default(true)
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Legacy fallback - Allow SSH from admin CIDR in before.rules"
+  ansible.builtin.blockinfile:
+    path: /etc/ufw/before.rules
+    marker: "# {mark} ANSIBLE MANAGED - ssh_allowed_sources safe harbor"
+    insertbefore: "^# End required lines"
+    block: |
+      # Allow SSH from allowed sources before default-deny (lockout prevention)
+      -A ufw-before-input -p tcp --dport 22 -s {{ ssh_allowed_sources }} -j ACCEPT
+    mode: "0640"
+  when: not (l2_tailscale_enabled | default(true))
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# ─── Firewall logging ─────────────────────────────────────────────────────
+- name: "SC-7 | Set UFW logging to low"
+  ansible.builtin.lineinfile:
+    path: /etc/ufw/ufw.conf
+    regexp: "^LOGLEVEL="
+    line: "LOGLEVEL=low"
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# ─── Port whitelist from allowed_ports ────────────────────────────────────
+- name: "SC-7 | Open whitelisted ports"
+  community.general.ufw:
+    rule: allow
+    port: "{{ item | string }}"
+    proto: "{{ 'udp' if item | int == 41641 else 'tcp' }}"
+  loop: "{{ allowed_ports }}"
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# ─── Docker bridge internal networking ────────────────────────────────────
+- name: "SC-7 | Allow Docker internal networking (bridge)"
+  community.general.ufw:
+    rule: allow
+    src: 172.16.0.0/12
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# ─── Workstation exceptions ───────────────────────────────────────────────
+- name: "SC-7 | Allow DHCP client (workstation)"
+  community.general.ufw:
+    rule: allow
+    port: "68"
+    proto: udp
+  when: hardening_profile == 'workstation'
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Allow mDNS (workstation)"
+  community.general.ufw:
+    rule: allow
+    port: "5353"
+    proto: udp
+  when: hardening_profile == 'workstation'
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# ─── Metrics exporters on Tailscale ───────────────────────────────────────
+- name: "SC-7 | Allow Node Exporter on tailscale0"
+  community.general.ufw:
+    rule: allow
+    port: "9100"
+    proto: tcp
+    interface: tailscale0
+    direction: in
+  when: enable_metrics_exporters | default(false)
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Allow cAdvisor on tailscale0"
+  community.general.ufw:
+    rule: allow
+    port: "18080"
+    proto: tcp
+    interface: tailscale0
+    direction: in
+  when: enable_metrics_exporters | default(false)
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# ─── Caddy HTTP/HTTPS (brain nodes) ──────────────────────────────────────
+- name: "SC-7 | Allow Caddy HTTP (brain nodes)"
+  community.general.ufw:
+    rule: allow
+    port: "80"
+    proto: tcp
+  when: "'brain' in group_names"
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Allow Caddy HTTPS (brain nodes)"
+  community.general.ufw:
+    rule: allow
+    port: "443"
+    proto: tcp
+  when: "'brain' in group_names"
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Allow Caddy HTTP/3 QUIC (brain nodes)"
+  community.general.ufw:
+    rule: allow
+    port: "443"
+    proto: udp
+  when: "'brain' in group_names"
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# ─── Deny Caddy admin + Prometheus API on Tailscale ──────────────────────
+- name: "SC-7 | Deny Caddy admin API on tailscale0 (2019)"
+  community.general.ufw:
+    rule: deny
+    port: "2019"
+    proto: tcp
+    interface: tailscale0
+    direction: in
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Deny Caddy Prometheus API on tailscale0 (2020)"
+  community.general.ufw:
+    rule: deny
+    port: "2020"
+    proto: tcp
+    interface: tailscale0
+    direction: in
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# ─── Enable UFW ───────────────────────────────────────────────────────────
+- name: "SC-7 | Enable UFW with default deny incoming"
+  community.general.ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Set UFW default allow outgoing"
+  community.general.ufw:
+    state: enabled
+    policy: allow
+    direction: outgoing
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Enable packet forwarding in UFW (Docker + VPN)"
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: "^DEFAULT_FORWARD_POLICY="
+    line: 'DEFAULT_FORWARD_POLICY="ACCEPT"'
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]

@@ -1,0 +1,88 @@
+---
+# =============================================================================
+# Restic Backup to R2 via Ephemeral Container
+# =============================================================================
+# Tags: backup_restic, backup
+# BLOCKING failure: if backup fails, retention is skipped (ADR-07)
+# Secrets: no_log: true on all credential-bearing tasks
+# =============================================================================
+
+- name: "Ensure dump directory exists"
+  ansible.builtin.file:
+    path: "{{ backup_dump_dir }}"
+    state: directory
+    mode: "0750"
+    owner: root
+    group: root
+  tags: [backup_restic, backup]
+
+- name: "Check if Restic repo is initialized"
+  ansible.builtin.stat:
+    path: "{{ backup_dump_dir }}/.repo-initialized"
+  register: repo_init_marker
+  tags: [backup_restic, backup]
+
+- name: "Initialize Restic repository (first run only)"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: >
+      docker run --rm
+      -e RESTIC_REPOSITORY="s3:{{ restic_r2_endpoint }}/{{ restic_r2_bucket }}/restic/{{ inventory_hostname }}"
+      -e RESTIC_PASSWORD="{{ restic_password_brain_1 }}"
+      -e AWS_ACCESS_KEY_ID="{{ restic_r2_access_key_id }}"
+      -e AWS_SECRET_ACCESS_KEY="{{ restic_r2_secret_access_key }}"
+      -e AWS_DEFAULT_REGION="auto"
+      {{ restic_image }}
+      init
+  register: restic_init_result
+  changed_when: restic_init_result.rc == 0
+  failed_when: restic_init_result.rc != 0
+  no_log: true
+  when: not repo_init_marker.stat.exists
+  tags: [backup_restic, backup]
+
+- name: "Create repo initialized marker"
+  ansible.builtin.file:
+    path: "{{ backup_dump_dir }}/.repo-initialized"
+    state: touch
+    mode: "0600"
+    owner: root
+    group: root
+  when: not repo_init_marker.stat.exists
+  tags: [backup_restic, backup]
+
+- name: "Run Restic backup via ephemeral container"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: >
+      docker run --rm
+      -v {{ backup_dump_dir }}:/data:ro
+      -e RESTIC_REPOSITORY="s3:{{ restic_r2_endpoint }}/{{ restic_r2_bucket }}/restic/{{ inventory_hostname }}"
+      -e RESTIC_PASSWORD="{{ restic_password_brain_1 }}"
+      -e AWS_ACCESS_KEY_ID="{{ restic_r2_access_key_id }}"
+      -e AWS_SECRET_ACCESS_KEY="{{ restic_r2_secret_access_key }}"
+      -e AWS_DEFAULT_REGION="auto"
+      {{ restic_image }}
+      backup /data
+      --tag brain-1
+      --tag phase-04
+      --tag {{ ansible_date_time.date }}
+  register: restic_backup_result
+  changed_when: false
+  ignore_errors: true
+  no_log: true
+  tags: [backup_restic, backup]
+
+- name: "Record Restic backup errors (BLOCKING)"
+  ansible.builtin.set_fact:
+    backup_errors: >-
+      {{ backup_errors
+         + ['Restic backup failed: '
+            ~ restic_backup_result.stderr | default('exit code ' ~ restic_backup_result.rc | string) ] }}
+    backup_restic_failed: true
+  when: restic_backup_result is failed
+  tags: [backup_restic, backup]
+
+- name: "Mark backup as succeeded"
+  ansible.builtin.set_fact:
+    backup_restic_failed: false
+  when: restic_backup_result is not failed
+  tags: [backup_restic, backup]

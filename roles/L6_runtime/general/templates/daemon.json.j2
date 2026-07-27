@@ -1,0 +1,20 @@
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "{{ docker_log_max_size }}",
+    "max-file": "{{ docker_log_max_file }}",
+    "labels": "cluster={{ cluster_name }},node={{ inventory_hostname }}"
+  },
+  "storage-driver": "overlay2",
+  "live-restore": true,
+  "userland-proxy": false,
+  "icc": false,
+  "no-new-privileges": true,
+  "userns-remap": "default",
+  "default-address-pools": [
+    {
+      "base": "172.80.0.0/16",
+      "size": 24
+    }
+  ]
+}

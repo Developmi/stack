@@ -1,0 +1,37 @@
+---
+# ==============================================================================
+# CROWDSEC - Firewall Bouncer (NIST SI-4) - Enforcement Mode Only
+# ==============================================================================
+# Installs the iptables firewall bouncer. Only included when
+# crowdsec_mode == 'enforcement'. Detection-only mode skips this.
+# ==============================================================================
+
+- name: "SI-4 | Install CrowdSec firewall bouncer (iptables)"
+  ansible.builtin.apt:
+    name: crowdsec-firewall-bouncer-iptables
+    state: present
+    lock_timeout: 600
+  when: not (ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] | int >= 13)
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | List CrowdSec bouncers"
+  ansible.builtin.command: cscli bouncers list -o raw  # noqa: command-instead-of-module
+  register: crowdsec_bouncers_list
+  changed_when: false
+  when: not (ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] | int >= 13)
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Register firewall bouncer"
+  ansible.builtin.command: cscli bouncers add firewall-bouncer  # noqa: command-instead-of-module
+  register: bouncer_add
+  when: (not (ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] | int >= 13)) and ('firewall-bouncer' not in crowdsec_bouncers_list.stdout)
+  changed_when: true
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Enable and start firewall bouncer"
+  ansible.builtin.systemd:
+    name: crowdsec-firewall-bouncer
+    state: started
+    enabled: true
+  when: not (ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] | int >= 13)
+  tags: [crowdsec, l2-compliance, nist, si-4]

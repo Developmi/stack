@@ -1,0 +1,40 @@
+---
+# ==============================================================================
+# USER HARDENING ROLE - 3-Tier SSH User Model
+# ==============================================================================
+# Defaults (non-secret).
+# SSH public keys are in group_vars/all/secrets.yml (vault-encrypted).
+# Do NOT add credentials or keys here - use the vault.
+# ==============================================================================
+
+# 3-Tier user segmentation: admin, automation, breakglass
+# UIDs are pinned for audit consistency across nodes.
+# Groups list uses append: false so sudoers fragments control elevation,
+# not supplementary groups.
+user_hardening_users:
+  - username: dev_admin
+    uid: 2001
+    groups:
+      - sudo
+      - "{{ proc_readers_group | default('proc_readers') }}"
+    shell: /bin/bash
+    home: /home/dev_admin
+    comment: "Dev Platform Administrator"
+    state: present
+  - username: automation
+    uid: 2002
+    groups:
+      - sudo
+      - "{{ proc_readers_group | default('proc_readers') }}"
+    shell: /bin/bash
+    home: /home/automation
+    comment: "Ansible Automation Account"
+    state: present
+  - username: breakglass
+    uid: 2003
+    groups:
+      - "{{ proc_readers_group | default('proc_readers') }}"
+    shell: /bin/bash
+    home: /home/breakglass
+    comment: "Emergency Break-Glass Access"
+    state: present

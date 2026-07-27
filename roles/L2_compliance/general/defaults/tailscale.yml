@@ -1,0 +1,14 @@
+---
+# ==============================================================================
+# Tailscale Client Role - Default Variables
+# ==============================================================================
+
+# Set to true on hosts where Tailscale auth is handled manually
+# (e.g., local workstation devices). When true, the auth key
+# validation guard is skipped and node enrollment is deferred.
+tailscale_manual_auth: false
+
+# Tailscale node attributes for ACL policy
+# Ref: https://tailscale.com/docs/reference/syntax/policy-file#nodeattrs
+# Examples: funnel, https, nextdns, disable-ipv4
+tailscale_node_attrs: []

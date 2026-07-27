@@ -1,0 +1,16 @@
+---
+# ==============================================================================
+# Developmi Stack | L4 Networking & Edge - Reverse Proxy + WAF
+# ==============================================================================
+# Purpose: Deploy reverse proxy + WAF via L4_networking adapter.
+# Extracted from stacks.yml Play 2.
+# ==============================================================================
+
+- name: "L4 | Networking & Edge - Reverse Proxy + WAF"
+  hosts: "{{ target_group | default('muscle') }}"
+  gather_facts: false
+  tags: [l4-networking, caddy, ingress, waf]
+  tasks:
+    - name: "L4 | Dispatch to L4_networking adapter"
+      ansible.builtin.include_role:
+        name: "L4_networking/{{ reverse_proxy_backend | default('caddy') }}"

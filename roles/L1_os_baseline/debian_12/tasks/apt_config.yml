@@ -1,0 +1,18 @@
+---
+# ==============================================================================
+# PACKAGES - APT Periodic Configuration
+# ==============================================================================
+# Configures apt to auto-update package lists and download upgrades.
+# Security-only upgrades are handled by unattended-upgrades.
+# ==============================================================================
+
+- name: "L1 | Configure APT periodic update intervals"
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/10periodic
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Download-Upgradeable-Packages "1";
+      APT::Periodic::AutocleanInterval "7";
+      APT::Periodic::Unattended-Upgrade "1";
+    mode: "{{ file_mode_default }}"
+  tags: [l1-os-baseline, debian]

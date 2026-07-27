@@ -1,0 +1,57 @@
+name: Security Audit
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  security-audit:
+    name: Security Audit Gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync toolchain
+        run: |
+          uv sync
+
+      - name: Verify detect-secrets baseline is valid
+        run: |
+          uv run detect-secrets scan --baseline .secrets.baseline > /dev/null
+
+      - name: Ensure encrypted secrets file is not tracked
+        run: |
+          if git ls-files --error-unmatch group_vars/all/secrets.yml >/dev/null 2>&1; then
+            echo "ERROR: group_vars/all/secrets.yml is tracked in git. Remove it from history and index."
+            exit 1
+          fi
+
+      - name: Scan repository for high-risk credential patterns
+        run: |
+          set -euo pipefail
+          if rg -n --hidden -g '!.git' -g '!**/.venv/**' -e 'ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,}' ; then
+            echo "ERROR: Potential hardcoded secrets detected."
+            exit 1
+          fi
+
+      - name: Dependency vulnerability scan
+        run: |
+          uvx pip-audit -r requirements.txt

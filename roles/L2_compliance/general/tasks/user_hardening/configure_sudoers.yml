@@ -1,0 +1,37 @@
+---
+# ==============================================================================
+# CONFIGURE SUDOERS FRAGMENTS - Per-User Elevation (NIST AC-6)
+# ==============================================================================
+# Deploys /etc/sudoers.d/ fragments with visudo syntax validation.
+# Files are owner: root, group: root, mode: 0440.
+# ==============================================================================
+
+- name: "AC-6 | Deploy dev_admin sudoers fragment"
+  ansible.builtin.copy:
+    src: dev_admin.sudoers
+    dest: /etc/sudoers.d/dev_admin
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+  tags: [users, l2-compliance, nist, ac-6]
+
+- name: "AC-6 | Deploy automation sudoers fragment"
+  ansible.builtin.copy:
+    src: automation.sudoers
+    dest: /etc/sudoers.d/automation
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+  tags: [users, l2-compliance, nist, ac-6]
+
+- name: "AC-6 | Deploy breakglass sudoers fragment"
+  ansible.builtin.copy:
+    src: breakglass.sudoers
+    dest: /etc/sudoers.d/breakglass
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+  tags: [users, l2-compliance, nist, ac-6]

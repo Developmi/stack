@@ -1,0 +1,94 @@
+---
+# ==============================================================================
+# SECURITY - Auditd System Monitoring (NIST SI-4, AU-12)
+# ==============================================================================
+# Installs and configures auditd for privileged command logging and file
+# integrity monitoring. Rules cover passwd, sudoers, ssh, and firewall configs.
+# ==============================================================================
+
+- name: "SI-4/AU-12 | Install auditd and audispd-plugins"
+  ansible.builtin.apt:
+    name:
+      - auditd
+      - audispd-plugins
+    state: present
+    lock_timeout: 600
+  tags: [audit, l2-compliance, nist, si-4, au-12]
+
+- name: "SI-4/AU-12 | Configure auditd rules for privileged commands"
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/nist-hardening.rules
+    content: |
+      ## NIST 800-53 SI-4 / AU-12 Compliance Rules
+      -a always,exit -F arch=b64 -S execve -k privileged_commands
+      -a always,exit -F arch=b32 -S execve -k privileged_commands
+      -w /etc/passwd -p wa -k identity_management
+      -w /etc/group -p wa -k identity_management
+      -w /etc/shadow -p wa -k identity_management
+      -w /etc/sudoers -p wa -k sudoers_change
+      -w /var/log/auth.log -p wa -k auth_log_tampering
+      -w /etc/ssh/sshd_config -p wa -k ssh_config_change
+      -w /etc/ufw -p wa -k firewall_config
+      -w /etc/nftables.conf -p wa -k firewall_config
+      -w /etc/docker -p wa -k docker_config
+    mode: "{{ auditd_rules_file_mode }}"
+  notify: Restart auditd
+  tags: [audit, l2-compliance, nist, si-4, au-12]
+
+- name: "SI-4/AU-12 | Ensure auditd is enabled and running"
+  ansible.builtin.systemd:
+    name: auditd
+    state: started
+    enabled: true
+  # Known limitation: auditd cannot start inside containers/LXC (kernel audit
+  # subsystem is not namespaced). Config files are written correctly regardless.
+  ignore_errors: yes
+  tags: [audit, l2-compliance, nist, si-4, au-12]
+
+- name: "SI-4/AU-12 | Verify auditd is collecting logs"
+  ansible.builtin.command: auditctl -l
+  register: audit_rules
+  changed_when: false
+  failed_when: audit_rules.rc != 0
+  ignore_errors: yes
+  tags: [audit, l2-compliance, nist, si-4, au-12]
+
+# ==============================================================================
+# Caddy-specific auditd rules (NIST AU-12) - gated on app_base_dir/ingress/Caddyfile
+# ==============================================================================
+
+- name: "AU-12 | Check Caddy installation"
+  ansible.builtin.stat:
+    path: "{{ app_base_dir }}/ingress/Caddyfile"
+  register: _caddy_installed
+  tags: [audit, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Add auditd rule - Caddy config change"
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/nist-hardening.rules
+    regexp: "caddy_config_change$"
+    line: "-w {{ app_base_dir }}/ingress/Caddyfile -p wa -k caddy_config_change"
+    state: present
+  notify: Restart auditd
+  when: _caddy_installed.stat.exists
+  tags: [audit, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Add auditd rule - Caddy stack change"
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/nist-hardening.rules
+    regexp: "caddy_stack_change$"
+    line: "-w {{ app_base_dir }}/ingress -p wa -k caddy_stack_change"
+    state: present
+  notify: Restart auditd
+  when: _caddy_installed.stat.exists
+  tags: [audit, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Add auditd rule - Caddy log tampering"
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/nist-hardening.rules
+    regexp: "caddy_log_tampering$"
+    line: "-w {{ app_base_dir }}/ingress/caddy-data/logs -p wa -k caddy_log_tampering"
+    state: present
+  notify: Restart auditd
+  when: _caddy_installed.stat.exists
+  tags: [audit, l2-compliance, nist, au-12]

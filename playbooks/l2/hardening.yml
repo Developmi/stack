@@ -1,0 +1,66 @@
+---
+# ==============================================================================
+# Developmi Stack - L2 Compliance Hardening
+# ==============================================================================
+# L2 (Compliance Hardening) - extracted from site.yml Play 2.
+# Uses internal dispatch via l2_*_enabled flags - sub-roles are
+# security, user_hardening, tailscale, crowdsec (opt-in), compliance (opt-in).
+#
+# serial: 1 prevents SSH lockout during deployment.
+# Tag-filterable: --tags l2-compliance
+# Independently runnable: ansible-playbook -i inventory/hosts.ini playbooks/l2/hardening.yml --tags l2-compliance --ask-vault-pass
+# ==============================================================================
+
+- name: "L2 | Compliance - Security Hardening"
+  hosts: all
+  become: true
+  gather_facts: true
+  serial: 1  # prevent SSH lockout - one host at a time
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  tags: [l2-compliance]
+
+  pre_tasks:
+    - name: "L2 | Pre-flight: APT lock detection and cleanup"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../_shared/apt_lock_preflight.yml"
+      tags: [always]
+
+  tasks:
+    - block:
+        - name: "L2 | Stop APT systemd timers"
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: stopped
+            enabled: false
+          loop:
+            - apt-daily.timer
+            - apt-daily-upgrade.timer
+          failed_when: false
+          tags: [always]
+
+        - name: "L2 | Track timer state for rescue"
+          ansible.builtin.set_fact:
+            _apt_timers_stopped: true
+            cacheable: false
+          tags: [always]
+
+        - name: "L2 | Apply compliance hardening role"
+          ansible.builtin.include_role:
+            name: L2_compliance
+            apply:
+              tags: [l2-compliance]
+      rescue:
+        - name: "L2 | Recovery: Restore APT systemd timers"
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: started
+            enabled: true
+          loop:
+            - apt-daily.timer
+            - apt-daily-upgrade.timer
+          when: _apt_timers_stopped | default(false)
+          failed_when: false
+          tags: [always]
+
+        - name: "L2 | Re-raise original failure"
+          ansible.builtin.fail:  # yamllint disable-line rule:empty-values

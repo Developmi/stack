@@ -1,0 +1,95 @@
+---
+# -----------------------------------------------------------------
+# NIST Evidence Collection - opt-in via l2_compliance_enabled: true
+# Set in inventory/group_vars/ or pass -e l2_compliance_enabled=true
+# Evidence output: /srv/evidence/nist/<control-id>/
+# -----------------------------------------------------------------
+# ==============================================================================
+# COMPLIANCE - Evidence Collection: AU-12 (Audit Generation)
+# ==============================================================================
+# Collects: audit log configuration, last 50 audit log entries.
+# Output: /srv/evidence/nist/au-12/
+# Read-only - no services restarted, no configs modified.
+# ausearch may fail if auditd not running; failed_when: false handles it.
+# -----------------------------------------------------------------
+# NOTE: On first deploy, ausearch results will be empty - auditd rules
+# are written in the same play but the handler restart happens at play end.
+# Subsequent deploys will have full evidence.
+# ==============================================================================
+
+- name: "AU-12 | Ensure evidence directory exists"
+  ansible.builtin.file:
+    path: /srv/evidence/nist/au-12
+    state: directory
+    mode: "0755"
+  tags: [compliance, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Collect audit log config"
+  ansible.builtin.shell: |
+    set -o pipefail
+    echo "=== auditd.conf ==="
+    grep -v '^\s*\(#\|$\)' /etc/audit/auditd.conf 2>/dev/null || echo "(auditd.conf not found)"
+    echo ""
+    echo "=== auditd rules (nist-hardening) ==="
+    cat /etc/audit/rules.d/nist-hardening.rules 2>/dev/null || echo "(nist-hardening.rules not found)"
+  args:
+    executable: /bin/bash
+  register: _au12_config
+  changed_when: false
+  tags: [compliance, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Collect last 50 audit log entries"
+  ansible.builtin.shell: |
+    ausearch --format text -ts today 2>/dev/null | tail -50 || echo "(ausearch not available or no events)"
+  args:
+    executable: /bin/bash
+  register: _au12_logs
+  changed_when: false
+  failed_when: false
+  tags: [compliance, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Write audit config evidence"
+  ansible.builtin.copy:
+    dest: /srv/evidence/nist/au-12/audit_logs
+    content: |
+      {{ _au12_config.stdout }}
+      === Last 50 entries ===
+      {{ _au12_logs.stdout }}
+    mode: "0640"
+  tags: [compliance, l2-compliance, nist, au-12]
+
+# ==============================================================================
+# Caddy-specific auditd evidence (requires app_base_dir/ingress/Caddyfile)
+# ==============================================================================
+
+- name: "AU-12 | Check Caddy installation for evidence"
+  ansible.builtin.stat:
+    path: "{{ app_base_dir }}/ingress/Caddyfile"
+  register: _caddy_installed
+  tags: [compliance, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Collect Caddy auditd evidence"
+  ansible.builtin.shell: |
+    ausearch -k {{ item }} -i 2>/dev/null || echo "(no events for {{ item }})"
+  loop:
+    - caddy_config_change
+    - caddy_stack_change
+    - caddy_log_tampering
+  register: _au12_caddy_evidence
+  changed_when: false
+  failed_when: false
+  when: _caddy_installed.stat.exists
+  tags: [compliance, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Write Caddy auditd evidence"
+  ansible.builtin.copy:
+    dest: /srv/evidence/nist/au-12/caddy_audit_events
+    content: |
+      === Caddy auditd events ===
+      {% for result in _au12_caddy_evidence.results %}
+      --- {{ result.item }} ---
+      {{ result.stdout }}
+      {% endfor %}
+    mode: "0640"
+  when: _caddy_installed.stat.exists
+  tags: [compliance, l2-compliance, nist, au-12]

@@ -1,0 +1,65 @@
+---
+# ==============================================================================
+# PACKAGES - apt-mark Hold (Package Version Pinning)
+# ==============================================================================
+# Pins critical system packages at validated versions. Rollback via --tags unhold.
+# ==============================================================================
+
+- name: "L1 | Validate pinned_packages is defined for {{ inventory_hostname }}"
+  ansible.builtin.fail:
+    msg: >
+      pinned_packages variable is NOT defined for {{ inventory_hostname }}.
+      Ensure group_vars/{{ group_names[0] | default('all') }}/packages.yml exists
+      and contains a pinned_packages list.
+  when: pinned_packages is not defined
+  tags: [packages, l1-os-baseline]
+
+- name: "L1 | Pin packages via apt-mark hold"
+  ansible.builtin.command: "apt-mark hold {{ item }}"
+  loop: "{{ pinned_packages }}"
+  register: hold_results
+  changed_when: "'was already set on hold' not in hold_results.stdout"
+  tags: [packages, l1-os-baseline]
+
+- name: "L1 | Fetch currently held packages"
+  ansible.builtin.command: apt-mark showhold
+  register: _held_packages_raw
+  changed_when: false
+  when: not ansible_check_mode
+  tags: [packages, l1-os-baseline]
+
+- name: "L1 | Verify all expected packages are held"
+  ansible.builtin.assert:
+    that:
+      - item in _held_packages_list
+    fail_msg: "Package '{{ item }}' is NOT held on {{ inventory_hostname }}"
+    success_msg: "Package '{{ item }}' is held on {{ inventory_hostname }}"
+  loop: "{{ pinned_packages }}"
+  when: not ansible_check_mode
+  tags: [packages, l1-os-baseline]
+  vars:
+    _held_packages_list: "{{ _held_packages_raw.stdout_lines | default([]) }}"
+
+# ─── UNHOLD (rollback - only when tag 'unhold' is passed) ──────────────────
+- name: "⚠️  UNHOLD packages via apt-mark unhold"
+  ansible.builtin.command: "apt-mark unhold {{ item }}"
+  loop: "{{ pinned_packages }}"
+  register: unhold_results
+  changed_when: "'was already not hold' not in unhold_results.stdout"
+  tags: [never, unhold]
+  when: pinned_packages is defined
+
+- name: "L1 | Report held packages after unhold on {{ inventory_hostname }}"
+  ansible.builtin.command: apt-mark showhold
+  changed_when: false
+  register: held_after_unhold
+  tags: [never, unhold]
+  when: pinned_packages is defined
+
+- name: "L1 | Summary after unhold on {{ inventory_hostname }}"
+  ansible.builtin.debug:
+    msg:
+      - "Held after unhold on {{ inventory_hostname }}: {{ held_after_unhold.stdout_lines | default([]) | length }} packages"
+      - "   {{ held_after_unhold.stdout_lines | default([]) | join(', ') }}"
+  tags: [never, unhold]
+  when: pinned_packages is defined

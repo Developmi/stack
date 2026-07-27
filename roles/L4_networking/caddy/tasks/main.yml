@@ -1,0 +1,145 @@
+---
+# ==============================================================================
+# STACK INGRESS - Thin Dispatcher
+# ==============================================================================
+# Dispatches to backend-specific task files via reverse_proxy_backend variable.
+# All preflight assertions live here; implementation details per backend.
+#
+# Tag convention: l4-networking (layer tag) - functional tags on task files.
+# ==============================================================================
+
+- name: Preflight | Assert reverse_proxy_backend is set
+  ansible.builtin.assert:
+    that:
+      - reverse_proxy_backend is defined
+      - reverse_proxy_backend | length > 0
+    fail_msg: >-
+      reverse_proxy_backend is not set. Set reverse_proxy_backend: caddy
+      in inventory/group_vars/all/main.yml.
+    success_msg: "reverse_proxy_backend = {{ reverse_proxy_backend }}."
+  tags: [l4-networking]
+
+- name: Preflight | Assert backend task file exists
+  ansible.builtin.stat:
+    path: "{{ role_path }}/tasks/{{ reverse_proxy_backend }}.yml"
+  register: _backend_task_file
+  delegate_to: localhost
+  tags: [l4-networking]
+
+- name: Preflight | Fail if backend is not implemented
+  ansible.builtin.fail:
+    msg: >-
+      Backend '{{ reverse_proxy_backend }}' not implemented.
+      Available: caddy.
+      Create roles/L4_networking/caddy/tasks/{{ reverse_proxy_backend }}.yml
+      to add support.
+  when: not _backend_task_file.stat.exists
+  tags: [l4-networking]
+
+- name: Preflight | Assert ingress routing catalog is defined
+  ansible.builtin.assert:
+    that:
+      - ingress_services is defined
+      - ingress_services | length > 0
+      - ingress_security_profiles is defined
+    fail_msg: >-
+      ingress_services is empty or undefined.
+      Vault may not be decrypted or secrets.yml is malformed.
+      Aborting to prevent deploying an empty Caddyfile.
+      Verify: ansible-vault view inventory/group_vars/all/secrets.yml
+    success_msg: "Ingress routing catalog is present - {{ ingress_services | length }} service(s) defined."
+  tags: [l4-networking]
+
+- name: Preflight | Assert each ingress service has required fields
+  ansible.builtin.assert:
+    that:
+      - item.domain is defined
+      - item.domain | length > 0
+      - item.upstream is defined
+      - item.upstream | length > 0
+      - item.security_profile is defined
+      - ingress_security_profiles[item.security_profile] is defined
+      - item.target_group is defined
+      - item.target_group | length > 0
+    fail_msg: >-
+      Invalid ingress service entry {{ item | to_nice_json }}.
+      Each item requires client, domain, upstream, target_group,
+      and a valid security_profile.
+  loop: "{{ ingress_services }}"
+  loop_control:
+    label: "{{ item.domain | default('unknown-domain') }}"
+  tags: [l4-networking]
+
+- name: Preflight | Validate caddy_type is set
+  ansible.builtin.assert:
+    that:
+      - caddy_type is defined
+      - caddy_type in ['brain', 'muscle']
+    fail_msg: >-
+      caddy_type must be 'brain' or 'muscle', got '{{ caddy_type | default('undefined') }}'.
+      Ensure the node is in [brain] or [muscle] in inventory/hosts.ini
+      and that inventory/group_vars/{{ caddy_type | default('unknown') }}/caddy.yml exists.
+    success_msg: "caddy_type is valid: {{ caddy_type }}."
+  tags: [l4-networking]
+
+# --- cert_name backward compatibility (multi-tenancy-implementation) ---
+# ADR-03: cert_name is REMOVED in favor of client-based cert derivation.
+# Services still using cert_name will get a deprecation warning but deployment
+# continues. The cert_name field is ignored - certs are resolved via svc.client.
+- name: Preflight | DEPRECATION - warn on cert_name presence (migrate to client)
+  ansible.builtin.debug:
+    msg: >-
+      ⚠️  DEPRECATION: Ingress service '{{ item.name | default('unnamed') }}'
+      still defines cert_name='{{ item.cert_name }}'.
+      cert_name is obsolete - migrate to client: field.
+      The cert_name value is IGNORED. Cert path derived from client instead.
+      See docs/operations/MULTI_TENANCY.md §4 for migration guide.
+  loop: "{{ ingress_services | selectattr('cert_name', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name | default('unnamed') }}"
+  when: ingress_services | selectattr('cert_name', 'defined') | list | length > 0
+  tags: [l4-networking]
+
+# --- Always-run support tasks (backend-independent) ---
+# These deploy certs, WAF config, and render the Caddyfile BEFORE
+# the backend-specific compose deploy. Execution order matters:
+# files must exist on disk before docker compose starts.
+
+# Pre-flight: userns detection (shared by certs.yml and caddy.yml)
+# ------------------------------------------------------------------------------
+# Resolves _caddy_effective_uid/_caddy_effective_gid BEFORE any task file
+# that writes files needing container-runtime ownership (certs, data dirs).
+# Without this, certs.yml evaluates them as 0 (root), and the Caddy container
+# (UID 1337) cannot read them → TLS broken on all HTTPS virtual hosts.
+# ------------------------------------------------------------------------------
+# Output facts: _caddy_effective_uid, _caddy_effective_gid, _caddy_userns_enabled, _caddy_userns_gid_offset
+- name: AU-12/SI-4 | Detect Docker userns-remap to compute bind-mount ownership
+  ansible.builtin.include_tasks: "{{ role_path }}/../../_shared/userns_detect.yml"
+  vars:
+    userns_container_uid: "{{ caddy_user_uid }}"
+    userns_container_gid: "{{ caddy_user_gid }}"
+    userns_output_prefix: _caddy
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+# Compute effective target groups: group_names + caddy_node_id.
+# Used by cert resolution, WAF profile selection, and Caddyfile.j2 routing.
+- name: Resolve effective target groups for this node
+  ansible.builtin.set_fact:
+    _caddy_effective_groups: "{{ group_names + ([caddy_node_id] if caddy_node_id is defined else []) }}"
+  tags: [l4-networking]
+
+- name: Include cert deployment tasks
+  ansible.builtin.include_tasks: certs.yml
+  tags: [l4-networking]
+
+- name: Include WAF deployment tasks
+  ansible.builtin.include_tasks: waf.yml
+  tags: [l4-networking]
+
+- name: Include ingress routing tasks
+  ansible.builtin.include_tasks: ingress.yml
+  tags: [l4-networking]
+
+- name: Include backend-specific tasks
+  ansible.builtin.include_tasks: "{{ reverse_proxy_backend }}.yml"
+  tags: [l4-networking]

@@ -1,0 +1,16 @@
+---
+# ==============================================================================
+# Developmi Stack | L6 Runtime Backup - Database auto-discovery
+# ==============================================================================
+# Purpose: Auto-discover PostgreSQL and MariaDB Docker containers, dump all
+# databases via pg_dumpall/mariadb-dump, compress with gzip --rsyncable, and
+# stream into the existing restic repository.
+# Depends on: backup-stack role (provides /etc/restic/env + restic repo)
+# ==============================================================================
+
+- name: "L6 | Runtime Backup - Database auto-discovery (Restic → R2)"
+  hosts: muscle
+  become: true
+  tags: [l6-runtime, backup-db]
+  roles:
+    - role: L6_runtime/backup-db

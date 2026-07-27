@@ -1,0 +1,19 @@
+[Unit]
+Description=Weekly Restic integrity check - {{ ansible_hostname }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/restic/env
+Environment="RESTIC_CACHE_DIR=/var/cache/restic"
+Environment="TMPDIR=/var/tmp/restic"
+ExecStartPre=/bin/mkdir -p /var/cache/restic /var/tmp/restic
+ExecStart=/usr/local/bin/restic check
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+TimeoutStopSec=2h
+
+[Install]
+WantedBy=default.target

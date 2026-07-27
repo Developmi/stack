@@ -1,0 +1,43 @@
+---
+# ==============================================================================
+# COMMON - Base System Utilities
+# ==============================================================================
+# Installs core packages needed by all roles.
+# validate-before-act: only runs when at least one package is missing.
+# OS-specific package setup moved to OS-specific task dirs.
+# L1 OS baseline - architecture-agnostic (apt is multi-arch).
+# ==============================================================================
+
+# ponytail: per-package install - if one package is missing from repos (e.g. jq
+# on hosts with misconfigured mirrors), only that one fails. All-or-nothing apt
+# list would block the entire task. Each package gets its own validate-before-act.
+- name: "L1 | Install base system utilities"
+  ansible.builtin.apt:
+    name: "{{ item }}"
+    update_cache: true
+    state: present
+    lock_timeout: 600
+  loop:
+    - curl
+    - wget
+    - git
+    - tar
+    - jq
+    - python3-pip
+    - gnupg
+    - ca-certificates
+  when: "item not in ansible_facts.packages"
+  tags: [common, l1-os-baseline]
+
+- name: "L1 | Configure system limits (nofile, nproc)"
+  community.general.pam_limits:
+    domain: "*"
+    limit_type: "{{ item.type }}"
+    limit_item: "{{ item.item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { type: "soft", item: "nofile", value: "{{ systemd_nofile_soft }}" }
+    - { type: "hard", item: "nofile", value: "{{ systemd_nofile_hard }}" }
+    - { type: "soft", item: "nproc", value: "{{ systemd_nproc_soft }}" }
+    - { type: "hard", item: "nproc", value: "{{ systemd_nproc_hard }}" }
+  tags: [common, l1-os-baseline]

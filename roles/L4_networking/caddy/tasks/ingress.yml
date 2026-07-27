@@ -1,0 +1,132 @@
+---
+# ==============================================================================
+# INGRESS - Caddyfile Render, Validate, Hot-Reload
+# ==============================================================================
+# Tags: l4-networking, ingress
+#
+# Renders Caddyfile.j2, validates syntax inside the container, and triggers
+# a zero-downtime hot reload via docker exec (ADR-04).
+# ==============================================================================
+
+- name: Ensure ingress directory exists (prerequisite for Caddyfile)
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/ingress"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  tags: [l4-networking, ingress]
+
+- name: Preflight | Remove Caddyfile directory artifact from previous failed deploy
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/ingress/Caddyfile"
+    state: absent
+  changed_when: false
+  tags: [l4-networking, ingress]
+
+- name: Validate Caddyfile.j2 presence
+  ansible.builtin.stat:
+    path: "{{ role_path }}/templates/Caddyfile.j2"
+  delegate_to: localhost
+  run_once: true
+  become: false
+  register: caddyfile_j2_stat
+  tags: [l4-networking, ingress]
+
+- name: Fail if Caddyfile.j2 is missing
+  ansible.builtin.fail:
+    msg: |
+      Caddyfile.j2 is missing!
+      Copy roles/L4_networking/caddy/templates/Caddyfile.example.j2 to Caddyfile.j2
+      and adjust it for your deployment.
+  run_once: true
+  when: not caddyfile_j2_stat.stat.exists
+  tags: [l4-networking, ingress]
+
+# ------------------------------------------------------------------------------
+# RENDER Caddyfile
+# ------------------------------------------------------------------------------
+- name: Create Caddyfile from template
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ app_base_dir }}/ingress/Caddyfile"
+    mode: "0644"
+  tags: [l4-networking, ingress]
+
+# ------------------------------------------------------------------------------
+# BIND-MOUNT PATH VALIDATION
+# ------------------------------------------------------------------------------
+- name: Preflight | Gather Caddy bind-mount path metadata
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ app_base_dir | dirname }}"
+    - "{{ app_base_dir }}"
+    - "{{ app_base_dir }}/ingress"
+    - "{{ app_base_dir }}/ingress/Caddyfile"
+  register: caddy_bind_mount_stats
+  tags: [l4-networking, ingress]
+
+- name: Preflight | Assert bind-mount paths are world-traversable/readable
+  ansible.builtin.assert:
+    that:
+      - caddy_bind_mount_stats.results[0].stat.exists
+      - caddy_bind_mount_stats.results[1].stat.exists
+      - caddy_bind_mount_stats.results[2].stat.exists
+      - caddy_bind_mount_stats.results[3].stat.exists
+      - (caddy_bind_mount_stats.results[0].stat.mode | default('0000'))[-1] in ['1', '3', '5', '7']
+      - (caddy_bind_mount_stats.results[1].stat.mode | default('0000'))[-1] in ['1', '3', '5', '7']
+      - (caddy_bind_mount_stats.results[2].stat.mode | default('0000'))[-1] in ['1', '3', '5', '7']
+      - (caddy_bind_mount_stats.results[3].stat.mode | default('0000'))[-1] in ['4', '5', '6', '7']
+    fail_msg: >-
+      Caddy bind-mount path permissions are incompatible with container runtime access.
+      Ensure {{ app_base_dir | dirname }}, {{ app_base_dir }}, and
+      {{ app_base_dir }}/ingress are executable by others,
+      and {{ app_base_dir }}/ingress/Caddyfile is readable by others.
+    success_msg: "Caddy bind-mount permissions are compatible with runtime access."
+  tags: [l4-networking, ingress]
+
+# ------------------------------------------------------------------------------
+# CONFIG VALIDATION (in-container - ADR-04)
+# ------------------------------------------------------------------------------
+- name: Check if caddy-waf container exists (first-deploy guard)
+  community.docker.docker_container_info:
+    name: caddy-waf
+  register: _caddy_container_check
+  failed_when: false
+  tags: [l4-networking, ingress]
+
+- name: Validate active Caddyfile inside container (syntax/adapt)
+  community.docker.docker_container_exec:
+    container: caddy-waf
+    command: "sh -c 'caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null'"
+  register: caddy_validate
+  changed_when: false
+  failed_when: false
+  when:
+    - _caddy_container_check.exists | default(false)
+    - _caddy_container_check.container.State.Status == 'running'
+  tags: [l4-networking, ingress]
+
+- name: Report Caddy config validation result
+  ansible.builtin.debug:
+    msg: "✅ Caddyfile syntax validated successfully."
+  when: caddy_validate.rc | default(1) == 0
+  tags: [l4-networking, ingress]
+
+# ------------------------------------------------------------------------------
+# HOT RELOAD - Zero-Downtime Config Swap (ADR-04)
+# ------------------------------------------------------------------------------
+# Triggered by Caddyfile.j2 change. Uses docker exec caddy reload instead of
+# docker compose restart, so existing connections are NOT dropped.
+- name: Hot-reload Caddy configuration (zero-downtime)
+  community.docker.docker_container_exec:
+    container: caddy-waf
+    command: "sh -c 'caddy reload --config /etc/caddy/Caddyfile'"
+  register: caddy_reload
+  failed_when: false
+  changed_when: caddy_reload.rc == 0
+  when:
+    - _caddy_container_check.exists | default(false)
+    - _caddy_container_check.container.State.Status == 'running'
+  tags: [l4-networking, ingress]

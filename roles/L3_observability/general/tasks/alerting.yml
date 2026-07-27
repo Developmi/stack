@@ -1,0 +1,37 @@
+---
+# =============================================================================
+# L3 OBSERVABILITY - Grafana Alert Rule Provisioning
+# =============================================================================
+# Deploys Prometheus-compatible alert rules as a Grafana provisioning file.
+# Grafana picks up rules from /etc/grafana/provisioning/alerting/ on start.
+# =============================================================================
+
+- name: Render Grafana alert rules
+  ansible.builtin.template:
+    src: grafana-alert-rules.yml.j2
+    dest: "{{ app_base_dir }}/observability/grafana-alert-rules.yml"
+    mode: "0644"
+  tags:
+    - l3-observability
+    - observability
+    - monitoring
+    - stack
+    - observability_stack
+    - grafana
+    - alerting
+    - observability_assets
+
+- name: Deploy Grafana notification channel
+  ansible.builtin.template:
+    src: grafana-notifier.yml.j2
+    dest: "{{ app_base_dir }}/observability/grafana-notifier.yml"
+    mode: "0640"
+  tags:
+    - l3-observability
+    - observability
+    - monitoring
+    - stack
+    - observability_stack
+    - grafana
+    - alerting
+    - observability_assets

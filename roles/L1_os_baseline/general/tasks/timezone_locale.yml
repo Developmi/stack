@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# COMMON - Timezone & Locale
+# ==============================================================================
+# Sets system timezone to UTC and locale to en_US.UTF-8.
+# Swap management removed per L1 boundary: swap is L6 runtime concern.
+# ==============================================================================
+
+- name: "L1 | Configure timezone (Etc/UTC)"
+  ansible.builtin.lineinfile:
+    path: /etc/environment
+    line: "TZ=Etc/UTC"
+    create: true
+    mode: "{{ file_mode_default }}"
+    state: present
+  tags: [common, l1-os-baseline]
+
+- name: "L1 | Ensure locales package is installed"
+  ansible.builtin.apt:
+    name: locales
+    state: present
+    update_cache: true
+  tags: [common, l1-os-baseline]
+
+- name: "L1 | Set system locale to en_US.UTF-8"
+  community.general.locale_gen:
+    name: en_US.UTF-8
+    state: present
+  tags: [common, l1-os-baseline]

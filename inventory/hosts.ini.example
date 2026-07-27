@@ -1,0 +1,58 @@
+# ==============================================================================
+# ANSIBLE INVENTORY - Multi-Cloud Cluster (Template)
+# ==============================================================================
+# Copy to hosts.ini and replace placeholder values.
+# Never commit hosts.ini (contains server IPs).
+#
+# Variable ownership:
+#   vault (secrets.yml)  -> secrets, domains, certificates
+#   inventory            -> host-specific values (ansible_user, caddy_node_id, caddy_coraza_mode)
+#   group_vars           -> group defaults (caddy_type, caddy_admin_enabled)
+#
+# ansible_user is ALWAYS defined per host:
+#   Debian     -> root
+#   Ubuntu OCI -> ubuntu
+#   Custom     -> <your_user>
+# ==============================================================================
+
+# ===== MANAGEMENT NODES =====
+[brain]
+# caddy_coraza_mode: On | DetectionOnly | Off
+brain-1 ansible_host=YOUR_BRAIN_PUBLIC_IP ansible_user=root public_ip=YOUR_BRAIN_PUBLIC_IP node_role=management caddy_node_id=brain-1 caddy_coraza_mode=On
+# brain-2 ansible_host=SECOND_PUBLIC_IP ansible_user=root public_ip=SECOND_PUBLIC_IP node_role=management caddy_node_id=brain-2 caddy_coraza_mode=DetectionOnly
+
+# ===== WORKER NODES =====
+[muscle]
+# DetectionOnly is recommended before enabling On.
+muscle-1 ansible_host=YOUR_MUSCLE_PUBLIC_IP ansible_user=ubuntu public_ip=YOUR_MUSCLE_PUBLIC_IP node_role=worker caddy_node_id=muscle-1 caddy_coraza_mode=DetectionOnly
+# muscle-2 ansible_host=ANOTHER_PUBLIC_IP ansible_user=ubuntu public_ip=ANOTHER_PUBLIC_IP node_role=worker caddy_node_id=muscle-2 caddy_coraza_mode=DetectionOnly
+
+# ===== LOCAL DEVICES =====
+# Personal machines connected through Tailscale.
+# Only hardening + Docker are installed (no application stack).
+[local]
+# local-pc ansible_host=100.x.x.x ansible_user=user
+
+# ===== FUNCTIONAL GROUPS =====
+[observability:children]
+brain
+
+[ingress:children]
+brain
+muscle
+
+[application_nodes:children]
+muscle
+
+# ===== GLOBAL VARIABLES =====
+[all:vars]
+ansible_ssh_private_key_file=~/.ssh/id_ed25519
+ansible_ssh_common_args='-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3'
+ansible_python_interpreter=/usr/bin/python3
+
+cluster_name=nist_hardened_cluster
+app_base_dir=/srv/app
+
+# Optional overrides
+# cloud_provider=hetzner   # oci | aws | gcp | azure
+# server_role=brain        # brain | muscle

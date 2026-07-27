@@ -1,0 +1,377 @@
+---
+# ==============================================================================
+# SECURITY - OCI Killswitch (NIST AC-2)
+# ==============================================================================
+# Disables Oracle Cloud default cloud-init users (ubuntu),
+# flushes OCI-default iptables (allow-all inbound),
+# and disables Oracle Cloud Agent.
+# Only applied when hardening_profile == 'server'.
+# GID noop for non-OCI hosts.
+#
+# Safety: backup + Deadman (5-min at auto-restore) + rescue block
+# prevent firewall lockout on OCI nodes.
+# ==============================================================================
+
+- name: "OCI Killswitch | Detect Docker installation"
+  ansible.builtin.stat:
+    path: /usr/bin/docker
+  register: docker_binary
+  tags: [oci, l2-compliance, nist, ac-2]
+
+- name: "OCI Killswitch | Set docker_installed fact"
+  ansible.builtin.set_fact:
+    docker_installed: "{{ docker_binary.stat.exists }}"
+  tags: [oci, l2-compliance, nist, ac-2]
+
+- name: "OCI Killswitch | Probe OCI metadata endpoint (for KVM-based detection)"
+  ansible.builtin.uri:
+    url: http://169.254.169.254/opc/v2/instance/
+    timeout: 2
+  register: _oci_metadata_probe
+  failed_when: false
+  changed_when: false
+  when: ansible_facts['system_vendor'] == 'QEMU'
+  tags: [oci, l2-compliance, nist, ac-2]
+
+- name: "OCI Killswitch | Flush iptables, lock cloud-agent, lock ubuntu"
+  when: >
+    ansible_facts['system_vendor'] in ['OracleCloud', 'OracleCloud.com', 'Oracle Corporation']
+    or (_oci_metadata_probe is defined and _oci_metadata_probe.status is defined and _oci_metadata_probe.status == 200)
+  tags: [oci, l2-compliance, nist, ac-2]
+  block:
+
+    # ======================================================================
+    # PRE-FLIGHT - install dependencies + verify binaries (DD-2)
+    # ======================================================================
+    # Fail-fast BEFORE any destructive operation.
+    # On re-run with mask present, pre-flight still runs (read-only checks),
+    # but the inner destructive block is skipped.
+
+    - name: "Killswitch | Pre-flight - install iptables-persistent"
+      ansible.builtin.apt:
+        name: iptables-persistent
+        state: present
+        update_cache: true
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      tags: [iptables, oci]
+
+    - name: "Killswitch | Pre-flight - install at (for Deadman scheduling)"
+      ansible.builtin.apt:
+        name: at
+        state: present
+        update_cache: true
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      tags: [iptables, oci]
+
+    - name: "Killswitch | Pre-flight - stat netfilter-persistent binary"
+      ansible.builtin.stat:
+        path: /usr/sbin/netfilter-persistent
+      register: _nfp_binary
+      tags: [iptables, oci]
+
+    - name: "Killswitch | Pre-flight - check atd is active"
+      ansible.builtin.command: systemctl is-active atd  # noqa: command-instead-of-module
+      register: _atd_status
+      changed_when: false
+      failed_when: false
+      tags: [iptables, oci]
+
+    - name: "Killswitch | Pre-flight - fail-fast with aggregate diagnostics"
+      ansible.builtin.fail:
+        msg: >-
+          Killswitch prerequisites missing - aborting before any destructive operation:
+          {% if not _nfp_binary.stat.exists %}
+          - netfilter-persistent not found (install iptables-persistent package)
+          {% endif %}
+          {% if _atd_status.stdout != 'active' %}
+          - atd is not running (install at package, enable atd.service)
+          {% endif %}
+      when: not _nfp_binary.stat.exists or _atd_status.stdout != 'active'
+      tags: [iptables, oci]
+
+    - name: "Killswitch | Check killswitch mask file (idempotency gate)"
+      ansible.builtin.stat:
+        path: /etc/iptables/.killswitch_masked
+      register: _killswitch_masked
+      tags: [iptables, oci]
+
+    # ======================================================================
+    # DESTRUCTIVE SECTION - backup, deadman, flush, UFW, cancel, mask
+    # ======================================================================
+    # Only executes if mask file does NOT exist (idempotency).
+    # Wrapped in block/rescue for auto-recovery on any failure.
+
+    - name: "Killswitch | Destructive section (skip if masked)"
+      when: not _killswitch_masked.stat.exists
+      block:
+
+        # ---- Phase 1: Backup + Deadman (DD-1) ----
+        # Backup iptables rules BEFORE any destructive operation.
+        # Schedule 5-min auto-restore Deadman via atd.
+
+        - name: "Killswitch | Backup iptables rules before flush"
+          ansible.builtin.copy:
+            content: "{{ lookup('ansible.builtin.pipe', 'iptables-save') }}"
+            dest: /etc/iptables/rules.v4.backup
+            mode: "0600"
+          changed_when: false
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Backup ip6tables rules before flush"
+          ansible.builtin.copy:
+            content: "{{ lookup('ansible.builtin.pipe', 'ip6tables-save') }}"
+            dest: /etc/iptables/rules.v6.backup
+            mode: "0600"
+          changed_when: false
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Stat backup file (v4)"
+          ansible.builtin.stat:
+            path: /etc/iptables/rules.v4.backup
+          register: _iptables_v4_backup
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Stat backup file (v6)"
+          ansible.builtin.stat:
+            path: /etc/iptables/rules.v6.backup
+          register: _iptables_v6_backup
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Schedule Deadman - auto-restore in 5 minutes"
+          ansible.builtin.shell: |
+            echo "iptables-restore < /etc/iptables/rules.v4.backup && ip6tables-restore < /etc/iptables/rules.v6.backup 2>&1 | logger -t killswitch-deadman" | at now + 5 minutes 2>/dev/null
+          changed_when: false
+          tags: [iptables, oci]
+
+        # ---- Phase 2: iptables flush (DD-1 + ADR-02) ----
+        # DROP-before-flush order preserved from existing logic.
+
+        # === IPv4 ===
+        - name: "Killswitch | Set iptables default policy to DROP (IPv4)"
+          ansible.builtin.iptables:
+            chain: INPUT
+            policy: DROP
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Flush iptables - all chains (IPv4)"
+          ansible.builtin.iptables:
+            chain: "{{ item }}"
+            flush: true
+          loop: [INPUT, FORWARD, OUTPUT]
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Set FORWARD policy (IPv4)"
+          ansible.builtin.iptables:
+            chain: FORWARD
+            policy: "{{ 'ACCEPT' if docker_installed | bool else 'DROP' }}"
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Set OUTPUT policy (IPv4)"
+          ansible.builtin.iptables:
+            chain: OUTPUT
+            policy: ACCEPT
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Allow SSH during UFW transition"
+          ansible.builtin.iptables:
+            chain: INPUT
+            protocol: tcp
+            destination_port: "{{ ansible_port | default(22) }}"
+            jump: ACCEPT
+            comment: "Fallback SSH gate if UFW fails; safe because sshd AllowUsers enforces CIDR limits."
+          tags: [iptables, oci]
+
+        # === IPv6 ===
+        - name: "Killswitch | Set ip6tables default policy to DROP (IPv6)"
+          ansible.builtin.iptables:
+            ip_version: ipv6
+            chain: INPUT
+            policy: DROP
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Flush ip6tables - all chains (IPv6)"
+          ansible.builtin.iptables:
+            ip_version: ipv6
+            chain: "{{ item }}"
+            flush: true
+          loop: [INPUT, FORWARD, OUTPUT]
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Set FORWARD policy (IPv6)"
+          ansible.builtin.iptables:
+            ip_version: ipv6
+            chain: FORWARD
+            policy: "{{ 'ACCEPT' if docker_installed | bool else 'DROP' }}"
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Set OUTPUT policy (IPv6)"
+          ansible.builtin.iptables:
+            ip_version: ipv6
+            chain: OUTPUT
+            policy: ACCEPT
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Allow SSH during UFW transition (IPv6)"
+          ansible.builtin.iptables:
+            ip_version: ipv6
+            chain: INPUT
+            protocol: tcp
+            destination_port: "{{ ansible_port | default(22) }}"
+            jump: ACCEPT
+            comment: "Backup SSH gate if UFW fails; safe via independent sshd AllowUsers restrictions."
+          tags: [iptables, oci]
+
+        # ---- Phase 3: Persist flushed rules ----
+        - name: "Killswitch | Install iptables-persistent + netfilter-persistent"
+          ansible.builtin.apt:
+            name:
+              - iptables-persistent
+              - netfilter-persistent
+            state: present
+            update_cache: true
+          environment:
+            DEBIAN_FRONTEND: noninteractive
+          tags: [iptables, oci]
+
+        # ponytail: safe because mask gate (killswitch_masked.stat.exists) prevents re-run
+        - name: "Killswitch | Save flushed rules via netfilter-persistent"
+          ansible.builtin.command: netfilter-persistent save  # noqa: no-changed-when
+          changed_when: false
+          tags: [iptables, oci]
+
+        # ---- Phase 4: Restart Docker + trigger UFW reload ----
+        - name: "Killswitch | Restart Docker to re-insert iptables rules"
+          ansible.builtin.systemd:
+            name: docker
+            state: restarted
+          when: docker_installed | bool
+          tags: [docker, oci]
+
+        - name: "Killswitch | Force UFW reload trigger"
+          ansible.builtin.file:
+            path: /etc/ufw/.reload_trigger
+            state: touch
+          changed_when: true
+          notify: Reload UFW
+
+        # ---- Phase 5: Cancel Deadman + mask (DD-1) ----
+        # Directory creation BEFORE mask touch (critical per design).
+
+        - name: "Killswitch | Ensure /etc/iptables directory exists"
+          ansible.builtin.file:
+            path: /etc/iptables
+            state: directory
+            mode: "0755"
+          changed_when: false
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Cancel Deadman - UFW is active"
+          ansible.builtin.shell: atq | grep 'iptables-restore' | awk '{print $1}' | xargs -r atrm
+          changed_when: false
+          failed_when: false
+          tags: [iptables, oci]
+
+        - name: "Killswitch | Create mask file - idempotency marker"
+          ansible.builtin.file:
+            path: /etc/iptables/.killswitch_masked
+            state: touch
+            mode: "0600"
+          tags: [iptables, oci]
+
+      # ====================================================================
+      # RESCUE BLOCK (DD-1)
+      # ====================================================================
+      # Fires on ANY task failure inside the inner destructive block.
+      # Restores backup if it exists, or sets INPUT ACCEPT to prevent lockout.
+      # Cancels Deadman specifically, then re-raises the original failure.
+      rescue:
+
+        - name: "Killswitch | RESCUE - restore iptables from backup (if exists)"
+          ansible.builtin.shell: iptables-restore < /etc/iptables/rules.v4.backup
+          failed_when: false
+          changed_when: false
+          when: _iptables_v4_backup.stat is defined and _iptables_v4_backup.stat.exists
+
+        - name: "Killswitch | RESCUE - restore ip6tables from backup (if exists)"
+          ansible.builtin.shell: ip6tables-restore < /etc/iptables/rules.v6.backup
+          failed_when: false
+          changed_when: false
+          when: _iptables_v6_backup.stat is defined and _iptables_v6_backup.stat.exists
+
+        - name: "Killswitch | RESCUE - prevent lockout if no backup (IPv4+IPv6)"
+          ansible.builtin.command: "{{ item }}"
+          loop:
+            - iptables -P INPUT ACCEPT
+            - ip6tables -P INPUT ACCEPT
+          changed_when: false
+          when: not (_iptables_v4_backup.stat is defined and _iptables_v4_backup.stat.exists)
+
+        - name: "Killswitch | RESCUE - cancel Deadman specifically"
+          ansible.builtin.shell: atq | grep 'iptables-restore' | awk '{print $1}' | xargs -r atrm
+          failed_when: false
+          changed_when: false
+
+        - name: "Killswitch | RESCUE - re-raise original failure"
+          ansible.builtin.fail:
+            msg: >-
+              {% if _iptables_v4_backup.stat.exists %}
+              OCI Killswitch FAILED - iptables restored from backup,
+              Deadman cancelled. Original error:
+              {% else %}
+              OCI Killswitch FAILED - backup was never created.
+              iptables INPUT set to ACCEPT to prevent lockout.
+              Original error:
+              {% endif %}
+              {{ ansible_failed_result.msg | default('See task output above') }}
+
+    # ======================================================================
+    # CLEANUP - Cloud Agent + ubuntu user (outside destructive section)
+    # ======================================================================
+    # Runs in the outer block, after the inner destructive block.
+    # Only executes if the destructive section succeeded (rescue re-raises
+    # failure, stopping cleanup from running - correct behavior:
+    # if the killswitch failed, we don't partially modify cloud-agent state).
+
+    - name: "Killswitch | Stop Oracle Cloud Agent services"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - oracle-cloud-agent
+        - oracle-cloud-agent-updater
+        - snap.oracle-cloud-agent.oracle-cloud-agent
+      ignore_errors: true
+      tags: [oci, cloud-agent]
+
+    - name: "Killswitch | Disable Oracle Cloud Agent"
+      ansible.builtin.systemd:
+        name: oracle-cloud-agent
+        enabled: false
+      tags: [oci, cloud-agent]
+
+    - name: "Killswitch | Mask Oracle Cloud Agent + updater"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        masked: true
+      loop:
+        - oracle-cloud-agent
+        - oracle-cloud-agent-updater
+      tags: [oci, cloud-agent]
+
+    - name: "AC-2 | Disable OCI default cloud-init user (ubuntu)"
+      ansible.builtin.user:
+        name: ubuntu
+        shell: /usr/sbin/nologin
+        password_lock: true
+        expires: "{{ 0 if hardening_profile == 'server' else omit }}"
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      tags: [nist, ac-2]
+
+    - name: "AC-2 | Lock OCI default user password"
+      ansible.builtin.command: passwd -l ubuntu  # noqa: command-instead-of-module
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      changed_when: false
+      failed_when: false
+      tags: [nist, ac-2]

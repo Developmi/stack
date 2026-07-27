@@ -1,0 +1,24 @@
+---
+# n8n - Workflow Automation (L5)
+name: n8n
+version: "2.20.6"
+supported_arch: [amd64, arm64]
+target_group: muscle-3
+
+depends_on: []
+
+backup:
+  schedule: "*-*-* 00/4:00:00"
+  retention_daily: 7
+  retention_weekly: 4
+  retention_monthly: 12
+  db_type: postgres
+  db_name: n8n
+
+monitoring:
+  health_endpoint: "/healthz"
+  health_port: 5678
+  scrape_port: 5678
+
+compliance_tags: [nist, ac-2, nist, sc-7, nist, sc-8]
+dr_tier: critical

@@ -1,0 +1,495 @@
+---
+# ==============================================================================
+# CADDY - User, Directories, Compose Deploy, Health Check
+# ==============================================================================
+# Tags: l4-networking, caddy
+# ==============================================================================
+
+- name: Preflight | Assert Caddy UID/GID are aligned with caddy-waf image
+  ansible.builtin.assert:
+    that:
+      - caddy_user_uid | int == 1337
+      - caddy_user_gid | int == 1337
+    fail_msg: >-
+      caddy_user_uid/caddy_user_gid must be 1337:1337 for the pinned caddy-waf image.
+      Update inventory/group_vars/all/images.yml before deploy.
+    success_msg: "Caddy UID/GID preflight is aligned to 1337:1337."
+  tags: [l4-networking, caddy, nist, ac-2]
+
+- name: Preflight | Assert ingress compose policies are valid
+  ansible.builtin.assert:
+    that:
+      - ingress_compose_pull_policy in ['always', 'missing', 'never', 'policy']
+      - ingress_compose_recreate_policy in ['always', 'never', 'auto']
+      - ingress_compose_wait_timeout | int > 0
+    fail_msg: >-
+      Invalid ingress compose policy configuration. Expected:
+      ingress_compose_pull_policy in [always, missing, never, policy],
+      ingress_compose_recreate_policy in [always, never, auto],
+      ingress_compose_wait_timeout > 0.
+    success_msg: "Ingress compose policy preflight is valid."
+  tags: [l4-networking, caddy]
+
+# ------------------------------------------------------------------------------
+# USER / GROUP (AC-2)
+# ------------------------------------------------------------------------------
+- name: AC-2 | Ensure dedicated caddy system group exists (no shell, no home)
+  ansible.builtin.group:
+    name: caddy
+    gid: "{{ caddy_user_gid | int }}"
+    system: false
+  tags: [l4-networking, caddy, nist, ac-2]
+
+- name: AC-2 | Ensure dedicated caddy user exists with pinned UID/GID (no shell, no home)
+  ansible.builtin.user:
+    name: caddy
+    uid: "{{ caddy_user_uid | int }}"
+    group: caddy
+    system: false
+    create_home: false
+    shell: /usr/sbin/nologin
+    comment: "Caddy web server service account"
+  tags: [l4-networking, caddy, nist, ac-2]
+
+# ------------------------------------------------------------------------------
+# SYSCTL - QUIC/HTTP3 UDP buffers
+# ------------------------------------------------------------------------------
+- name: Optimize network UDP buffers for Caddy (HTTP/3)
+  ansible.posix.sysctl:
+    name: "{{ item }}"
+    value: '7500000'
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - net.core.rmem_max
+    - net.core.wmem_max
+  ignore_errors: yes
+  changed_when: false
+  tags: [l4-networking, caddy]
+  # Known limitation: net.core.rmem_max/wmem_max may be read-only inside
+  # containers/LXC (shared kernel netns). Config is best-effort for HTTP/3
+  # performance tuning. Caddy falls back to kernel defaults when this fails.
+  # changed_when: false prevents Molecule false positive - the config file
+  # (written by ansible.posix.sysctl) is already idempotent; only the live
+  # sysctl -w always reports changed.
+
+# ------------------------------------------------------------------------------
+# DIRECTORIES - Host filesystem
+# ------------------------------------------------------------------------------
+- name: Ensure ingress stack directory exists
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/ingress"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  tags: [l4-networking, caddy]
+
+- name: Ensure bind-mount parent directories are traversable for container runtime
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  loop:
+    - "{{ app_base_dir | dirname }}"
+    - "{{ app_base_dir }}"
+  tags: [l4-networking, caddy]
+
+- name: Create Caddy data directories for persistent storage
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/ingress/{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+  loop:
+    - "caddy-data"
+    - "caddy-config"
+  tags: [l4-networking, caddy]
+
+- name: Create host cert directory for container bind-mount
+  ansible.builtin.file:
+    path: "/srv/caddy/certs"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  tags: [l4-networking, caddy]
+
+- name: AC-2 | Normalize Caddy runtime data directory ownership recursively
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/ingress/{{ item }}"
+    state: directory
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+    recurse: true
+  loop:
+    - "caddy-data"
+    - "caddy-config"
+  tags: [l4-networking, caddy, nist, ac-2]
+
+# ------------------------------------------------------------------------------
+# LOGS + CROWDSEC ACL
+# ------------------------------------------------------------------------------
+- name: AU-12/SI-4 | Create Caddy log directory inside persistent data volume
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/ingress/caddy-data/logs"
+    state: directory
+    mode: "0755"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Ensure Caddy access log file exists and is writable
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/ingress/caddy-data/logs/access.log"
+    state: touch
+    mode: "0640"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+    modification_time: preserve
+    access_time: preserve
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Ensure Coraza audit log file exists and is writable
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/ingress/caddy-data/logs/coraza-audit.log"
+    state: touch
+    mode: "0640"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+    modification_time: preserve
+    access_time: preserve
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Ensure ACL tooling is installed for log access controls
+  ansible.builtin.apt:
+    name: acl
+    state: present
+    lock_timeout: 600
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Detect canonical crowdsec account
+  ansible.builtin.getent:
+    database: passwd
+    key: crowdsec
+    fail_key: false
+  register: crowdsec_user_getent
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Find CrowdSec systemd unit file
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/systemd/system/crowdsec.service
+    - /lib/systemd/system/crowdsec.service
+    - /usr/lib/systemd/system/crowdsec.service
+  register: _crowdsec_unit_stat
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Read CrowdSec systemd unit file
+  ansible.builtin.slurp:
+    src: "{{ (_crowdsec_unit_stat.results | selectattr('stat.exists') | first).item }}"
+  register: _crowdsec_unit_content
+  when: _crowdsec_unit_stat.results | selectattr('stat.exists') | list | length > 0
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Detect runtime CrowdSec service user
+  ansible.builtin.set_fact:
+    crowdsec_service_user_cmd:
+      stdout: >-
+        {{
+          (_crowdsec_unit_content.content | default('') | b64decode)
+          | regex_findall('(?m)^User=(.+)$')
+          | first | default('')
+        }}
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Resolve ACL target user for CrowdSec log access
+  ansible.builtin.set_fact:
+    crowdsec_acl_user: >-
+      {{
+        'crowdsec'
+        if (crowdsec_user_getent.ansible_facts.getent_passwd | default({})).get('crowdsec') is not none
+        else (
+          (crowdsec_service_user_cmd.stdout | default('') | trim)
+          if (
+            (crowdsec_service_user_cmd.stdout | default('') | trim | length > 0)
+            and (crowdsec_service_user_cmd.stdout | default('') | trim != 'root')
+          )
+          else ''
+        )
+      }}
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Ensure CrowdSec can traverse and read Caddy logs directory
+  ansible.posix.acl:
+    path: "{{ app_base_dir }}/ingress/caddy-data/logs"
+    etype: user
+    entity: "{{ crowdsec_acl_user }}"
+    permissions: rX
+    state: present
+    recursive: true
+  when: crowdsec_acl_user | length > 0
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Ensure default ACLs preserve CrowdSec read access on rotated logs
+  ansible.posix.acl:
+    path: "{{ app_base_dir }}/ingress/caddy-data/logs"
+    etype: user
+    entity: "{{ crowdsec_acl_user }}"
+    permissions: rX
+    default: true
+    state: present
+  when: crowdsec_acl_user | length > 0
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Ensure CrowdSec can read current Caddy access log file
+  ansible.posix.acl:
+    path: "{{ app_base_dir }}/ingress/caddy-data/logs/access.log"
+    etype: user
+    entity: "{{ crowdsec_acl_user }}"
+    permissions: r--
+    state: present
+  when: crowdsec_acl_user | length > 0
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Ensure CrowdSec can read Coraza audit log file
+  ansible.posix.acl:
+    path: "{{ app_base_dir }}/ingress/caddy-data/logs/coraza-audit.log"
+    etype: user
+    entity: "{{ crowdsec_acl_user }}"
+    permissions: r--
+    state: present
+  when: crowdsec_acl_user | length > 0
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Warn when CrowdSec user is missing and ACLs cannot be applied
+  ansible.builtin.debug:
+    msg: >-
+      CrowdSec runs as root or no dedicated non-root service account was detected on {{ inventory_hostname }}.
+      Skipping explicit user ACL grants on the Caddy log volume.
+  when: crowdsec_acl_user | length == 0
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Container runtime log volume probe chain
+  tags:
+    - l4-networking
+    - caddy
+    - nist
+    - au-12
+    - si-4
+  when: not _molecule_testing | default(false)
+  block:
+    - name: AU-12/SI-4 | Probe Caddy log volume write access from container runtime
+      ansible.builtin.command:
+        cmd: >-
+          docker run --rm
+          --user {{ caddy_user_uid }}:{{ caddy_user_gid }}
+          -v {{ app_base_dir }}/ingress/caddy-data:/data
+          {{ caddy_image }}
+          sh -lc 'mkdir -p /data/logs && touch /data/logs/.ansible-write-test && rm -f /data/logs/.ansible-write-test'
+      register: caddy_log_volume_probe
+      changed_when: false
+      failed_when: false
+      tags: [l4-networking, caddy, nist, au-12, si-4]
+
+    - name: AU-12/SI-4 | Reconcile Caddy log volume ownership when probe fails
+      ansible.builtin.command:
+        cmd: >-
+          chown -R {{ _caddy_effective_uid | int }}:{{ _caddy_effective_gid | int }}
+          {{ app_base_dir }}/ingress/caddy-data
+          {{ app_base_dir }}/ingress/caddy-config
+      when: caddy_log_volume_probe.rc != 0
+      changed_when: true
+      tags: [l4-networking, caddy, nist, au-12, si-4]
+
+    - name: AU-12/SI-4 | Re-probe Caddy log volume write access after reconciliation
+      ansible.builtin.command:
+        cmd: >-
+          docker run --rm
+          --user {{ caddy_user_uid }}:{{ caddy_user_gid }}
+          -v {{ app_base_dir }}/ingress/caddy-data:/data
+          {{ caddy_image }}
+          sh -lc 'mkdir -p /data/logs && touch /data/logs/.ansible-write-test && rm -f /data/logs/.ansible-write-test'
+      register: caddy_log_volume_reprobe
+      changed_when: false
+      failed_when: false
+      when: caddy_log_volume_probe.rc != 0
+      tags: [l4-networking, caddy, nist, au-12, si-4]
+
+    - name: AU-12/SI-4 | Capture log-volume ownership snapshot for diagnostics
+      ansible.builtin.command:
+        cmd: >-
+          stat -c '%u:%g %a %n'
+          {{ app_base_dir }}/ingress/caddy-data
+          {{ app_base_dir }}/ingress/caddy-data/logs
+          {{ app_base_dir }}/ingress/caddy-data/logs/access.log
+          {{ app_base_dir }}/ingress/caddy-data/logs/coraza-audit.log
+      register: caddy_log_volume_stat
+      changed_when: false
+      failed_when: false
+      when: caddy_log_volume_probe.rc != 0
+      tags: [l4-networking, caddy, nist, au-12, si-4]
+
+    - name: AU-12/SI-4 | Fail if Caddy log volume remains unwritable after remediation
+      ansible.builtin.assert:
+        that:
+          - caddy_log_volume_probe.rc == 0 or caddy_log_volume_reprobe.rc == 0
+        fail_msg: >-
+          Caddy log volume is still not writable by the container runtime after ownership reconciliation.
+          Check userns remapping, bind-mount ownership, and host ACLs on {{ app_base_dir }}/ingress/caddy-data.
+          Probe rc={{ caddy_log_volume_probe.rc | default('n/a') }},
+          Reprobe rc={{ caddy_log_volume_reprobe.rc | default('n/a') }}.
+          Ownership snapshot: {{ caddy_log_volume_stat.stdout | default('unavailable') }}.
+        success_msg: "Caddy log volume write access is valid."
+      tags: [l4-networking, caddy, nist, au-12, si-4]
+
+# ------------------------------------------------------------------------------
+# DOCKER COMPOSE DEPLOY
+# ------------------------------------------------------------------------------
+- name: Deploy Caddy ingress stack (skipped in molecule testing)
+  when: not _molecule_testing | default(false)
+  tags: [l4-networking, caddy]
+  block:
+    - name: Ensure public_net Docker network exists
+      community.docker.docker_network:
+        name: public_net
+        driver: bridge
+        state: present
+
+    - name: Create Docker Compose file for Caddy ingress
+      ansible.builtin.template:
+        src: docker-compose.yml.j2
+        dest: "{{ app_base_dir }}/ingress/docker-compose.yml"
+        mode: "0644"
+        owner: root
+        group: root
+
+    # GHCR login + verify image
+    - name: Login to GitHub Container Registry (GHCR)
+      community.docker.docker_login:
+        registry_url: ghcr.io
+        username: "{{ github_username }}"
+        password: "{{ vault_github_token }}"
+        reauthorize: true
+      no_log: true
+
+    - name: Verify Caddy image digest if specified
+      community.docker.docker_image_info:
+        name: "{{ caddy_image }}"
+      register: caddy_image_info
+      when: caddy_image_digest is defined
+
+    - name: Fail if digest mismatch
+      ansible.builtin.fail:
+        msg: "Caddy image digest mismatch. Expected {{ caddy_image_digest }}, got {{ caddy_image_info.image.Digest }}"
+      when:
+        - caddy_image_digest is defined
+        - caddy_image_info.image.Digest is defined
+        - caddy_image_info.image.Digest != caddy_image_digest
+
+    # Clean stale container from previous failed deploy (bind mount directory artifact)
+    - name: Remove stale Caddy container with broken bind mount
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_base_dir }}/ingress"
+        services:
+          - caddy
+        state: absent
+      failed_when: false
+      changed_when: false
+      tags: [l4-networking, caddy]
+
+    # Deploy + health check with rescue
+    - name: Deploy Caddy Ingress Stack with Docker Compose
+      block:
+        - name: Run docker compose up
+          community.docker.docker_compose_v2:
+            project_src: "{{ app_base_dir }}/ingress"
+            state: present
+            pull: "{{ ingress_compose_pull_policy }}"
+            recreate: "{{ ingress_compose_recreate_policy }}"
+            wait: false
+          register: stack_deploy
+
+        - name: Wait until Docker reports Caddy container as healthy
+          community.docker.docker_container_info:
+            name: caddy-waf
+          register: caddy_health
+          changed_when: false
+          retries: "{{ ((ingress_compose_wait_timeout | int) + 4) // 5 }}"
+          delay: 5
+          until:
+            - caddy_health.exists | default(false)
+            - caddy_health.container.State.Status == 'running'
+            - caddy_health.container.State.Health is defined
+            - caddy_health.container.State.Health.Status == 'healthy'
+      rescue:
+        - name: Capture Caddy container startup logs
+          ansible.builtin.command:
+            cmd: docker logs --tail 100 caddy-waf  # noqa: command-instead-of-module
+          register: caddy_crash_logs
+          changed_when: false
+          failed_when: false
+
+        - name: Show Caddy startup logs for diagnosis
+          ansible.builtin.debug:
+            msg: |
+              === caddy-waf STDOUT ===
+              {{ caddy_crash_logs.stdout | default('(empty)') }}
+              === caddy-waf STDERR ===
+              {{ caddy_crash_logs.stderr | default('(empty)') }}
+
+        - name: Fail with deployment context
+          ansible.builtin.fail:
+            msg: >-
+              Caddy stack deployment failed - see 'Show Caddy startup logs for diagnosis'
+              above for the root cause.
+
+    # --------------------------------------------------------------------------
+    # RUNTIME VALIDATION
+    # --------------------------------------------------------------------------
+    - name: Get Caddy container info
+      community.docker.docker_container_info:
+        name: caddy-waf
+      register: caddy_container_info
+
+    - name: Assert Caddy container is running
+      ansible.builtin.assert:
+        that:
+          - caddy_container_info.exists | default(false)
+          - caddy_container_info.container.State.Status == 'running'
+        fail_msg: >-
+          Caddy container is not running. Current state:
+          {{ caddy_container_info.container.State.Status | default('missing') }}.
+
+    - name: Assert runtime user is pinned to expected UID/GID
+      ansible.builtin.assert:
+        that:
+          - caddy_container_info.container.Config.User == (caddy_user_uid | string ~ ':' ~ caddy_user_gid | string)
+        fail_msg: >-
+          Caddy runtime user mismatch. Expected {{ caddy_user_uid }}:{{ caddy_user_gid }},
+          got {{ caddy_container_info.container.Config.User | default('unset') }}.
+
+    - name: Display Caddy Ingress deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "========================================="
+          - "✅ CADDY INGRESS DEPLOYED"
+          - "========================================="
+          - ""
+          - "🌐 Backend: {{ reverse_proxy_backend }}"
+          - "🔧 Image: {{ caddy_image }}"
+          - "🔒 WAF: Coraza integrated"
+          - ""
+          - "📡 Published Ports:"
+          - "  - 80/tcp  → HTTP"
+          - "  - 443/tcp → HTTPS"
+          - "  - 443/udp → HTTP/3"
+          - ""
+          - "🏷️  Container Status: {{ caddy_container_info.container.State.Status | default('unknown') }}"
+          - "👤 Runtime User: {{ caddy_container_info.container.Config.User | default('unset') }}"
+          - "========================================="

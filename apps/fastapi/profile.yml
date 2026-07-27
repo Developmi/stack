@@ -1,0 +1,28 @@
+---
+# FastAPI - Custom Backend (Community-Provided) (L5)
+# provider: community - machine-readable marker indicating this is NOT
+# a maintained core profile. Operators MUST customize before deployment.
+name: fastapi
+version: "1.0.0"
+supported_arch: [amd64, arm64]
+target_group: muscle-3
+
+depends_on: []
+
+backup:
+  schedule: "*-*-* 02:00:00"
+  retention_daily: 7
+  retention_weekly: 4
+  retention_monthly: 12
+  db_type: custom
+  db_name: ""
+
+monitoring:
+  health_endpoint: "/health"
+  health_port: 8000
+  scrape_port: 8000
+
+compliance_tags: [nist, ac-2, nist, sc-7]
+dr_tier: standard
+
+provider: community

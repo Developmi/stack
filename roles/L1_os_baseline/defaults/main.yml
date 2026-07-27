@@ -1,0 +1,23 @@
+---
+# ==============================================================================
+# L1 OS Baseline - Role Defaults
+# ==============================================================================
+# Safe fallback defaults for all L1 tasks.
+# Override via group_vars per target.
+# ==============================================================================
+
+l1_apt_cache_valid_time: 3600
+l1_apt_lock_timeout: 600
+l1_file_mode: "0644"
+
+systemd_nofile_soft: 1024
+systemd_nofile_hard: 524288
+systemd_nproc_soft: 1024
+systemd_nproc_hard: 524288
+
+# ── Legacy alias (used by existing tasks) ────────────────────────────────────
+file_mode_default: "{{ l1_file_mode }}"
+
+# ── apt-mark hold (package pinning) ──────────────────────────────────────────
+# Override in group_vars per target. Empty list = no packages held.
+pinned_packages: []

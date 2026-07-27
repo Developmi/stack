@@ -1,0 +1,57 @@
+# ---
+# COMPLIANCE WARNING:
+# Restic repository initialization creates the S3 repository structure at R2.
+# Idempotent via marker file /etc/restic/.repo-initialized.
+# Restic init uses the repo password from vault - never logged (no_log: true).
+# If the marker is deleted, re-init will create a NEW repo (old data unreachable).
+# ---
+---
+- name: "Check if Restic repository is already initialized"
+  ansible.builtin.stat:
+    path: /etc/restic/.repo-initialized
+  register: repo_init_marker
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Initialize Restic repository on {{ ansible_hostname }}"  # noqa: command-instead-of-module
+  ansible.builtin.command: >
+    restic init
+    --repo "{{ restic_repo_url }}"
+  environment:
+    RESTIC_PASSWORD: "{{ lookup('vars', 'restic_password_' ~ ansible_hostname | replace('-', '_')) }}"
+    AWS_ACCESS_KEY_ID: "{{ restic_r2_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ restic_r2_secret_access_key }}"
+    AWS_DEFAULT_REGION: "auto"
+  when: not repo_init_marker.stat.exists
+  no_log: true
+  register: restic_init_result
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Create repo initialized marker"
+  ansible.builtin.file:
+    path: /etc/restic/.repo-initialized
+    state: touch
+    mode: "0600"
+    owner: root
+    group: root
+  when: not repo_init_marker.stat.exists
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Verify repository is accessible (restic stats)"  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: restic stats
+  environment:
+    RESTIC_PASSWORD: "{{ lookup('vars', 'restic_password_' ~ ansible_hostname | replace('-', '_')) }}"
+    AWS_ACCESS_KEY_ID: "{{ restic_r2_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ restic_r2_secret_access_key }}"
+    AWS_DEFAULT_REGION: "auto"
+    RESTIC_REPOSITORY: "{{ restic_repo_url }}"
+  changed_when: false
+  no_log: true
+  register: restic_stats_result
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Report repository stats"
+  ansible.builtin.debug:
+    msg: "Restic repository at {{ restic_repo_url }} is accessible - {{ restic_stats_result.stdout }}"
+  when: restic_stats_result.stdout is defined
+  tags: [l6-runtime, stack_backup, restic]

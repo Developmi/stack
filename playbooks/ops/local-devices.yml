@@ -1,0 +1,593 @@
+---
+# ==============================================================================
+# Developmi Stack | Developmi | Miguel Lozano (SRE & FinOps Architect)
+# ==============================================================================
+# LOCAL DEVICE HARDENING - Personal Workstations & Laptops
+# ==============================================================================
+# Purpose: Apply security hardening to personal devices over Tailscale mesh.
+# Connectivity: Tailscale 100.x.x.x IPs only (manual auth prerequisite).
+# Prerequisites:
+#   1. Tailscale installed and logged in: tailscale up --operator=$USER
+#   2. Device added to [local] in inventory/hosts.ini with Tailscale IP
+#   3. No public_ip needed - devices connect directly via 100.x IPs
+#
+# Run:
+#   make deploy-local
+#   ansible-playbook -i inventory/hosts.ini playbooks/ops/local-devices.yml --ask-vault-pass
+#
+# Behavior:
+#   - ACL is applied FIRST from localhost (enables SSH before device contact)
+#   - Offline devices are silently skipped (ignore_unreachable: true)
+#   - Tailscale auth is NOT automated (manual only for local devices)
+#   - CrowdSec intrusion prevention is skipped (not applicable to workstations)
+#   - Server playbooks (site.yml, stacks.yml) are completely untouched
+# ==============================================================================
+
+# ==============================================================================
+# PHASE 0: PRE-FLIGHT VALIDATION
+# ==============================================================================
+- name: "PHASE 0: Pre-flight Validation"
+  hosts: localhost
+  gather_facts: true
+  become: false
+  tags: [always]
+  tasks:
+    - name: Validate vault variables
+      ansible.builtin.assert:
+        that:
+          - vault_github_token is defined
+          - vault_github_token | length > 0
+          - github_username is defined
+          - github_username | length > 0
+        fail_msg: "❌ Vault secrets missing. Run: ansible-vault edit group_vars/all/secrets.yml"
+        success_msg: "✅ Vault variables validated"
+
+    - name: Validate Tailscale subnet is configured
+      ansible.builtin.assert:
+        that:
+          - tailscale_subnet is defined
+          - tailscale_subnet | length > 0
+        fail_msg: "❌ tailscale_subnet must be defined in group_vars/all/main.yml"
+
+    - name: Validate Tailscale ACL credentials
+      ansible.builtin.assert:
+        that:
+          - tailscale_acl_key is defined
+          - tailscale_acl_key | trim | length > 20
+          - tailscale_acl_client_id is defined
+          - tailscale_acl_client_id | trim | length > 5
+          - tailscale_tailnet is defined
+          - tailscale_tailnet | trim | length > 0
+        fail_msg: "❌ Tailscale ACL OAuth credentials missing in vault (tailscale_acl_key, tailscale_acl_client_id, tailscale_tailnet)"
+
+    - name: Display pre-flight summary
+      ansible.builtin.debug:
+        msg:
+          - "========================================="
+          - "✅ PRE-FLIGHT VALIDATION PASSED"
+          - "========================================="
+          - "Target group: [local] ({{ groups['local'] | default([]) | length }} device(s))"
+          - "Tailscale subnet: {{ tailscale_subnet }}"
+          - "Tailscale tailnet: {{ tailscale_tailnet }}"
+          - "Manual Tailscale auth required for each device"
+          - "========================================="
+
+# ==============================================================================
+# PHASE 0.1: ACL PRE-CONFIGURATION (applied before SSH to local devices)
+# ==============================================================================
+- name: "PHASE 0.1: Tailscale ACL Pre-configuration"
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tags: [tailscale, acl, security, always]
+  tasks:
+    - name: Render ACL policy with local device rules
+      ansible.builtin.set_fact:
+        tailscale_acl_policy: "{{ lookup('template', playbook_dir + '/roles/L2_compliance/general/templates/tailscale/tailscale-acls.json.j2') | from_json }}"
+
+    - name: Exchange ACL OAuth client for short-lived API token
+      ansible.builtin.uri:
+        url: https://api.tailscale.com/api/v2/oauth/token
+        method: POST
+        body_format: form-urlencoded
+        body:
+          client_id: "{{ tailscale_acl_client_id | trim }}"
+          client_secret: "{{ tailscale_acl_key | trim }}"
+          grant_type: client_credentials
+        status_code: 200
+        return_content: true
+      register: tailscale_acl_oauth_token
+      no_log: true
+
+    - name: Store short-lived ACL API token
+      ansible.builtin.set_fact:
+        tailscale_acl_bearer_token: "{{ tailscale_acl_oauth_token.json.access_token }}"
+      no_log: true
+
+    - name: Validate ACL API bearer token
+      ansible.builtin.assert:
+        that:
+          - tailscale_acl_bearer_token is defined
+          - tailscale_acl_bearer_token | trim | length > 20
+        fail_msg: "Unable to obtain a valid Tailscale API bearer token for ACL management."
+      no_log: true
+
+    - name: Validate Tailscale ACL policy with API
+      ansible.builtin.uri:
+        url: "https://api.tailscale.com/api/v2/tailnet/{{ tailscale_tailnet | trim }}/acl/validate"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ tailscale_acl_bearer_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: "{{ tailscale_acl_policy }}"
+        status_code: 200
+      no_log: true
+
+    - name: Apply Tailscale ACLs via API
+      ansible.builtin.uri:
+        url: "https://api.tailscale.com/api/v2/tailnet/{{ tailscale_tailnet | trim }}/acl"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ tailscale_acl_bearer_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: "{{ tailscale_acl_policy }}"
+        status_code: [200, 201]
+      no_log: true
+
+    - name: Display ACL configuration result
+      ansible.builtin.debug:
+        msg:
+          - "✅ Tailscale ACL applied with local device rules"
+          - "   tag:local registered in tagOwners"
+          - "   admin → tag:local:22 (operator SSH access)"
+          - "   tag:local → tag:local:22 (inter-device SSH)"
+
+# ==============================================================================
+# PHASE 0.15: SSH CONNECTIVITY VALIDATION
+# ==============================================================================
+- name: "PHASE 0.15: SSH Connectivity Validation"
+  hosts: local
+  gather_facts: false
+  become: false
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [always]
+  tasks:
+    - name: "Test SSH connectivity to device"
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 10
+      register: ssh_connectivity
+      ignore_errors: true
+      ignore_unreachable: true
+
+    - name: "Diagnose unreachable device"
+      ansible.builtin.debug:
+        msg:
+          - "======================================================================"
+          - " WARNING: {{ inventory_hostname }} is UNREACHABLE via SSH on port 22"
+          - "======================================================================"
+          - ""
+          - " Possible causes:"
+          - "   1. UFW firewall is blocking port 22 on the device"
+          - "   2. SSH service (sshd) is not running or not installed"
+          - "   3. Tailscale is not connected or not running"
+          - "   4. Device is powered off or not on the same network"
+          - ""
+          - " Manual recovery steps:"
+          - "   → SSH to the device directly (console or local terminal)"
+          - "   → Run: sudo ufw allow from 100.64.0.0/10 to any port 22 proto tcp"
+          - "   → Run: sudo systemctl enable --now ssh"
+          - "   → Run: tailscale status  (verify connected to tailnet)"
+          - ""
+          - " After fixing, re-run this playbook:"
+          - "   ansible-playbook -i inventory/hosts.ini playbooks/ops/local-devices.yml --ask-vault-pass"
+          - "======================================================================"
+      when: ssh_connectivity is unreachable or ssh_connectivity.failed | default(false)
+
+    - name: "Device is reachable - proceed"
+      ansible.builtin.debug:
+        msg: " {{ inventory_hostname }} is reachable via SSH on port 22"
+      when: ssh_connectivity is not unreachable and not (ssh_connectivity.failed | default(false))
+
+# ==============================================================================
+# PHASE 0.2: APT LOCK PRE-FLIGHT
+# ==============================================================================
+- name: "PHASE 0.2: APT Lock Pre-flight"
+  hosts: local
+  become: true
+  gather_facts: false
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [always]
+  pre_tasks:
+    - name: "Pre-flight: Stop APT systemd timers"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+      failed_when: false
+
+    - name: "Pre-flight: Track timer state for restore"
+      ansible.builtin.set_fact:
+        apt_timers_stopped: true
+        cacheable: false
+
+    - name: "Pre-flight: Detect APT lock holders"
+      ansible.builtin.shell: |
+        fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
+      register: apt_lock_holders
+      changed_when: false
+      failed_when: false
+
+    - name: "Pre-flight: Enumerate running apt/dpkg processes"
+      ansible.builtin.shell: |
+        pgrep -a '^(apt|apt-get|dpkg)$'
+      register: apt_processes
+      changed_when: false
+      failed_when: false
+
+    - name: "Pre-flight: Inspect lock holder process age"
+      ansible.builtin.shell: |
+        for pid in $(echo "{{ apt_lock_holders.stdout | default('') }}" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u); do
+          etimes=$(ps -o etimes= -p $pid 2>/dev/null || echo "unknown")
+          cmd=$(ps -o args= -p $pid 2>/dev/null || echo "unknown")
+          echo "PID=$pid ELAPSED=${etimes}s CMD='${cmd}'"
+        done
+      register: apt_lock_process_info
+      changed_when: false
+      failed_when: false
+      when: apt_lock_holders.stdout | default('') != ""
+
+    - name: "Pre-flight: Auto-kill stale apt processes or force-kill"
+      ansible.builtin.shell: |
+        force="{{ apt_force_cleanup | default(false) | bool }}"
+        killed=false
+        for pid in $(echo "{{ apt_lock_holders.stdout | default('') }}" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u); do
+          etimes=$(ps -o etimes= -p $pid 2>/dev/null || echo "0")
+          cmd=$(ps -o args= -p $pid 2>/dev/null || echo "unknown")
+          if [ "$force" = "True" ]; then
+            kill -9 $pid 2>/dev/null && echo "KILLED (forced) PID=$pid CMD='${cmd}'" && killed=true
+          elif [ "$etimes" -gt 900 ] 2>/dev/null; then
+            kill -9 $pid 2>/dev/null && echo "KILLED (stale, ${etimes}s) PID=$pid CMD='${cmd}'" && killed=true
+          fi
+        done
+        if [ "$killed" = "true" ]; then
+          rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
+          dpkg --configure -a 2>/dev/null || true
+          echo "CLEANUP: stale lock files removed, dpkg reconfigured"
+        else
+          echo "NOOP: no processes eligible for cleanup (use --extra-vars \"apt_force_cleanup=true\" to force)"
+        fi
+      register: apt_lock_cleanup
+      changed_when: "'KILLED' in apt_lock_cleanup.stdout | default('')"
+      failed_when: false
+      when: apt_lock_holders.stdout | default('') != ""
+
+    - name: "Pre-flight: Re-check lock after cleanup"
+      ansible.builtin.shell: |
+        fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
+      register: apt_lock_recheck
+      changed_when: false
+      failed_when: false
+      when:
+        - apt_lock_holders.stdout | default('') != ""
+        - "'KILLED' in apt_lock_cleanup.stdout | default('')"
+
+    - name: "Pre-flight: Fail if APT lock persists after cleanup"
+      ansible.builtin.fail:
+        msg: |
+          ⛔ APT LOCK CONTENTION on {{ inventory_hostname }}:
+          Lock holder(s): {{ apt_lock_holders.stdout | default('(unable to detect)') }}
+          Running apt/dpkg: {{ apt_processes.stdout | default('(none)') }}
+          Process details: {{ apt_lock_process_info.stdout | default('(unable to inspect)') }}
+          Cleanup result: {{ apt_lock_cleanup.stdout | default('(no cleanup attempted)') }}
+          → APT systemd timers were auto-stopped by this playbook.
+          → Auto-cleanup was attempted for stale processes (>15 min runtime).
+          → To force-kill ALL lock holders, re-run with:
+            --extra-vars "apt_force_cleanup=true"
+          → Or SSH into {{ inventory_hostname }} and investigate manually.
+      when:
+        - apt_lock_holders.stdout | default('') != ""
+        - (apt_lock_cleanup.stdout | default('NOOP')) is not search('KILLED') or (apt_lock_recheck.stdout | default('')) != ""
+
+# ==============================================================================
+# PHASE 1: BASE SYSTEM CONFIGURATION
+# ==============================================================================
+- name: "PHASE 1: Base System Configuration"
+  hosts: local
+  become: true
+  gather_facts: true
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [base, system, packages]
+  pre_tasks:
+    - name: "Validate supported OS distribution"
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] in ['Ubuntu', 'Debian', 'Pop', 'Pop!_OS']
+        fail_msg: >
+          Unsupported OS distribution: {{ ansible_facts['distribution'] }}.
+          This playbook supports Ubuntu, Debian, and Pop OS (Ubuntu-based).
+        success_msg: "✅ Supported OS: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+
+    - name: "Normalize Pop OS to Ubuntu for apt/docker repos (Ubuntu-based)"
+      ansible.builtin.set_fact:
+        _normalized_distro: "{{ 'Ubuntu' if ansible_facts['distribution'] in ['Pop', 'Pop!_OS'] else ansible_facts['distribution'] }}"
+        _is_pop_os: "{{ true if ansible_facts['distribution'] in ['Pop', 'Pop!_OS'] else false }}"
+
+    - name: "Pre-flight: Stop APT systemd timers"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+      failed_when: false
+
+    - name: "Pre-flight: Track timer state for restore"
+      ansible.builtin.set_fact:
+        apt_timers_stopped: true
+        cacheable: false
+
+  tasks:
+    - block:
+        - name: "Apply L1 OS baseline role"
+          ansible.builtin.include_role:
+            name: L1_os_baseline
+      rescue:
+        - name: "Recovery: Restore APT systemd timers"
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: started
+            enabled: true
+          loop:
+            - apt-daily.timer
+            - apt-daily-upgrade.timer
+          when: apt_timers_stopped | default(false)
+          failed_when: false
+        - name: "Recovery: Clear timer tracking fact"
+          ansible.builtin.set_fact:
+            apt_timers_stopped: false
+          when: apt_timers_stopped | default(false)
+
+# ==============================================================================
+# PHASE 2: SECURITY HARDENING (Workstation Profile)
+# ==============================================================================
+- name: "PHASE 2: Security & SSH Hardening"
+  hosts: local
+  become: true
+  gather_facts: false
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [security, firewall, ssh, fail2ban]
+  pre_tasks:
+    - name: "Pre-flight: Stop APT systemd timers"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+      failed_when: false
+
+    - name: "Pre-flight: Track timer state for restore"
+      ansible.builtin.set_fact:
+        apt_timers_stopped: true
+        cacheable: false
+
+  tasks:
+    - block:
+        - name: "Apply L2 compliance role (workstation profile)"
+          ansible.builtin.include_role:
+            name: L2_compliance
+      rescue:
+        - name: "Recovery: Restore APT systemd timers"
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: started
+            enabled: true
+          loop:
+            - apt-daily.timer
+            - apt-daily-upgrade.timer
+          when: apt_timers_stopped | default(false)
+          failed_when: false
+        - name: "Recovery: Clear timer tracking fact"
+          ansible.builtin.set_fact:
+            apt_timers_stopped: false
+          when: apt_timers_stopped | default(false)
+
+# ==============================================================================
+# PHASE 3: TAILSCALE VPN MESH (Manual Auth + Tag Validation)
+# ==============================================================================
+- name: "PHASE 3: Tailscale VPN Mesh"
+  hosts: local
+  become: true
+  gather_facts: true
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [vpn, tailscale, networking]
+  pre_tasks:
+    - name: "Pre-flight: Stop APT systemd timers"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+      failed_when: false
+
+    - name: "Pre-flight: Track timer state for restore"
+      ansible.builtin.set_fact:
+        apt_timers_stopped: true
+        cacheable: false
+
+  tasks:
+    - block:
+        - name: "Apply L2 tailscale client (tag:local, manual auth)"
+          ansible.builtin.include_role:
+            name: L2_compliance
+      rescue:
+        - name: "Recovery: Restore APT systemd timers"
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: started
+            enabled: true
+          loop:
+            - apt-daily.timer
+            - apt-daily-upgrade.timer
+          when: apt_timers_stopped | default(false)
+          failed_when: false
+        - name: "Recovery: Clear timer tracking fact"
+          ansible.builtin.set_fact:
+            apt_timers_stopped: false
+          when: apt_timers_stopped | default(false)
+
+# ==============================================================================
+# PHASE 4: DOCKER ENGINE
+# ==============================================================================
+- name: "PHASE 4: Docker Engine Installation"
+  hosts: local
+  become: true
+  gather_facts: false
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [docker, containers, runtime]
+  pre_tasks:
+    - name: "Pre-flight: Stop APT systemd timers"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+      failed_when: false
+
+    - name: "Pre-flight: Track timer state for restore"
+      ansible.builtin.set_fact:
+        apt_timers_stopped: true
+        cacheable: false
+
+  tasks:
+    - block:
+        - name: "Apply L6 runtime role (Docker Engine)"
+          ansible.builtin.include_role:
+            name: L6_runtime
+      rescue:
+        - name: "Recovery: Restore APT systemd timers"
+          ansible.builtin.systemd:
+            name: "{{ item }}"
+            state: started
+            enabled: true
+          loop:
+            - apt-daily.timer
+            - apt-daily-upgrade.timer
+          when: apt_timers_stopped | default(false)
+          failed_when: false
+        - name: "Recovery: Clear timer tracking fact"
+          ansible.builtin.set_fact:
+            apt_timers_stopped: false
+          when: apt_timers_stopped | default(false)
+
+  post_tasks:
+    - name: "Cleanup: Restore APT systemd timers"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+      when: apt_timers_stopped | default(false)
+      failed_when: false
+
+    - name: "Cleanup: Clear timer tracking fact"
+      ansible.builtin.set_fact:
+        apt_timers_stopped: false
+      when: apt_timers_stopped | default(false)
+
+# ==============================================================================
+# PHASE 5: DEVICE STATUS VERIFICATION
+# ==============================================================================
+- name: "PHASE 5: Device Status Verification"
+  hosts: local
+  gather_facts: false
+  become: true
+  ignore_unreachable: true
+  any_errors_fatal: false
+  tags: [verification, status]
+  tasks:
+    - name: Get Tailscale IP
+      ansible.builtin.command: tailscale ip -4
+      register: ts_ip
+      changed_when: false
+      failed_when: false
+
+    - name: Get Docker version
+      ansible.builtin.command: docker --version
+      register: docker_ver
+      changed_when: false
+      failed_when: false
+
+    - name: Get UFW status
+      ansible.builtin.command: ufw status
+      register: ufw_status
+      changed_when: false
+      failed_when: false
+
+    - name: Display device status
+      ansible.builtin.debug:
+        msg:
+          - "=== {{ inventory_hostname }} ==="
+          - "🔒 VPN IP: {{ ts_ip.stdout | default('N/A') }}"
+          - "🐳 {{ docker_ver.stdout | default('Docker not installed') }}"
+          - "🛡️  UFW: {{ ufw_status.stdout_lines[0] if (ufw_status.stdout_lines | default([])) | length > 0 else 'N/A' }}"
+          - "💻 Workstation ({{ server_type | default('workstation') }})"
+          - "🔑 Tailscale tag: tag:local"
+
+- name: "Local Device Hardening Complete"
+  hosts: localhost
+  gather_facts: true
+  become: false
+  tags: [always]
+  tasks:
+    - name: "Count reachable vs skipped devices"
+      ansible.builtin.set_fact:
+        _reachable_count: "{{ ansible_play_hosts_all | length }}"
+        _unreachable_hint: "Check Phase 0.15 diagnostics above for individual device errors"
+
+    - name: Display hardening summary
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "=========================================="
+          - "LOCAL DEVICE HARDENING COMPLETE"
+          - "=========================================="
+          - ""
+          - "  Devices in [local]: {{ groups['local'] | default([]) | length }}"
+          - ""
+          - "  NOTE: Unreachable devices show warnings above."
+          - "  Check Phase 0.15 for per-device SSH diagnostics."
+          - "  Re-run this playbook when offline devices come online."
+          - ""
+          - "  Security Profile (Workstation):"
+          - "  ✅ SSH password auth DISABLED (keys only)"
+          - "  ✅ Fail2ban active ({{ fail2ban_maxretry | default(5) }} attempts = {{ fail2ban_bantime | default('10m') }} ban)"
+          - "  ✅ UFW enabled with {{ ufw_policy | default('allow') }} policy"
+          - "  ✅ Tailscale VPN mesh - tag:local (manual auth)"
+          - "  ✅ Tailscale ACL pre-applied (admin → tag:local:22, inter-device)"
+          - "  ✅ Docker engine with daemon hardening"
+          - "  ⏭️  CrowdSec skipped (not applicable to workstations)"
+          - ""
+          - "  🖥️  Supported distributions: Ubuntu, Debian, Pop OS"
+          - ""
+          - "=========================================="

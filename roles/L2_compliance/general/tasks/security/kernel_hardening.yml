@@ -1,0 +1,106 @@
+---
+# ==============================================================================
+# SECURITY - Kernel Hardening via sysctl (NIST CM-7)
+# ==============================================================================
+# Applies security parameters: ASLR, exec-shield, IPv6 privacy, network filters.
+# Persisted to /etc/sysctl.d/99-security.conf. Survives reboot.
+# ==============================================================================
+
+- name: "CM-7 | Write kernel security sysctl config"
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-security.conf
+    content: |
+      # NIST CM-7 - Kernel Hardening (stack)
+      kernel.randomize_va_space = {{ kernel_randomize_va_space }}
+      kernel.kptr_restrict = {{ kernel_kptr_restrict }}
+      kernel.dmesg_restrict = {{ kernel_dmesg_restrict }}
+      net.ipv4.tcp_syncookies = {{ net_ipv4_tcp_syncookies }}
+      net.ipv4.conf.all.rp_filter = {{ net_ipv4_conf_all_rp_filter }}
+      net.ipv4.conf.default.rp_filter = {{ net_ipv4_conf_default_rp_filter }}
+      net.ipv4.icmp_echo_ignore_broadcasts = {{ net_ipv4_icmp_echo_ignore_broadcasts }}
+      net.ipv4.icmp_ignore_bogus_error_responses = {{ net_ipv4_icmp_ignore_bogus_error_responses }}
+      net.ipv4.conf.all.accept_redirects = {{ net_ipv4_conf_all_accept_redirects }}
+      net.ipv6.conf.all.accept_redirects = {{ net_ipv6_conf_all_accept_redirects }}
+      net.ipv4.conf.all.send_redirects = {{ net_ipv4_conf_all_send_redirects }}
+      net.ipv4.conf.all.accept_source_route = {{ net_ipv4_conf_all_accept_source_route }}
+      net.ipv6.conf.all.accept_source_route = {{ net_ipv6_conf_all_accept_source_route }}
+      net.ipv6.conf.all.use_tempaddr = {{ net_ipv6_conf_all_use_tempaddr }}
+      net.ipv6.conf.default.use_tempaddr = {{ net_ipv6_conf_default_use_tempaddr }}
+      net.core.rmem_max = {{ net_core_rmem_max }}
+      net.core.rmem_default = {{ net_core_rmem_default }}
+    mode: "0644"
+  tags: [kernel, l2-compliance, nist, cm-7]
+
+- name: "CM-7 | Apply kernel security parameters (sysctl)"
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - { name: kernel.randomize_va_space, value: "{{ kernel_randomize_va_space }}" }
+    - { name: kernel.kptr_restrict, value: "{{ kernel_kptr_restrict }}" }
+    - { name: kernel.dmesg_restrict, value: "{{ kernel_dmesg_restrict }}" }
+    - { name: net.ipv4.tcp_syncookies, value: "{{ net_ipv4_tcp_syncookies }}" }
+    - { name: net.ipv4.conf.all.rp_filter, value: "{{ net_ipv4_conf_all_rp_filter }}" }
+    - { name: net.ipv4.conf.default.rp_filter, value: "{{ net_ipv4_conf_default_rp_filter }}" }
+    - { name: net.ipv4.icmp_echo_ignore_broadcasts, value: "{{ net_ipv4_icmp_echo_ignore_broadcasts }}" }
+    - { name: net.ipv4.icmp_ignore_bogus_error_responses, value: "{{ net_ipv4_icmp_ignore_bogus_error_responses }}" }
+    - { name: net.ipv4.conf.all.accept_redirects, value: "{{ net_ipv4_conf_all_accept_redirects }}" }
+    - { name: net.ipv6.conf.all.accept_redirects, value: "{{ net_ipv6_conf_all_accept_redirects }}" }
+    - { name: net.ipv4.conf.all.send_redirects, value: "{{ net_ipv4_conf_all_send_redirects }}" }
+    - { name: net.ipv4.conf.all.accept_source_route, value: "{{ net_ipv4_conf_all_accept_source_route }}" }
+    - { name: net.ipv6.conf.all.accept_source_route, value: "{{ net_ipv6_conf_all_accept_source_route }}" }
+    - { name: net.ipv6.conf.all.use_tempaddr, value: "{{ net_ipv6_conf_all_use_tempaddr }}" }
+    - { name: net.ipv6.conf.default.use_tempaddr, value: "{{ net_ipv6_conf_default_use_tempaddr }}" }
+    - { name: net.core.rmem_max, value: "{{ net_core_rmem_max }}" }
+    - { name: net.core.rmem_default, value: "{{ net_core_rmem_default }}" }
+  # Known limitation: some kernel.* and net.* sysctls are read-only inside
+  # containers/LXC (shared kernel). The config file is always written correctly
+  # (previous task). Live apply is best-effort - real hardware has no such limit.
+  ignore_errors: yes
+  tags: [kernel, l2-compliance, nist, cm-7]
+
+- name: "CM-7 | Clean up legacy L1 blacklist file (pre-consolidation)"
+  ansible.builtin.file:
+    path: /etc/modprobe.d/blacklist.conf
+    state: absent
+  tags: [kernel, l2-compliance, nist, cm-7]
+
+- name: "CM-7 | Clean up stale per-module blacklist files"
+  ansible.builtin.file:
+    path: "/etc/modprobe.d/nist-blacklist-{{ item }}.conf"
+    state: absent
+  loop:
+    - freevxfs
+    - jffs2
+    - hfs
+    - hfsplus
+    - squashfs
+    - udf
+  tags: [kernel, l2-compliance, nist, cm-7]
+
+# ─── CM-7: /proc hidepid=2 with dynamic GID ──────────────────────────────
+
+- name: "CM-7 | Create proc_readers group for /proc visibility"
+  ansible.builtin.group:
+    name: "{{ proc_readers_group | default('proc_readers') }}"
+    state: present
+  tags: [kernel, l2-compliance, cm-7]
+
+- name: "CM-7 | Look up proc_readers GID"
+  ansible.builtin.getent:
+    database: group
+    key: "{{ proc_readers_group | default('proc_readers') }}"
+  tags: [kernel, l2-compliance, cm-7]
+
+- name: "CM-7 | Mount /proc with hidepid=2 (monitoring exempt via gid)"
+  ansible.posix.mount:
+    path: /proc
+    src: proc
+    fstype: proc
+    opts: "defaults,hidepid=2,gid={{ ansible_facts.getent_group[proc_readers_group | default('proc_readers')][1] }}"
+    state: mounted
+    fstab: /etc/fstab
+  tags: [kernel, l2-compliance, cm-7]

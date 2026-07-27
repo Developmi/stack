@@ -1,0 +1,64 @@
+---
+# ==============================================================================
+# L2 Compliance - Handlers (aggregator)
+# ==============================================================================
+# Handlers must live at role_root/handlers/main.yml for Ansible auto-load.
+# notified from general/tasks/security/ssh_hardening.yml and related task files.
+# ponytail: inlined from general/handlers/security.yml - include_tasks in
+# handlers context doesn't resolve for notify: directives.
+# ==============================================================================
+
+- name: Reload UFW
+  community.general.ufw:
+    state: reloaded
+  throttle: 1
+
+- name: Restart fail2ban
+  ansible.builtin.systemd:
+    name: fail2ban
+    state: restarted
+  throttle: 1
+
+- name: Restart SSH
+  ansible.builtin.systemd:
+    name: ssh
+    state: restarted
+  throttle: 1
+
+- name: Restart auditd
+  ansible.builtin.systemd:
+    name: auditd
+    state: restarted
+  throttle: 1
+  # Known limitation: auditd cannot start inside containers/LXC (kernel audit
+  # subsystem is not namespaced). Config files are written correctly regardless.
+  ignore_errors: yes
+
+- name: Restart nftables
+  ansible.builtin.systemd:
+    name: nftables
+    state: reloaded
+  throttle: 1
+
+- name: Reload nftables
+  listen: reload nftables
+  ansible.builtin.command: nft -f /etc/nftables.conf
+  changed_when: false
+  tags: [l2-hardening]
+
+# ponytail: inlined from general/handlers/tailscale.yml
+- name: Restart Tailscale
+  ansible.builtin.systemd:
+    name: tailscaled
+    state: restarted
+
+- name: Restart systemd-networkd
+  ansible.builtin.systemd:
+    name: systemd-networkd
+    state: restarted
+
+# ponytail: inlined from nist_800_53/si-4/handlers/main.yml
+- name: Restart CrowdSec
+  ansible.builtin.systemd:
+    name: crowdsec
+    state: restarted

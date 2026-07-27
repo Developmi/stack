@@ -1,0 +1,146 @@
+---
+- name: Gather Docker host info for exporters deployment
+  community.docker.docker_host_info: {}
+  register: observability_docker_info_exporters
+  changed_when: false
+  failed_when: false
+  tags:
+    - l3-observability
+    - observability
+    - monitoring
+    - exporters
+    - node_exporter
+    - cadvisor
+    - observability_networks
+    - observability_assets
+
+- name: Assert Docker is available for exporters deployment
+  ansible.builtin.assert:
+    that:
+      - observability_docker_info_exporters.can_talk_to_docker | default(false)
+    fail_msg: >-
+      Docker is not reachable on {{ inventory_hostname }}.
+      Exporters deployment requires a running Docker daemon and API access.
+  tags:
+    - l3-observability
+    - observability
+    - monitoring
+    - exporters
+    - node_exporter
+    - cadvisor
+    - observability_networks
+    - observability_assets
+
+- name: Ensure observability Docker network exists
+  community.docker.docker_network:
+    name: "{{ observability_network_name }}"
+    driver: bridge
+    state: present
+  tags: [l3-observability, observability, monitoring, exporters, node_exporter, cadvisor, observability_networks]
+
+- name: Ensure exporters compose directory exists
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/observability/exporters"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  tags: [l3-observability, observability, monitoring, exporters, node_exporter, cadvisor, observability_assets]
+
+- name: Render exporters docker compose from unified template
+  ansible.builtin.template:
+    src: exporters-docker-compose.yml.j2
+    dest: "{{ app_base_dir }}/observability/exporters/docker-compose.yml"
+    mode: "0644"
+  tags: [l3-observability, observability, monitoring, exporters, node_exporter, cadvisor, observability_assets]
+
+- name: Deploy exporters stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ app_base_dir }}/observability/exporters"
+    files:
+      - docker-compose.yml
+    state: present
+    pull: "{{ observability_compose_pull_policy }}"
+    recreate: "{{ observability_compose_recreate_policy }}"
+    remove_orphans: true
+    wait: true
+    wait_timeout: "{{ observability_compose_wait_timeout }}"
+  register: observability_exporters_compose_result
+  when: >-
+    'all' in ansible_run_tags or
+    'observability' in ansible_run_tags or
+    'monitoring' in ansible_run_tags or
+    'exporters' in ansible_run_tags
+  tags: [l3-observability, observability, monitoring, exporters]
+
+- name: Deploy node-exporter service only
+  community.docker.docker_compose_v2:
+    project_src: "{{ app_base_dir }}/observability/exporters"
+    files:
+      - docker-compose.yml
+    services:
+      - node-exporter
+    state: present
+    pull: "{{ observability_compose_pull_policy }}"
+    recreate: "{{ observability_compose_recreate_policy }}"
+    wait: true
+    wait_timeout: "{{ observability_compose_wait_timeout }}"
+  register: observability_node_exporter_compose_result
+  when: >-
+    'node_exporter' in ansible_run_tags and
+    'all' not in ansible_run_tags and
+    'observability' not in ansible_run_tags and
+    'monitoring' not in ansible_run_tags and
+    'exporters' not in ansible_run_tags
+  tags: [l3-observability, node_exporter]
+
+- name: Deploy cadvisor service only
+  community.docker.docker_compose_v2:
+    project_src: "{{ app_base_dir }}/observability/exporters"
+    files:
+      - docker-compose.yml
+    services:
+      - cadvisor
+    state: present
+    pull: "{{ observability_compose_pull_policy }}"
+    recreate: "{{ observability_compose_recreate_policy }}"
+    wait: true
+    wait_timeout: "{{ observability_compose_wait_timeout }}"
+  register: observability_cadvisor_compose_result
+  when: >-
+    'cadvisor' in ansible_run_tags and
+    'all' not in ansible_run_tags and
+    'observability' not in ansible_run_tags and
+    'monitoring' not in ansible_run_tags and
+    'exporters' not in ansible_run_tags
+  tags: [l3-observability, cadvisor]
+
+- name: Display exporters deployment summary
+  ansible.builtin.debug:
+    msg:
+      - "Exporters deployed on {{ inventory_hostname }}"
+      - "Compose: {{ app_base_dir }}/observability/exporters/docker-compose.yml"
+      - "Network: {{ observability_network_name }}"
+      - "Changed: {{ observability_exporters_compose_result.changed }}"
+  when: observability_exporters_compose_result is defined
+  tags: [l3-observability, observability, monitoring, exporters]
+
+- name: Display node-exporter deployment summary
+  ansible.builtin.debug:
+    msg:
+      - "Node Exporter deployed on {{ inventory_hostname }}"
+      - "Compose: {{ app_base_dir }}/observability/exporters/docker-compose.yml"
+      - "Network: {{ observability_network_name }}"
+      - "Changed: {{ observability_node_exporter_compose_result.changed }}"
+  when: observability_node_exporter_compose_result is defined
+  tags: [l3-observability, node_exporter]
+
+- name: Display cadvisor deployment summary
+  ansible.builtin.debug:
+    msg:
+      - "cAdvisor deployed on {{ inventory_hostname }}"
+      - "Compose: {{ app_base_dir }}/observability/exporters/docker-compose.yml"
+      - "Network: {{ observability_network_name }}"
+      - "Changed: {{ observability_cadvisor_compose_result.changed }}"
+  when: observability_cadvisor_compose_result is defined
+  tags: [l3-observability, cadvisor]

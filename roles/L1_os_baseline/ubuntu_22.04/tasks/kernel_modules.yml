@@ -1,0 +1,98 @@
+---
+# ==============================================================================
+# L1 OS Baseline - Ubuntu 22.04 - Kernel Module Blacklisting
+# ==============================================================================
+# NIST CM-7: Blacklist insecure kernel modules.
+# ==============================================================================
+
+- name: "L1 | Ensure modprobe.d directory exists"
+  ansible.builtin.file:
+    path: /etc/modprobe.d
+    state: directory
+    mode: "{{ file_mode_default }}"
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Deploy kernel module blacklist (Ubuntu 22.04)"
+  ansible.builtin.copy:
+    dest: "{{ l1_blacklist_file }}"
+    content: |
+      # NIST CM-7 - Insecure kernel modules blacklisted by L1 OS Baseline
+      # Managed by Ansible - do not edit manually
+      {% for module in l1_blacklist_modules %}
+      install {{ module }} /bin/false
+      blacklist {{ module }}
+      {% endfor %}
+    mode: "{{ file_mode_default }}"
+  notify: "Rebuild initramfs for current kernel"
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Unload blacklisted kernel modules (Ubuntu 22.04)"
+  ansible.builtin.command: "modprobe -r {{ item }}"
+  loop: "{{ l1_blacklist_modules }}"
+  failed_when: false
+  tags: [l1-os-baseline, ubuntu]
+
+# ==============================================================================
+# CM-7 Phase 3: Classify modules (builtin / loadable / missing)
+# ==============================================================================
+
+- name: "CM-7 | Classify kernel modules as builtin/loadable/missing"
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for mod in {{ l1_blacklist_modules | join(' ') }}; do
+      filename="$(modinfo -F filename "$mod" 2>/dev/null || true)"
+      if [ "$filename" = "(builtin)" ]; then
+        echo "$mod:builtin"
+      elif [ -n "$filename" ]; then
+        echo "$mod:loadable"
+      else
+        echo "$mod:missing"
+      fi
+    done
+  args:
+    executable: /bin/bash
+  register: _cm7_classification
+  changed_when: false
+  tags: [l1-os-baseline, nist, cm-7]
+
+# ==============================================================================
+# CM-7 Phase 4: Build actionable lists
+# ==============================================================================
+
+- name: "CM-7 | Build classification reports"
+  ansible.builtin.set_fact:
+    _cm7_loadable: "{{ _cm7_classification.stdout_lines | select('search', ':loadable$') | map('regex_replace', ':loadable$', '') | list }}"
+    _cm7_builtin: "{{ _cm7_classification.stdout_lines | select('search', ':builtin$') | map('regex_replace', ':builtin$', '') | list }}"
+    _cm7_missing: "{{ _cm7_classification.stdout_lines | select('search', ':missing$') | map('regex_replace', ':missing$', '') | list }}"
+  tags: [l1-os-baseline, nist, cm-7]
+
+# ==============================================================================
+# CM-7 Phase 5: Report builtin + missing, verify loaded
+# ==============================================================================
+
+- name: "CM-7 | Report builtin modules (informational)"
+  ansible.builtin.debug:
+    msg: "Builtin (cannot be removed): {{ _cm7_builtin | join(', ') }}"
+  when: _cm7_builtin | length > 0
+  tags: [l1-os-baseline, nist, cm-7]
+
+- name: "CM-7 | Report missing modules (informational)"
+  ansible.builtin.debug:
+    msg: "Missing (not present on this kernel): {{ _cm7_missing | join(', ') }}"
+  when: _cm7_missing | length > 0
+  tags: [l1-os-baseline, nist, cm-7]
+
+- name: "CM-7 | Verify no blacklisted module is still loaded"
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for mod in {{ l1_blacklist_modules | join(' ') }}; do
+      if lsmod | grep -q "^$mod "; then
+        echo "FOUND: $mod"
+      fi
+    done
+  args:
+    executable: /bin/bash
+  register: _cm7_loaded
+  changed_when: false
+  failed_when: _cm7_loaded.stdout != ""
+  tags: [l1-os-baseline, nist, cm-7]

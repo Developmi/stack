@@ -1,0 +1,30 @@
+---
+# =============================================================================
+# MUSCLE SERVERS - FIREWALL CONFIGURATION
+# =============================================================================
+# Muscle-specific firewall variables (Cluster Worker nodes)
+# Automatically applied to all hosts in [muscle] group
+# =============================================================================
+
+# --- SSH Access ---
+firewall_allow_ssh_public: false # SSH blocked from Internet
+firewall_ssh_rate_limit: false # No rate limit (VPN only)
+firewall_ssh_vpn_only: true # SSH only via Tailscale
+
+# --- Web Traffic ---
+firewall_allow_http: true # Public apps via Caddy proxy
+firewall_allow_https: true
+
+# --- Docker Cluster ---
+firewall_allow_docker_ssh: true # Allow containers to access SSH
+firewall_docker_network_range: "172.16.0.0/12"
+
+# =============================================================================
+# ROLE-SPECIFIC BEHAVIOR
+# =============================================================================
+# Muscle servers are:
+# - Docker Cluster Worker nodes
+# - Application execution hosts
+# - NOT accessible via public SSH (VPN only)
+# - Emergency access via Oracle Cloud Console
+# =============================================================================

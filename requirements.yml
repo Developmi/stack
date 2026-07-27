@@ -1,0 +1,15 @@
+---
+# Ansible Galaxy collections required for Developmi Stack
+
+collections:
+  - name: community.general
+    version: "13.0.1"
+  - name: ansible.posix
+    version: "2.2.0"
+  - name: community.docker
+    version: "5.2.1"
+
+  # To install with make:
+  #   make install collection
+  # Or use ansible-galaxy directly:
+  #   ansible-galaxy collection install community.general ansible.posix community.docker

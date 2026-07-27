@@ -1,0 +1,40 @@
+# ---
+# COMPLIANCE WARNING:
+# Backup scripts run as root with access to Docker socket and runtime data.
+# They source /etc/restic/env (0600 root) for credentials at runtime.
+# Scripts are deployed as 0755 root. Do NOT modify manually - redeploy via Ansible.
+# - restic-backup-volumes.sh → Volumes: reads /etc/restic/backup-paths.conf (runtime only)
+# - restic-backup-all.sh     → Wrapper: volumes-only + Telegram notify (L6 per ADR-09)
+# - notify-telegram.sh       → Shared Telegram notification (non-fatal on failure)
+# ---
+---
+- name: "Ensure log directory exists"
+  ansible.builtin.file:
+    path: /var/log/restic
+    state: directory
+    mode: "0750"
+    owner: root
+    group: root
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Deploy backup scripts"
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item | basename }}"
+    mode: "0755"
+    owner: root
+    group: root
+  loop:
+    - restic-backup-volumes.sh
+    - restic-backup-all.sh
+    - notify-telegram.sh
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Deploy backup paths configuration"
+  ansible.builtin.copy:
+    src: backup-paths.conf
+    dest: /etc/restic/backup-paths.conf
+    mode: "0644"
+    owner: root
+    group: root
+  tags: [l6-runtime, stack_backup, restic]

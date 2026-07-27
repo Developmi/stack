@@ -1,0 +1,51 @@
+services:
+  edge_agent:
+    image: {{ portainer_edge_agent_image }}
+    container_name: portainer_edge_agent
+    restart: unless-stopped
+    user: "65534:65534"  # nobody:nogroup - unprivileged user for security
+    # Required when Docker daemon runs with global userns-remap.
+    # Keeps userns isolation for other containers while enabling socket access here.
+    userns_mode: "host"
+    group_add:
+      - "{{ docker_socket_gid }}"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      EDGE: "1"
+      EDGE_KEY: "{{ portainer_edge_key_resolved }}"
+      MTLSCACERT: "/certs/portainer-ca.crt"
+{% if portainer_edge_insecure_poll | bool %}
+      EDGE_INSECURE_POLL: "1"
+{% endif %}
+{% if portainer_edge_id_resolved is defined and (portainer_edge_id_resolved | trim | length > 0) %}
+      EDGE_ID: "{{ portainer_edge_id_resolved }}"
+      PORTAINER_EDGE_ID: "{{ portainer_edge_id_resolved }}"
+{% endif %}
+      # EDGE_ID can be set explicitly for pre-staging flows.
+      # - CAP_HOST_PID=1  # Optional: for host PID namespace access
+    volumes:
+      # SECURITY NOTE: Docker socket mount is required for container management.
+      # Even with hardened runtime, Docker API access is privileged by design.
+      # Mitigation: unprivileged user + docker socket supplemental group only.
+      # and does NOT expose network ports (pull-based communication only via Tailscale).
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+      - {{ app_base_dir }}/portainer_agent_data:/data
+      - {{ app_base_dir }}/portainer_agent_certs:/certs:ro
+    # Edge agent writes health markers under /tmp; keep it writable without relaxing container privileges.
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=16m
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "512M"
+    networks:
+      - public_net
+    labels:
+      com.docker.stack.namespace: "management"
+
+networks:
+  public_net:
+    external: true

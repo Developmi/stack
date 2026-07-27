@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# Developmi Stack - compliance.yml (Evidence-Only)
+# ==============================================================================
+# Single-play, read-only evidence collection. Updates /srv/evidence/nist/<control>/
+# without modifying any host configuration. No services restarted, no packages
+# installed, no firewall rules changed.
+#
+# Run independently for periodic compliance revalidation:
+#   ansible-playbook -i inventory/hosts.ini playbooks/l2/compliance.yml
+#
+# Controls collected: AC-2, CM-7, SC-7, SI-4, AU-12
+# ==============================================================================
+
+- name: "Compliance: Evidence Collection (Read-Only)"
+  hosts: all
+  become: true
+  gather_facts: true
+  tags: [compliance, l2-compliance]
+  roles:
+    - role: L2_compliance/nist_800_53

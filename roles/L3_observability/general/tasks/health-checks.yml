@@ -1,0 +1,24 @@
+---
+# =============================================================================
+# L3 OBSERVABILITY - Health Check Configuration
+# =============================================================================
+# Deploys Blackbox Exporter config for HTTP health probing.
+# Probe targets are driven by app_profiles[].monitoring fields
+# in the VictoriaMetrics scrape config - this task only lays down the
+# Blackbox module definitions.
+# =============================================================================
+
+- name: Render Blackbox Exporter config
+  ansible.builtin.template:
+    src: blackbox-config.yml.j2
+    dest: "{{ app_base_dir }}/observability/blackbox-config.yml"
+    mode: "0644"
+  tags:
+    - l3-observability
+    - observability
+    - monitoring
+    - stack
+    - observability_stack
+    - health_checks
+    - blackbox
+    - observability_assets

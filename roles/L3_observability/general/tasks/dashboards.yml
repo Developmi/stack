@@ -1,0 +1,66 @@
+---
+# =============================================================================
+# L3 OBSERVABILITY - Grafana Dashboard Provisioning
+# =============================================================================
+# Deploys pre-baked dashboard JSON files as Grafana provisioning configs.
+# Git-ops friendly: dashboards are versioned in repo, not fetched via API.
+# =============================================================================
+
+- name: Ensure Grafana dashboard provisioning directory exists
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/observability/grafana-dashboards"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  tags:
+    - l3-observability
+    - observability
+    - monitoring
+    - stack
+    - observability_stack
+    - grafana
+    - dashboards
+    - observability_assets
+
+- name: Create Grafana dashboard provisioning config
+  ansible.builtin.copy:
+    dest: "{{ app_base_dir }}/observability/grafana-dashboards.yml"
+    content: |
+      apiVersion: 1
+      providers:
+        - name: 'nist-hardening'
+          orgId: 1
+          folder: 'NIST Hardening'
+          type: file
+          disableDeletion: false
+          updateIntervalSeconds: 30
+          allowUiUpdates: true
+          options:
+            path: /etc/grafana/provisioning/dashboards/json
+    mode: "0644"
+  tags:
+    - l3-observability
+    - observability
+    - monitoring
+    - stack
+    - observability_stack
+    - grafana
+    - dashboards
+    - observability_assets
+
+- name: Deploy pre-baked Node Exporter dashboard
+  ansible.builtin.copy:
+    src: dashboards/node-exporter.json
+    dest: "{{ app_base_dir }}/observability/grafana-dashboards/node-exporter.json"
+    mode: "0644"
+  tags:
+    - l3-observability
+    - observability
+    - monitoring
+    - stack
+    - observability_stack
+    - grafana
+    - dashboards
+    - node_exporter
+    - observability_assets

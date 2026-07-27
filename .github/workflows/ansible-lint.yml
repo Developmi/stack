@@ -1,0 +1,195 @@
+name: Ansible Lint & YAML Validation
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync toolchain
+        run: |
+          uv sync
+
+      - name: Install Ansible collections
+        run: |
+          uv run ansible-galaxy collection install -r requirements.yml
+
+      - name: Run ansible-lint on playbooks
+        id: ansible-lint
+        run: |
+          uv run ansible-lint \
+            --config-file .ansible-lint \
+            playbooks/l6/engine.yml playbooks/l6/portainer.yml playbooks/l6/backup-stack.yml playbooks/l4/edge.yml playbooks/l3/exporters.yml playbooks/l3/stack.yml playbooks/ops/nuke.yml
+        continue-on-error: true
+
+      - name: Run yamllint on YAML files
+        id: yamllint
+        run: |
+          uv run yamllint -c .yamllint \
+            --format colored \
+            --strict \
+            . \
+            2>&1 | tee yamllint_report.txt
+        continue-on-error: true
+
+      - name: Check Ansible version compatibility
+        run: |
+          uv run ansible --version
+
+      - name: Validate playbook syntax
+        run: |
+          uv run ansible-playbook --syntax-check playbooks/l6/engine.yml
+          uv run ansible-playbook --syntax-check playbooks/l6/portainer.yml
+          uv run ansible-playbook --syntax-check playbooks/l6/backup-stack.yml
+          uv run ansible-playbook --syntax-check playbooks/l4/edge.yml
+          uv run ansible-playbook --syntax-check playbooks/l3/exporters.yml
+          uv run ansible-playbook --syntax-check playbooks/l3/stack.yml
+          uv run ansible-playbook --syntax-check playbooks/ops/nuke.yml
+
+      - name: Report results to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '## 🔍 Code Quality Report\n\n';
+
+            body += '### Ansible Lint\n';
+            if ('${{ steps.ansible-lint.outcome }}' === 'success') {
+              body += '✅ All playbooks passed linting\n\n';
+            } else {
+              body += '⚠️ Ansible Lint issues detected (see logs)\n\n';
+            }
+
+            body += '### YAML Validation\n';
+            if ('${{ steps.yamllint.outcome }}' === 'success') {
+              body += '✅ All YAML files valid\n\n';
+            } else {
+              body += '⚠️ YAML validation warnings (see logs)\n\n';
+            }
+
+            body += '**Security Note:** This project enforces NIST 800-53 compliance\n';
+            body += '- All code changes are subject to security audit\n';
+            body += '- See [CONTRIBUTING.md](docs/project/CONTRIBUTING.md) for guidelines\n';
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Fail on critical lint errors
+        if: steps.ansible-lint.outcome == 'failure' || steps.yamllint.outcome == 'failure'
+        run: |
+          echo "❌ Code quality checks failed"
+          echo "Please fix the issues above before merging"
+          exit 1
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: |
+            yamllint_report.txt
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync toolchain
+        run: |
+          uv sync
+
+      - name: Install secret detection tool
+        run: |
+          uv run detect-secrets --version
+
+      - name: Scan for exposed secrets
+        id: detect-secrets
+        run: |
+          uv run detect-secrets scan \
+            --baseline .secrets.baseline \
+            --exclude-files 'roles/.*/(defaults|vars)/.*\.yml$' \
+            --exclude-files 'group_vars/.*\.yml'
+        continue-on-error: true
+
+      - name: Fail if secrets detected
+        if: steps.detect-secrets.outcome == 'failure'
+        run: |
+          echo "❌ Potential secrets detected in commit"
+          echo "Do not commit secrets to version control"
+          echo "Use Ansible Vault or environment variables instead"
+          exit 1
+
+  ansible-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync toolchain
+        run: |
+          uv sync
+
+      - name: Install Ansible collections
+        run: |
+          uv run ansible-galaxy collection install -r requirements.yml
+
+      - name: Verify playbook structure
+        run: |
+          echo "Checking playbook structure..."
+          uv run ansible-playbook --list-hosts playbooks/l6/engine.yml 2>&1 | grep -E "hosts|FATAL" || true
+          uv run ansible-playbook --list-hosts playbooks/l6/portainer.yml 2>&1 | grep -E "hosts|FATAL" || true
+          uv run ansible-playbook --list-hosts playbooks/l6/backup-stack.yml 2>&1 | grep -E "hosts|FATAL" || true
+          uv run ansible-playbook --list-hosts playbooks/l4/edge.yml 2>&1 | grep -E "hosts|FATAL" || true
+          uv run ansible-playbook --list-hosts playbooks/l3/exporters.yml 2>&1 | grep -E "hosts|FATAL" || true
+          uv run ansible-playbook --list-hosts playbooks/l3/stack.yml 2>&1 | grep -E "hosts|FATAL" || true
+
+      - name: Validate inventory format
+        run: |
+          if [ -f inventory/hosts.ini ]; then
+            uv run ansible-inventory -i inventory/hosts.ini --list > /dev/null
+            echo "✅ Inventory valid"
+          fi

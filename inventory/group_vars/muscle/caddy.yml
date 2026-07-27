@@ -1,0 +1,27 @@
+---
+# =============================================================================
+# Caddy Node Configuration - ALL muscle nodes (workers)
+# =============================================================================
+# Group-level defaults for the Caddy ingress reverse proxy.
+# Automatically inherited by every node in the [muscle] inventory group.
+# Add a new muscle node to inventory → zero additional files needed.
+# Consumed by roles/L4_networking/caddy (Caddyfile.j2, tasks/main.yml).
+# =============================================================================
+
+# Node type classification: brain (management) or muscle (worker).
+# Used for preflight validation - ensures node is in a recognized group.
+caddy_type: "muscle"
+
+# --- Admin API ---
+# NIST AC-3 / IA-2 | Disabled in production.
+# Set to true for troubleshooting (exposes Caddy config API on localhost:2019).
+caddy_admin_enabled: false
+
+# --- WAF (Coraza) Enforcement Mode ---
+# caddy_coraza_mode is intentionally NOT set here.
+# It must be defined per host as an inline inventory variable in hosts.ini.
+# Each muscle node can have its own state: On (blocking), DetectionOnly (tuning), Off (disabled).
+# The preflight assert in tasks/main.yml fails loudly if any node is missing this variable.
+# Example inventory entries:
+#   muscle-1 ansible_host=... caddy_node_id=muscle-1 caddy_coraza_mode=DetectionOnly
+#   muscle-2 ansible_host=... caddy_node_id=muscle-2 caddy_coraza_mode=On

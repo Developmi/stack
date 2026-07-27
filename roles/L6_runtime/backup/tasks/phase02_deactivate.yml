@@ -1,0 +1,43 @@
+---
+# =============================================================================
+# Phase 02 Deactivation: Stop/Disable Systemd Timers on brain-1
+# =============================================================================
+# Tags: backup_deactivate, backup
+# Idempotent: systemd_service state=stopped enabled=false (ADR-08)
+# Scripts are left orphaned (not deleted) per spec R.12
+# =============================================================================
+
+- name: "Check if any Phase 02 timer exists on brain-1"
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}"
+  loop:
+    - restic-backup-all.timer
+    - restic-check.timer
+    - restic-prune.timer
+  register: timer_file_check
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname in groups['brain']
+  tags: [backup_deactivate, backup]
+
+- name: "Stop and disable Phase 02 backup timers on brain-1"
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}"
+    state: stopped
+    enabled: false
+    daemon_reload: true
+  loop: "{{ timer_file_check.results }}"
+  when:
+    - inventory_hostname in groups['brain']
+    - item.stat.exists | default(false)
+  failed_when: false
+  tags: [backup_deactivate, backup]
+
+- name: "Report Phase 02 deactivation status"
+  ansible.builtin.debug:
+    msg: >-
+      Phase 02 backup timers deactivated on {{ inventory_hostname }}.
+      Scripts in /usr/local/bin/ remain orphaned for manual recovery.
+      Phase 04 backup role now owns backup orchestration.
+  when: inventory_hostname in groups['brain']
+  tags: [backup_deactivate, backup]

@@ -1,0 +1,28 @@
+---
+# ==============================================================================
+# SECURITY - pam_pwquality Password Policy (NIST AC-2, CIS 5.3.x)
+# ==============================================================================
+# Installs libpam-pwquality and enforces: minlen=12, difok=3, credit checks,
+# maxrepeat=3, gecoscheck. Validates package presence before installing.
+# ==============================================================================
+
+- name: "AC-2 | Validate libpam-pwquality package availability"
+  ansible.builtin.package_facts:
+    manager: apt
+  tags: [pam, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Install libpam-pwquality"
+  ansible.builtin.apt:
+    name: libpam-pwquality
+    state: present
+    lock_timeout: 600
+  when: "'libpam-pwquality' not in ansible_facts.packages"
+  tags: [pam, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Configure pam_pwquality password policy"
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/common-password
+    regexp: "^#?password\\s+requisite\\s+pam_pwquality\\.so"
+    line: "password        requisite                       pam_pwquality.so retry=3 minlen=12 difok=3 ucredit=-1 lcredit=-1 dcredit=-1 ocredit=-1 maxrepeat=3 gecoscheck=1"
+    state: present
+  tags: [pam, l2-compliance, nist, ac-2]

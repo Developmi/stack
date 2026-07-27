@@ -1,0 +1,87 @@
+---
+# ==============================================================================
+# Ubuntu 22.04 - L1 OS Baseline Dispatcher
+# ==============================================================================
+# First task: gather package facts. Then validate-before-act pattern for all
+# installs: ufw (package only, NO service enable - L2 responsibility),
+# apt-listchanges, needrestart, unattended-upgrades, AppArmor profiles.
+# Includes kernel module blacklist (NIST CM-7).
+# ==============================================================================
+
+- name: "L1 | Load Ubuntu 22.04 specific variables"
+  ansible.builtin.include_vars: ../vars/main.yml
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Load Ubuntu 22.04 defaults"
+  ansible.builtin.include_vars: ../defaults/main.yml
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Refresh apt cache safely"
+  ansible.builtin.import_tasks: general/tasks/apt_refresh.yml
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Gather package facts"
+  ansible.builtin.package_facts:
+    manager: apt
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Install software-properties-common"
+  ansible.builtin.apt:
+    name: software-properties-common
+    state: present
+    lock_timeout: "{{ l1_apt_lock_timeout | default(600) }}"
+  when: "'software-properties-common' not in ansible_facts.packages"
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Install python3-debian (required by deb822_repository module)"
+  ansible.builtin.apt:
+    name: python3-debian
+    state: present
+    lock_timeout: "{{ l1_apt_lock_timeout | default(600) }}"
+  when: "'python3-debian' not in ansible_facts.packages"
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Check if Universe repository is already enabled"
+  ansible.builtin.command: grep -q "^deb.*universe" /etc/apt/sources.list /etc/apt/sources.list.d/*.sources
+  register: _universe_check
+  failed_when: false
+  changed_when: false
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Enable Universe repository"
+  ansible.builtin.deb822_repository:
+    name: universe
+    types: deb
+    uris: http://archive.ubuntu.com/ubuntu
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: universe
+    state: present
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Install security and monitoring packages (Ubuntu 22.04)"
+  ansible.builtin.apt:
+    name:
+      - ufw
+      - apt-listchanges
+      - needrestart
+      - unattended-upgrades
+      - apparmor-profiles
+      - apparmor-utils
+    state: present
+    lock_timeout: "{{ l1_apt_lock_timeout | default(600) }}"
+  when: >
+    ('ufw' not in ansible_facts.packages)
+    or ('apt-listchanges' not in ansible_facts.packages)
+    or ('needrestart' not in ansible_facts.packages)
+    or ('unattended-upgrades' not in ansible_facts.packages)
+    or ('apparmor-profiles' not in ansible_facts.packages)
+    or ('apparmor-utils' not in ansible_facts.packages)
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Configure unattended-upgrades (Ubuntu 22.04)"
+  ansible.builtin.include_tasks: ubuntu_22.04/tasks/unattended_upgrades.yml
+  tags: [l1-os-baseline]
+
+- name: "L1 | Blacklist insecure kernel modules (Ubuntu 22.04)"
+  ansible.builtin.include_tasks: ubuntu_22.04/tasks/kernel_modules.yml
+  tags: [l1-os-baseline, ubuntu]

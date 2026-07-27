@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# L1 OS Baseline - Ubuntu 22.04 - Unattended Security Upgrades
+# ==============================================================================
+# Auto-installs security patches only. No automatic reboots.
+# Validate-before-act: package_facts confirms unattended-upgrades
+# was already installed by packages task.
+# ==============================================================================
+
+- name: "L1 | Verify unattended-upgrades package present (Ubuntu 22.04)"
+  ansible.builtin.debug:
+    msg: "unattended-upgrades is present - configuring"
+  when: "'unattended-upgrades' in ansible_facts.packages"
+  tags: [l1-os-baseline]
+
+- name: "L1 | Configure unattended-upgrades (security only, Ubuntu 22.04)"
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    content: |
+      Unattended-Upgrade::Allowed-Origins {
+        "${distro_id}:${distro_codename}-security";
+      };
+      Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+      Unattended-Upgrade::MinimalSteps "true";
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::Automatic-Reboot "false";
+    mode: "{{ file_mode_default }}"
+  tags: [l1-os-baseline]

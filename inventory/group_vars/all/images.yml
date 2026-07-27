@@ -1,0 +1,88 @@
+---
+# -----------------------------------------------------------------------------
+# NON-SECRET IMAGE PINNING & DEPLOYMENT DEFAULTS
+# -----------------------------------------------------------------------------
+# Keep image tags, package pins, and other non-sensitive defaults here.
+# Keep tokens, API keys, and privacy-sensitive tenant data in secrets.yml.
+
+# -----------------------------------------------------------------------------
+# REVERSE PROXY & INGRESS
+# -----------------------------------------------------------------------------
+# Custom image namespace
+image_namespace: "{{ vault_image_namespace }}"  # AC-3: value from secrets.yml only
+# Caddy image
+caddy_image: "ghcr.io/developmi/caddy-waf:v3.2.1"
+
+# Optional SHA256 digest for supply chain verification (keep with image pinning here)
+# caddy_image_digest: "{{ caddy_image_digest | default('') }}"
+
+# -----------------------------------------------------------------------------
+# GITHUB CONTAINER REGISTRY
+# -----------------------------------------------------------------------------
+github_username: "{{ vault_github_username }}"  # AC-3: value from secrets.yml only
+
+# -----------------------------------------------------------------------------
+# PORTAINER MANAGEMENT STACK
+# -----------------------------------------------------------------------------
+portainer_server_image: "portainer/portainer-ee:2.39.3"
+portainer_edge_agent_image: "portainer/agent:2.39.3"
+portainer_server_url: "https://{{ groups['brain'][0] }}:9443"
+portainer_edge_insecure_poll: true
+
+# -----------------------------------------------------------------------------
+# GLOBAL CONFIGURATION - Archipelago Architecture
+# -----------------------------------------------------------------------------
+cluster_name: "Archipelago"
+timezone: "UTC"
+
+# -----------------------------------------------------------------------------
+# FILESYSTEM PATHS (Standardized)
+# -----------------------------------------------------------------------------
+app_base_dir: "/srv/app" # Base path for container apps
+
+# -----------------------------------------------------------------------------
+# RUNTIME PACKAGE PINNING
+# -----------------------------------------------------------------------------
+# Docker Engine package versions must stay explicit for reproducibility.
+docker_version_map:
+  Debian:
+    bookworm: "5:29.5.3-1~debian.12~bookworm"
+    bullseye: "5:29.3.0-1~debian.11~bullseye"
+  Ubuntu:
+    jammy: "5:29.5.3-1~ubuntu.22.04~jammy"
+    noble: "5:29.3.0-1~ubuntu.24.04~noble"
+
+# -----------------------------------------------------------------------------
+# CONTAINER USER IDs
+# -----------------------------------------------------------------------------
+# AC-2: Keep these aligned with the container image user to avoid bind-mount
+# permission issues (for example /var/log/caddy/access.log).
+caddy_user_uid: 1337
+caddy_user_gid: 1337
+
+# -----------------------------------------------------------------------------
+# NETWORK CONFIGURATION (Tailscale Zero Trust)
+# -----------------------------------------------------------------------------
+tailscale_mtu: 1280 # MTU for Tailscale
+tailscale_metrics_port: 5252 # Tailscale metrics port
+
+# -----------------------------------------------------------------------------
+# ANSIBLE RUNTIME
+# -----------------------------------------------------------------------------
+ansible_python_interpreter: /usr/bin/python3 # Python interpreter for Ansible
+
+# -----------------------------------------------------------------------------
+# OBSERVABILITY
+# -----------------------------------------------------------------------------
+# Docs: https://github.com/VictoriaMetrics/VictoriaMetrics/releases/tag/v1.148.0
+victoriametrics_image: "victoriametrics/victoria-metrics:v1.148.0"
+# Docs: https://github.com/grafana/loki/releases/tag/v3.6.13
+loki_image: "grafana/loki:3.6.13"
+# Docs: https://github.com/grafana/grafana/releases/tag/v13.1.1
+grafana_image: "grafana/grafana:13.1.1"
+# Docs: https://github.com/prometheus/node_exporter/releases/tag/v1.12.1
+node_exporter_image: "prom/node-exporter:v1.12.1"
+# Docs: https://github.com/google/cadvisor/releases/tag/v0.60.5
+cadvisor_image: "ghcr.io/google/cadvisor:v0.60.5"
+# Docs: https://github.com/prometheus/blackbox_exporter/releases/tag/v0.27.0
+blackbox_exporter_image: "prom/blackbox-exporter:v0.27.0"

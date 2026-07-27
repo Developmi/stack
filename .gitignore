@@ -1,0 +1,243 @@
+#############################################
+# Infrastructure as Code (.gitignore)
+# Terraform / OpenTofu – Cloud Environments
+#############################################
+
+# =================================================
+# Terraform / OpenTofu Core
+# =================================================
+
+# Local working directories for providers and modules
+**/.terraform/
+**/.terraform/*
+
+# Dependency lock file
+.terraform.lock.hcl
+
+# =================================================
+# State Files (CRITICAL - Contains Sensitive Data)
+# =================================================
+
+# Terraform/OpenTofu state files
+# WARNING: May contain sensitive data such as IP addresses, credentials, and secrets
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# =================================================
+# Variable Definitions & Secrets
+# =================================================
+
+# Variable files (often contain secrets)
+*.tfvars
+*.tfvars.json
+
+# Auto-loaded variable files
+*.auto.tfvars
+*.auto.tfvars.json
+
+# Local secret files
+secrets.tf
+secrets.auto.tfvars
+
+# =================================================
+# Override & Local Configuration Files
+# =================================================
+
+# Local override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# =================================================
+# Environment Variables & Secrets
+# =================================================
+
+# Environment variable files
+.env
+.env.*
+!.env.example
+
+# Shell environment overrides
+.envrc
+
+# Caddyfile 
+Caddyfile
+Caddyfile.j2
+# =================================================
+# SSH Keys & Certificates
+# =================================================
+
+# SSH private and public keys
+*.pem
+*.pub
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+# SSL/TLS certificates
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+
+# =================================================
+# Logs & Crash Reports
+# =================================================
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Generic log files and log directories
+*.log
+logs/
+
+# =================================================
+# CI/CD & Automation Artifacts
+# =================================================
+
+# Terraform plan output files
+*.tfplan
+*.plan
+
+# Ansible sensitive files
+*.vault
+vault.yml
+vault.yaml
+inventory/group_vars/*/secrets.yml
+inventory/group_vars/*/vault.yml
+inventory/*.generated
+inventory/hosts.ini.generated
+inventory/hosts.ini
+roles/clients/
+
+# Multi-tenancy client variable isolation
+inventory/group_vars/clients/*
+!inventory/group_vars/clients/client_example/
+
+# =================================================
+# Operating Systems
+# =================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# =================================================
+# IDEs & Editors
+# =================================================
+
+# Visual Studio Code
+.vscode/
+!.vscode/extensions.json
+
+# JetBrains IDEs
+.idea/
+*.iml
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# =================================================
+# Documentation & Temporary Files
+# =================================================
+
+# Generated documentation
+terraform-docs.md
+
+# Backup files
+*.bak
+*.tmp
+*.backup
+
+# Temporary directories
+tmp/
+temp/
+
+# =================================================
+# Python / uv / pnpm / node local environments
+# =================================================
+.venv/
+.uv/
+.pnpm/
+.pnpm-store/
+node_modules/
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+*.pyd
+*.py,cover
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.ipynb_checkpoints/
+
+# Ansible and workflow scratch files
+*.retry
+.ansible/
+
+# Local editor / tooling metadata
+.python-version
+.atl/
+.direnv/
+.cache/
+graphify-out/
+.codegraph/
+
+# Generic build artifacts
+dist/
+build/
+*.egg-info/
+
+# Docker and compose runtime artifacts
+*.pid
+*.seed
+*.cid
+
+# =================================================
+# Supply Chain Security (Cosign / SBOM)
+# =================================================
+
+# Private signing keys - must never be committed
+cosign.key
+
+# Generated SBOM artifacts
+sbom.*.json
+
+# Container image attestations
+*.attestation
+
+#############################################
+# End of .gitignore
+#############################################

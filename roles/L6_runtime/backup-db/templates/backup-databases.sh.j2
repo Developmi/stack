@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# backup-databases.sh - auto-discover PostgreSQL + MariaDB containers, dump, and stream to restic
+# Managed by Ansible: roles/L6_runtime/backup-db/templates/backup-databases.sh.j2
+
+set -euo pipefail
+
+restic_env_file="{{ restic_env_file }}"
+if [ ! -f "$restic_env_file" ]; then
+  echo "FATAL: $restic_env_file not found" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+set -a; source "$restic_env_file"; set +a
+
+: "${RESTIC_REPOSITORY:?RESTIC_REPOSITORY not set in $restic_env_file}"
+
+timestamp=$(date +%Y%m%d_%H%M%S)
+exit_code=0
+hostname=$(hostname -s)
+
+backup_postgres() {
+  local container="$1"
+  local password user
+  password=$(docker inspect "$container" \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' \
+    | grep '^POSTGRES_PASSWORD=' | cut -d= -f2-)
+  user=$(docker inspect "$container" \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' \
+    | grep '^POSTGRES_USER=' | cut -d= -f2-)
+  user="${user:-postgres}"
+
+  if [ -z "$password" ]; then
+    echo "WARNING: $container: POSTGRES_PASSWORD not set, skipping" >&2
+    return 1
+  fi
+
+  PGPASSWORD="$password" \
+    docker exec -T "$container" pg_dumpall --clean -U "$user" \
+    | gzip --rsyncable \
+    | restic backup --stdin \
+      --stdin-filename "${container}_${timestamp}.sql.gz" \
+      --tag "db,postgresql,${container}" --host "$hostname" \
+    || return 1
+}
+
+backup_mariadb() {
+  local container="$1"
+  local password
+  password=$(docker inspect "$container" \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' \
+    | grep '^MARIADB_ROOT_PASSWORD=' | cut -d= -f2-)
+
+  if [ -z "$password" ]; then
+    echo "WARNING: $container: MARIADB_ROOT_PASSWORD not set, skipping" >&2
+    return 1
+  fi
+
+  MARIADB_PWD="$password" \
+    docker exec -T "$container" \
+      mariadb-dump --all-databases --single-transaction -u root \
+    | gzip --rsyncable \
+    | restic backup --stdin \
+      --stdin-filename "${container}_${timestamp}.sql.gz" \
+      --tag "db,mariadb,${container}" --host "$hostname" \
+    || return 1
+}
+
+# ── Main ──
+
+found=0
+
+while IFS=$'\t' read -r name image; do
+  case "$image" in
+    *[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss]*)
+      echo "Backing up PostgreSQL: $name"
+      backup_postgres "$name" || exit_code=$?
+      found=1
+      ;;
+    *[Mm][Aa][Rr][Ii][Aa][Dd][Bb]*)
+      echo "Backing up MariaDB: $name"
+      backup_mariadb "$name" || exit_code=$?
+      found=1
+      ;;
+    *)
+      continue
+      ;;
+  esac
+done < <(docker ps --format '{{.Names}}\t{{.Image}}')
+
+if [ "$found" -eq 0 ]; then
+  echo "No database containers found, exiting cleanly."
+  exit 0
+fi
+
+# ponytail: connectivity check only, full data verification is a separate concern
+if ! restic check >/dev/null 2>&1; then
+  echo "FATAL: restic check failed - repository unreachable or corrupted" >&2
+  exit 1
+fi
+
+if [ "$exit_code" -eq 0 ]; then
+  echo "All backups complete. Running retention..."
+  restic forget --keep-daily {{ backup_retention_days }} --prune
+else
+  echo "WARNING: Some backups failed with exit code $exit_code. Skipping retention." >&2
+fi
+
+exit "$exit_code"

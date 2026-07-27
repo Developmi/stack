@@ -1,0 +1,30 @@
+---
+# ==============================================================================
+# L1 OS Baseline - Debian 12 - Unattended Security Upgrades
+# ==============================================================================
+# Auto-installs security patches only. No automatic reboots.
+# Validate-before-act: skip-if-present guard on install.
+# ==============================================================================
+
+- name: "L1 | Install unattended-upgrades package (Debian 12)"
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    lock_timeout: "{{ l1_apt_lock_timeout | default(600) }}"
+  when: "'unattended-upgrades' not in ansible_facts.packages"
+  tags: [packages, l1-os-baseline]
+
+- name: "L1 | Configure unattended-upgrades (security only, Debian 12)"
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    content: |
+      Unattended-Upgrade::Allowed-Origins {
+        "${distro_id}:${distro_codename}-security";
+      };
+      Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+      Unattended-Upgrade::MinimalSteps "true";
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::Automatic-Reboot "false";
+    mode: "{{ file_mode_default }}"
+  tags: [packages, l1-os-baseline]

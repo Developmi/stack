@@ -1,0 +1,24 @@
+---
+# OpenWebUI - AI Interface (L5)
+name: openwebui
+version: "0.9.5"
+supported_arch: [amd64, arm64]
+target_group: muscle-3
+
+depends_on: []
+
+backup:
+  schedule: "*-*-* 02:00:00"
+  retention_daily: 7
+  retention_weekly: 4
+  retention_monthly: 12
+  db_type: none
+  db_name: ""
+
+monitoring:
+  health_endpoint: "/health"
+  health_port: 8080
+  scrape_port: 8080
+
+compliance_tags: [nist, ac-2, nist, sc-7]
+dr_tier: standard

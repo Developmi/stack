@@ -1,0 +1,112 @@
+---
+# ==============================================================================
+# APT LOCK PRE-FLIGHT - detect and resolve lock contention
+# ==============================================================================
+# Reusable include for baseline.yml + hardening.yml pre_tasks.
+#
+# Sequence:
+#   1. Detect lock holders via fuser on all 4 lock files
+#   2. Enumerate running apt/dpkg processes via pgrep
+#   3. Inspect process ages (elapsed seconds)
+#   4. Kill stale (>900s) or force-kill (apt_force_cleanup=true) holders
+#   5. Remove stale lock files + dpkg --configure -a
+#   6. Re-check locks after cleanup
+#   7. Fail with diagnostic if locks persist
+#
+# Does NOT touch APT timers - timer stop lives inside the block/rescue
+# of the calling playbook. If this pre-flight fails, timers were never
+# stopped → no orphaning.
+#
+# Interface:
+#   apt_force_cleanup (extra var): bool, default false.
+#     When true, kills ALL lock holders regardless of age.
+# ==============================================================================
+
+- name: "APT Lock | Detect lock holders on all 4 lock files"
+  ansible.builtin.shell: |
+    fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
+  register: _apt_lock_holders
+  changed_when: false
+  failed_when: false
+
+- name: "APT Lock | Enumerate running apt/dpkg processes"
+  ansible.builtin.shell: |
+    pgrep -a '^(apt|apt-get|dpkg)$'
+  register: _apt_processes
+  changed_when: false
+  failed_when: false
+
+- name: "APT Lock | Inspect lock holder process ages"
+  ansible.builtin.shell: |
+    for pid in $(echo "{{ _apt_lock_holders.stdout | default('') }}" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u); do
+      etimes=$(ps -o etimes= -p $pid 2>/dev/null || echo "unknown")
+      cmd=$(ps -o args= -p $pid 2>/dev/null || echo "unknown")
+      echo "PID=$pid ELAPSED=${etimes}s CMD='${cmd}'"
+    done
+  register: _apt_lock_process_info
+  changed_when: false
+  failed_when: false
+  when: _apt_lock_holders.stdout | default('') != ""
+
+- name: "APT Lock | Auto-kill stale processes or force-kill all"
+  ansible.builtin.shell: |
+    force="{{ apt_force_cleanup | default(false) | bool }}"
+    killed=false
+    for pid in $(echo "{{ _apt_lock_holders.stdout | default('') }}" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u); do
+      etimes=$(ps -o etimes= -p $pid 2>/dev/null || echo "0")
+      cmd=$(ps -o args= -p $pid 2>/dev/null || echo "unknown")
+      if [ "$force" = "True" ]; then
+        kill -9 $pid 2>/dev/null && echo "KILLED (forced) PID=$pid CMD='${cmd}'" && killed=true
+      elif [ "$etimes" -gt 900 ] 2>/dev/null; then
+        kill -9 $pid 2>/dev/null && echo "KILLED (stale, ${etimes}s) PID=$pid CMD='${cmd}'" && killed=true
+      fi
+    done
+    if [ "$killed" = "true" ]; then
+      rm -f /var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
+      DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>/dev/null || true
+      echo "CLEANUP: stale lock files removed, dpkg reconfigured"
+    else
+      echo "NOOP: no processes eligible for cleanup (use --extra-vars \"apt_force_cleanup=true\" to force)"
+    fi
+  register: _apt_lock_cleanup
+  changed_when: "'KILLED' in _apt_lock_cleanup.stdout | default('')"
+  failed_when: false
+  when: _apt_lock_holders.stdout | default('') != ""
+
+- name: "APT Lock | Remove stale lock files (no process holders)"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/apt/lists/lock
+    - /var/lib/dpkg/lock
+    - /var/lib/dpkg/lock-frontend
+    - /var/cache/apt/archives/lock
+  changed_when: false
+  when: _apt_lock_holders.stdout | default('') == ""
+
+- name: "APT Lock | Re-check locks after cleanup"
+  ansible.builtin.shell: |
+    fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock 2>/dev/null
+  register: _apt_lock_recheck
+  changed_when: false
+  failed_when: false
+  when:
+    - _apt_lock_holders.stdout | default('') != ""
+    - "'KILLED' in _apt_lock_cleanup.stdout | default('')"
+
+- name: "APT Lock | Fail if lock persists after cleanup"
+  ansible.builtin.fail:
+    msg: |
+      ⛔ APT LOCK CONTENTION on {{ inventory_hostname }}:
+      Lock holder(s): {{ _apt_lock_holders.stdout | default('(unable to detect)') }}
+      Running apt/dpkg: {{ _apt_processes.stdout | default('(none)') }}
+      Process details: {{ _apt_lock_process_info.stdout | default('(unable to inspect)') }}
+      Cleanup result: {{ _apt_lock_cleanup.stdout | default('(no cleanup attempted)') }}
+      → Auto-cleanup was attempted for stale processes (>15 min runtime).
+      → To force-kill ALL lock holders, re-run with:
+        --extra-vars "apt_force_cleanup=true"
+      → Or SSH into {{ inventory_hostname }} and investigate manually.
+  when:
+    - _apt_lock_holders.stdout | default('') != ""
+    - (_apt_lock_cleanup.stdout | default('NOOP')) is not search('KILLED') or (_apt_lock_recheck.stdout | default('')) != ""

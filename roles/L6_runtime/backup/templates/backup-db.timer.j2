@@ -1,0 +1,16 @@
+# Jinja2 template: systemd timer unit for per-app database backups
+# Generates: backup-db-{{ _p.name }}.timer
+# Schedule derived from profile.backup.schedule (ADR-03)
+
+[Unit]
+Description=Backup timer for database {{ _p.name }}
+Requires=backup-db-{{ _p.name }}.service
+
+[Timer]
+{# brain=nightly, muscle=hourly — schedule varies by node role #}
+OnCalendar={{ _p.backup.schedule }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

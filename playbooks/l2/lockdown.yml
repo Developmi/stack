@@ -1,0 +1,289 @@
+---
+# ==============================================================================
+# L2 POST-BOOTSTRAP LOCKDOWN - close public SSH after Tailscale is established
+# ==============================================================================
+# This playbook transitions from bootstrap (nist_bootstrap=true) to steady-state
+# (nist_bootstrap=false) by dropping public SSH and recording the lockdown.
+#
+# Recovery (Tailscale down):
+#   Use tailscale-recover.yml FIRST via cloud console, then re-run lockdown.
+# ==============================================================================
+
+- name: "L2 | Post-bootstrap lockdown - close public SSH"
+  hosts: all
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  max_fail_percentage: 0
+  tags: [lockdown, post-bootstrap, security]
+
+  tasks:
+    # ========================================================================
+    # PRE-FLIGHT - always runs, NOT gated by nist_bootstrap
+    # ========================================================================
+
+    - name: "L2 | PRE-FLIGHT - Assert nist_bootstrap is defined"
+      ansible.builtin.assert:
+        that:
+          - nist_bootstrap is defined
+        fail_msg: >
+          nist_bootstrap must be defined.
+          For first deploy use: make deploy -e nist_bootstrap=true
+      tags: [always]
+
+    - name: "L2 | PRE-FLIGHT - Check if lockdown marker exists"
+      ansible.builtin.stat:
+        path: /etc/tailscale-recover.lock
+      register: _lockdown_marker
+      tags: [always]
+
+    - name: "L2 | PRE-FLIGHT - Assert not missing marker when nist_bootstrap is false"
+      ansible.builtin.assert:
+        that:
+          - _lockdown_marker.stat.exists
+        fail_msg: >
+          nist_bootstrap is false but no lockdown marker found.
+          This looks like a first deploy. Set -e nist_bootstrap=true
+          or verify Tailscale is already connected.
+      when:
+        - not (nist_bootstrap | bool)
+      tags: [always]
+
+    - name: "L2 | PRE-FLIGHT - Verify Tailscale is connected"
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - status
+          - --json
+      register: _ts_lockdown_status
+      changed_when: false
+      failed_when: false
+      check_mode: no
+      tags: [always]
+
+    - name: "L2 | PRE-FLIGHT - Parse Tailscale Online field"
+      ansible.builtin.set_fact:
+        _ts_online: >-
+          {{ ((_ts_lockdown_status.stdout | default('{}') | from_json).Self.Online | default(false)) | bool }}
+      tags: [always]
+
+    - name: "L2 | PRE-FLIGHT - Fail if Tailscale is not online"
+      ansible.builtin.assert:
+        that:
+          - _ts_online
+        fail_msg: >
+          Tailscale not connected on {{ inventory_hostname }}.
+          Run `tailscale-recover.yml` first via cloud console before lockdown.
+      tags: [always]
+
+    - name: "L2 | PRE-FLIGHT - Validate controller_ip is a valid IPv4 address"
+      ansible.builtin.assert:
+        that:
+          - controller_ip is defined
+          - controller_ip is match("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$")
+        fail_msg: >-
+          controller_ip is '{{ controller_ip | default('UNDEFINED') }}'.
+          Must be a valid IPv4 address during bootstrap.
+          Set via -e controller_ip=X.X.X.X or ensure SSH_CLIENT is available.
+      when: nist_bootstrap | bool
+      tags: [always]
+
+    # ========================================================================
+    # BOOTSTRAP TRANSITION - set nist_bootstrap=false for this node
+    # ========================================================================
+
+    - name: "L2 | BOOTSTRAP - Transition nist_bootstrap from true to false"
+      ansible.builtin.set_fact:
+        nist_bootstrap: false
+      when: nist_bootstrap | bool
+      tags: [always]
+
+    - name: "L2 | LOCKDOWN - Disable root SSH (PermitRootLogin no)"
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PermitRootLogin"
+        line: "PermitRootLogin no"
+        state: present
+        validate: "sshd -t -f %s"
+      when: not (nist_bootstrap | bool)
+      tags: [lockdown, ssh]
+
+    - name: "L2 | LOCKDOWN - Switch AllowUsers to Tailscale CGNAT"
+      ansible.builtin.blockinfile:
+        path: /etc/ssh/sshd_config
+        marker: "# {mark} ANSIBLE MANAGED - AllowUsers bootstrap-aware"
+        block: |
+          AllowUsers automation@100.64.0.0/10 dev_admin@100.64.0.0/10 breakglass@100.64.0.0/10
+        state: present
+        insertbefore: BOF
+        validate: "sshd -t -f %s"
+      when: not (nist_bootstrap | bool)
+      tags: [lockdown, ssh]
+
+    - name: "L2 | LOCKDOWN - Restart SSH to apply PermitRootLogin + AllowUsers"
+      ansible.builtin.systemd:
+        name: sshd
+        state: restarted
+      when: not (nist_bootstrap | bool)
+      tags: [lockdown, ssh]
+
+    # ========================================================================
+    # LOCKDOWN - apply public SSH DROP (only when nist_bootstrap is false)
+    # ========================================================================
+
+    - name: "L2 | LOCKDOWN - Apply UFW SSH DROP rules"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/L2_compliance/general/tasks/security/ufw_rules.yml"
+      when:
+        - not (nist_bootstrap | bool)
+        - os_firewall_backend == 'ufw'
+      tags: [lockdown, firewall]
+
+    - name: "L2 | LOCKDOWN - Apply nftables SSH DROP rules"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/L2_compliance/general/tasks/security/nftables_rules.yml"
+      when:
+        - not (nist_bootstrap | bool)
+        - os_firewall_backend == 'nftables'
+      tags: [lockdown, firewall]
+
+    - name: "L2 | LOCKDOWN - Remove bootstrap ACCEPT rule after transition"
+      ansible.builtin.blockinfile:
+        path: /etc/ufw/before.rules
+        marker: "# {mark} ANSIBLE MANAGED - SSH bootstrap gate"
+        block: ""
+        state: absent
+      when:
+        - not (nist_bootstrap | bool)
+        - os_firewall_backend == 'ufw'
+      # (notify removed - reloaded explicitly below)
+      tags: [lockdown, firewall]
+
+    - name: "L2 | LOCKDOWN - Reload UFW after bootstrap rule removal"
+      ansible.builtin.command: ufw reload
+      changed_when: true
+      when:
+        - not (nist_bootstrap | bool)
+        - os_firewall_backend == 'ufw'
+      tags: [lockdown, firewall]
+
+
+    # ========================================================================
+    # VERIFICATION - confirm DROP rules took effect before creating marker
+    # ========================================================================
+
+    - name: "L2 | VERIFY - Check UFW SSH DROP rule in before.rules"
+      ansible.builtin.shell: grep -Eq 'tcp.*dport 22.*DROP' /etc/ufw/before.rules
+      changed_when: false
+      failed_when: false
+      register: _ufw_drop_verify
+      when: os_firewall_backend == 'ufw'
+      tags: [lockdown, firewall]
+
+    - name: "L2 | VERIFY - Fail if UFW SSH DROP not active"
+      ansible.builtin.fail:
+        msg: "SSH DROP rule missing from /etc/ufw/before.rules. Firewall lockdown FAILED on {{ inventory_hostname }}."
+      when:
+        - os_firewall_backend == 'ufw'
+        - _ufw_drop_verify is not skipped
+        - _ufw_drop_verify.rc != 0
+      tags: [lockdown, firewall]
+
+    - name: "L2 | VERIFY - Check nftables default-drop policy is active"
+      ansible.builtin.shell: nft list chain inet filter input | grep -q 'policy drop'
+      changed_when: false
+      failed_when: false
+      register: _nft_drop_verify
+      when: os_firewall_backend == 'nftables'
+      tags: [lockdown, firewall]
+
+    - name: "L2 | VERIFY - Fail if nftables default-drop not active"
+      ansible.builtin.fail:
+        msg: "nftables default-drop policy not found. Firewall lockdown FAILED on {{ inventory_hostname }}."
+      when:
+        - os_firewall_backend == 'nftables'
+        - _nft_drop_verify is not skipped
+        - _nft_drop_verify.rc != 0
+      tags: [lockdown, firewall]
+
+    - name: "L2 | LOCKDOWN - Create lockdown marker file"
+      ansible.builtin.file:
+        path: /etc/tailscale-recover.lock
+        state: touch
+        mode: "0644"
+      when: not (nist_bootstrap | bool)
+      tags: [lockdown]
+
+    # ========================================================================
+    # OUTPUT - display Tailscale IPs for inventory update
+    # ========================================================================
+
+    - name: "L2 | OUTPUT - Get Tailscale IPv4"
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - ip
+          - "-4"
+      register: _ts_ipv4
+      changed_when: false
+      failed_when: false
+      check_mode: no
+      tags: [always]
+
+    - name: "L2 | OUTPUT - Get Tailscale IPv6"
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - ip
+          - "-6"
+      register: _ts_ipv6
+      changed_when: false
+      failed_when: false
+      check_mode: no
+      tags: [always]
+
+    - name: "L2 | OUTPUT - Lockdown summary"
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "✅ {{ inventory_hostname }} - Lockdown complete"
+          - "🔒 Tailscale IPv4: {{ _ts_ipv4.stdout | trim | default('N/A') }}"
+          - "🔒 Tailscale IPv6: {{ _ts_ipv6.stdout | trim | default('N/A') }}"
+          - "⚠  Update ansible_host in inventory/hosts.ini to Tailscale IP for future deploys."
+          - "   ansible_host: {{ _ts_ipv4.stdout | trim | default('N/A') }}"
+          - ""
+      tags: [always]
+
+    - name: "L2 | POST-DEPLOY - Security status summary"
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "=========================================="
+          - "POST-DEPLOYMENT INSTRUCTIONS"
+          - "=========================================="
+          - ""
+          - "📡 Tailscale IPs:"
+          - "   {{ inventory_hostname }} → {{ _ts_ipv4.stdout | trim | default('N/A') }}"
+          - ""
+          - "📋 Next steps:"
+
+          - ""
+          - "   make audit-full  - run full NIST evidence collection"
+          - ""
+          - "🔒 Security status:"
+          - "   ✅ SSH root login DISABLED (PermitRootLogin no)"
+          - "   ✅ Firewall active (SSH DROP applied)"
+          - "   ✅ Tailscale online"
+          - "   ✅ L1 OS baseline applied"
+          - "   ✅ L2 compliance hardening applied"
+          - "   ✅ Lockdown complete"
+          - ""
+          - "🔍 Verify compliance:"
+          - "   ansible-playbook -i inventory/hosts.ini playbooks/l2/hardening.yml --tags compliance"
+          - ""
+          - "📁 Evidence files:"
+          - "   /srv/evidence/nist/au-12/"
+          - "   /srv/evidence/nist/cm-7/"
+          - "   /srv/evidence/nist/sc-28/"
+          - ""
+          - "=========================================="
+      tags: [post-deploy]

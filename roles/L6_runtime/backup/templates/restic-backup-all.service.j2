@@ -1,0 +1,22 @@
+[Unit]
+Description=Restic daily backup - all services ({{ ansible_hostname }})
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/restic/env
+Environment="RESTIC_CACHE_DIR=/var/cache/restic"
+Environment="TMPDIR=/var/tmp/restic"
+ExecStartPre=/bin/mkdir -p /var/cache/restic /var/tmp/restic /var/log/restic
+ExecStart=/usr/local/bin/restic-backup-all.sh
+Nice=10
+IOSchedulingClass=idle
+ProtectHome=true
+ProtectSystem=full
+PrivateTmp=true
+TimeoutStopSec=30min
+
+[Install]
+WantedBy=default.target

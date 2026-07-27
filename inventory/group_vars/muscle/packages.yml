@@ -1,0 +1,22 @@
+---
+# ==============================================================================
+# PACKAGE VERSION PINNING - Muscle Group (Ubuntu 22.04.5)
+# ==============================================================================
+#
+# These packages are held at their current version via apt-mark hold.
+# To release: ansible-playbook -i inventory/hosts.ini site.yml --tags unhold
+# ==============================================================================
+
+# Kernel meta-package varies by distro
+_pinned_kernel_ubuntu:
+  - linux-image-generic
+  - linux-headers-generic
+
+_pinned_kernel_debian:
+  - linux-image-amd64
+
+_pinned_kernel: "{{ _pinned_kernel_ubuntu if ansible_facts['distribution'] == 'Ubuntu' else _pinned_kernel_debian }}"
+
+pinned_packages: "{{ _pinned_kernel +
+  ['openssh-server', 'openssh-client', 'openssh-sftp-server',
+   'systemd', 'systemd-sysv', 'ufw', 'crowdsec'] }}"

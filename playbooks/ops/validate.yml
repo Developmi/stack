@@ -1,0 +1,122 @@
+---
+# ==============================================================================
+# L1 Baseline Validation Playbook
+# ==============================================================================
+# Gathers OS facts + package audit + kernel module report per target.
+# Non-fatal - always exits 0. Designed for pre-refactor snapshot.
+#
+# Run: ansible-playbook -i inventory/hosts.ini playbooks/ops/validate.yml
+# ==============================================================================
+
+- name: "L1 | Validate OS Baseline"
+  hosts: all
+  become: true
+  gather_facts: true
+  tags: [validate, l1-os-baseline]
+
+  tasks:
+    - name: "L1 | Display OS version"
+      ansible.builtin.debug:
+        msg:
+          - "Distribution: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+          - "Codename: {{ ansible_facts['distribution_release'] | default('N/A') }}"
+          - "OS Family: {{ ansible_facts['os_family'] }}"
+          - "Architecture: {{ ansible_facts['architecture'] }}"
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Display kernel version"
+      ansible.builtin.debug:
+        msg: "Kernel: {{ ansible_kernel }} ({{ ansible_kernel_version }})"
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Gather installed base packages"
+      ansible.builtin.package_facts:
+        manager: apt
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Audit required packages"
+      ansible.builtin.debug:
+        msg:
+          - "curl: {{ 'INSTALLED' if 'curl' in ansible_facts.packages else 'MISSING' }}"
+          - "wget: {{ 'INSTALLED' if 'wget' in ansible_facts.packages else 'MISSING' }}"
+          - "git: {{ 'INSTALLED' if 'git' in ansible_facts.packages else 'MISSING' }}"
+          - "ufw: {{ 'INSTALLED' if 'ufw' in ansible_facts.packages else 'MISSING' }}"
+          - "apparmor: {{ 'INSTALLED' if 'apparmor' in ansible_facts.packages else 'MISSING' }}"
+          - "apparmor-utils: {{ 'INSTALLED' if 'apparmor-utils' in ansible_facts.packages else 'MISSING' }}"
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | List loaded kernel modules"
+      ansible.builtin.shell: |
+        set -o pipefail
+        lsmod | awk 'NR>1 {print $1}' | sort
+      args:
+        executable: /bin/bash
+      register: _kernel_modules
+      changed_when: false
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Display loaded kernel modules"
+      ansible.builtin.debug:
+        msg: "Loaded modules: {{ _kernel_modules.stdout_lines | default([]) }}"
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Check apt sources status"
+      ansible.builtin.shell: |
+        set -o pipefail
+        for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null; do
+          if [ -f "$f" ]; then
+            echo "=== $f ==="
+            grep -v '^#' "$f" | grep -v '^$' || echo "  (no active entries)"
+          fi
+        done
+      register: _apt_sources
+      changed_when: false
+      failed_when: false
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Display apt sources"
+      ansible.builtin.debug:
+        msg: "{{ _apt_sources.stdout_lines | default(['No apt sources found']) }}"
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Check swap status"
+      ansible.builtin.command: swapon --show
+      register: _swap_status
+      changed_when: false
+      failed_when: false
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Display swap status"
+      ansible.builtin.debug:
+        msg: "{{ _swap_status.stdout_lines if _swap_status.stdout_lines else ['No active swap'] }}"
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Timezone check"
+      ansible.builtin.command: timedatectl show --property=Timezone --value
+      register: _timezone
+      changed_when: false
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Display timezone"
+      ansible.builtin.debug:
+        msg: "Timezone: {{ _timezone.stdout | default('N/A') }}"
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Locale check"
+      ansible.builtin.command: locale
+      register: _locale
+      changed_when: false
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Display locale"
+      ansible.builtin.debug:
+        msg: "{{ _locale.stdout_lines | default(['No locale info']) }}"
+      tags: [l1-os-baseline, validate]
+
+    - name: "L1 | Summary banner"
+      ansible.builtin.debug:
+        msg: |
+          L1 VALIDATION COMPLETE - {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+          Host: {{ inventory_hostname }}  |  Kernel: {{ ansible_kernel }}
+          All checks completed. No changes made.
+      tags: [l1-os-baseline, validate]

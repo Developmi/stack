@@ -1,0 +1,51 @@
+---
+# ==============================================================================
+# Developmi Stack | L6 Runtime - Portainer Manager (conditional)
+# ==============================================================================
+# Purpose: Deploy Portainer BE on target_group host.
+# Extracted from stacks.yml Play 3.
+# ==============================================================================
+
+- name: "L6 | Manager - Portainer BE (conditional)"
+  hosts: "{{ target_group | default('muscle') }}"
+  gather_facts: false
+  become: true
+  tags: [l6-runtime, portainer, management]
+  pre_tasks:
+    - name: "Gate - skip Manager if Portainer disabled"
+      ansible.builtin.meta: end_play
+      when: not (enable_portainer | default(false) | bool)
+      tags: [l6-runtime, portainer, management]
+
+    - name: "Preflight: Require overlay-network ansible_host for stack operations"
+      ansible.builtin.assert:
+        that:
+          - ansible_host is defined
+          - >-
+            lookup(
+              'ansible.builtin.pipe',
+              "python3 -c 'import ipaddress,sys; "
+              ~ "host=sys.argv[1]; subnet=sys.argv[2]; "
+              ~ "\ntry:\n print(ipaddress.ip_address(host) in ipaddress.ip_network(subnet, strict=False))"
+              ~ "\nexcept ValueError:\n print(False)' "
+              ~ (ansible_host | quote)
+              ~ " "
+              ~ (tailscale_subnet | quote)
+            ) == 'True'
+        fail_msg: >-
+          Zero Trust violation on {{ inventory_hostname }}: stacks.yml only allows
+          connections through the management overlay using ansible_host inside
+          {{ tailscale_subnet }}. Public bootstrap access is only permitted in site.yml.
+        success_msg: >-
+          Overlay transport validated for {{ inventory_hostname }} ({{ ansible_host }} in {{ tailscale_subnet }}).
+      tags: [l6-runtime, portainer, management]
+
+    - name: "Gate: Docker Engine must be running (Engine play failed?)"
+      ansible.builtin.command: docker info
+      changed_when: false
+      tags: [l6-runtime, portainer, management]
+  tasks:
+    - name: "Dispatch to Portainer BE runtime"
+      ansible.builtin.include_role:
+        name: L6_runtime/portainer
+      tags: [l6-runtime, portainer, management]

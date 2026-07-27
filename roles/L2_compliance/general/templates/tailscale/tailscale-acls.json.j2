@@ -1,0 +1,95 @@
+{# ACL policy for Tailscale mesh:
+   src = automation users + breakglass (all ports via product filter),
+   dst = tag:brain / tag:muscle on specific service ports.
+   All empty sections (ssh, tests, grants) prevent stale rules on POST /acl. #}
+{% set acl_operator_sources = ((tailscale_acl_operator_sources | default(['autogroup:admin'])) + (tailscale_acl_operator_sources_extra | default([]))) | unique %}
+{% set acl_automation_sources = ((tailscale_acl_automation_sources | default(acl_operator_sources)) + (tailscale_acl_automation_sources_extra | default([]))) | unique %}
+{% set acl_breakglass_sources = (tailscale_acl_breakglass_sources | default([])) | unique %}
+{% set acl_admin_ui_sources = ((tailscale_acl_admin_ui_sources | default(acl_operator_sources)) + (tailscale_acl_admin_ui_sources_extra | default([]))) | unique %}
+{% set acl_local_sources = ((tailscale_acl_local_sources | default(['autogroup:admin'])) + (tailscale_acl_local_sources_extra | default([]))) | unique %}
+{% set has_local_devices = (groups.get('local', []) | length > 0) and (acl_local_sources | length > 0) %}
+{% set acl_rules = [] %}
+{% if acl_automation_sources | length > 0 %}
+{%   set _ = acl_rules.append({
+      'action': 'accept',
+      'src': acl_automation_sources,
+      'dst': ['tag:brain:22', 'tag:muscle:22']
+    })
+%}
+{% endif %}
+{% if acl_admin_ui_sources | length > 0 %}
+{%   set _ = acl_rules.append({
+      'action': 'accept',
+      'src': acl_admin_ui_sources,
+      'dst': ['tag:brain:9000', 'tag:brain:9443', 'tag:brain:3000', 'tag:brain:8428', 'tag:brain:3100']
+    })
+%}
+{% endif %}
+{% if acl_breakglass_sources | length > 0 %}
+{%   set _ = acl_rules.append({
+      'action': 'accept',
+      'src': acl_breakglass_sources,
+      'dst': ['tag:brain:22', 'tag:muscle:22']
+    })
+%}
+{% endif %}
+{% set _ = acl_rules.append({
+      'action': 'accept',
+      'src': ['tag:brain'],
+      'dst': ['tag:muscle:22', 'tag:muscle:9100', 'tag:muscle:' ~ (observability_cadvisor_port | string), 'tag:muscle:' ~ (tailscale_metrics_port | string)]
+    })
+%}
+{% set _ = acl_rules.append({
+      'action': 'accept',
+      'src': ['tag:muscle'],
+  'dst': ['tag:brain:8000', 'tag:brain:9443', 'tag:brain:9100', 'tag:brain:' ~ (observability_cadvisor_port | string), 'tag:brain:' ~ (tailscale_metrics_port | string)]
+    })
+%}
+{% if has_local_devices %}
+{%   set local_host_dsts = [] %}
+{%   for host in groups['local'] %}
+{%     if hostvars[host].get('ansible_host', '') | length > 0 %}
+{%       set _ = local_host_dsts.append(host + ':22') %}
+{%     endif %}
+{%   endfor %}
+{%   set _ = acl_rules.append({
+       'action': 'accept',
+       'src': acl_local_sources,
+       'dst': ['tag:local:22'] + local_host_dsts
+     })
+%}
+{%   set _ = acl_rules.append({
+       'action': 'accept',
+       'src': ['tag:local'],
+       'dst': ['tag:local:22']
+     })
+%}
+{% endif %}
+{# self-allow: each admin user can reach own devices on any port #}
+{% if acl_automation_sources | length > 0 %}
+{%   set _ = acl_rules.append({
+      'action': 'accept',
+      'src': acl_automation_sources,
+      'dst': acl_automation_sources | product([':*']) | map('join') | list
+    })
+%}
+{% endif %}
+{
+  "acls": {{ acl_rules | to_json }}{% if (tailscale_acl_groups | default({}) | length) > 0 %},
+  "groups": {{ tailscale_acl_groups | to_json }}{% endif %},
+  "tagOwners": {
+    "tag:brain": ["autogroup:admin"],
+    "tag:muscle": ["autogroup:admin"]{% if has_local_devices %},
+    "tag:local": ["autogroup:admin"]{% endif %}
+  },
+  "ssh": [],
+{# nodeAttrs managed via tailscale_node_attrs variable (default: none) #}
+  "nodeAttrs": {{ tailscale_node_attrs | default([]) | to_json }},
+  "tests": [],
+  "grants": [],
+{# hosts: tailscale_ip from CLI fact inventory, NOT public ansible_host #}
+  "hosts": {
+    "brain": "{{ hostvars[groups['brain'][0]].tailscale_ip | default(hostvars[groups['brain'][0]].ansible_host, true) }}",
+    "muscle": "{{ hostvars[groups['muscle'][0]].tailscale_ip | default(hostvars[groups['muscle'][0]].ansible_host, true) }}"
+  }
+}

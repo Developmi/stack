@@ -1,0 +1,13 @@
+---
+# L6 Runtime Backup - Consolidated handlers
+# Merged from: roles/stack_backup/, roles/backup/, roles/backup-timers/
+
+- name: Reload systemd (stack backup)
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: Reload systemd (timers)
+  ansible.builtin.systemd:
+    daemon_reload: true
+  listen: reload systemd

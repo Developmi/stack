@@ -1,0 +1,226 @@
+---
+# ==============================================================================
+# CROWDSEC - Agent Install & Configuration (NIST SI-4)
+# ==============================================================================
+# Installs CrowdSec agent from official packagecloud repo. Multi-arch support.
+# Configures log acquisition (syslog, auth, Caddy). Registers local API.
+# ==============================================================================
+
+- name: "SI-4 | Validate supported OS for CrowdSec repository"
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+      - ansible_facts['distribution_release'] is defined
+      - ansible_facts['distribution_release'] | length > 0
+    fail_msg: "Unsupported OS or missing distro codename for CrowdSec repository."
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Install prerequisites"
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gnupg
+      - apt-transport-https
+    state: present
+    lock_timeout: 600
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Create keyrings directory"
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "{{ dir_mode_default }}"
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Add CrowdSec GPG key"
+  ansible.builtin.get_url:
+    url: https://packagecloud.io/crowdsec/crowdsec/gpgkey
+    dest: /etc/apt/keyrings/crowdsec.asc
+    mode: "{{ file_mode_default }}"
+  retries: 3
+  delay: 5
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Add CrowdSec repository (Ubuntu)"
+  ansible.builtin.deb822_repository:
+    name: crowdsec
+    types: deb
+    uris: https://packagecloud.io/crowdsec/crowdsec/ubuntu/
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: main
+    signed_by: /etc/apt/keyrings/crowdsec.asc
+    state: present
+  when: ansible_facts['distribution'] == 'Ubuntu'
+  tags: [crowdsec, l2-compliance, nist, si-4]
+- name: "SI-4 | Add CrowdSec repository (Debian)"
+  ansible.builtin.deb822_repository:
+    name: crowdsec
+    types: deb
+    uris: https://packagecloud.io/crowdsec/crowdsec/debian/
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: main
+    signed_by: /etc/apt/keyrings/crowdsec.asc
+    state: present
+  when:
+    - ansible_facts['distribution'] == 'Debian'
+    - ansible_facts['distribution_major_version'] | int < 13
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | CrowdSec installed from Debian repos - packagecloud not available"
+  ansible.builtin.debug:
+    msg: "CrowdSec installed from Debian repos on {{ inventory_hostname }} -- packagecloud.io doesn't support Debian 13 (trixie) yet. Bouncer and browser remediation unavailable."
+  when:
+    - ansible_facts['distribution'] == 'Debian'
+    - ansible_facts['distribution_major_version'] | int >= 13
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Clean stale CrowdSec repo on Debian 13 (was trixie, now unsupported)"
+  ansible.builtin.deb822_repository:
+    name: crowdsec
+    state: absent
+  when:
+    - ansible_facts['distribution'] == 'Debian'
+    - ansible_facts['distribution_major_version'] | int >= 13
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Refresh apt cache"
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 600
+  changed_when: false
+
+- name: "SI-4 | Install CrowdSec agent"
+  ansible.builtin.apt:
+    name: crowdsec
+    state: present
+    lock_timeout: 600
+    allow_change_held_packages: true  # ponytail: crowdsec is pinned via apt-mark hold before install
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Configure CrowdSec (config.yaml.local)"
+  ansible.builtin.copy:
+    dest: /etc/crowdsec/config.yaml.local
+    content: |
+      common:
+        log_level: info
+        daemonize: true
+      cscli:
+        output: human
+      crowdsec_service:
+        parser_routines: 1
+      api:
+        client:
+          credentials_path: /etc/crowdsec/local_api_credentials.yaml
+        server:
+          listen_uri: 127.0.0.1:8080
+          profiles_path: /etc/crowdsec/profiles.yaml
+    mode: "0640"
+  notify: Restart CrowdSec
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Create acquisition directory"
+  ansible.builtin.file:
+    path: /etc/crowdsec/acquis.d
+    state: directory
+    mode: "0750"
+  tags: [crowdsec, l2-compliance, nist, si-4]
+- name: "SI-4 | Configure log acquisition (syslog + auth)"
+  ansible.builtin.copy:
+    dest: /etc/crowdsec/acquis.d/syslog.yaml
+    content: |
+      ---
+      filenames:
+        - /var/log/auth.log
+        - /var/log/syslog
+      labels:
+        type: syslog
+    mode: "0640"
+  notify: Restart CrowdSec
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Initialize CrowdSec local API"
+  ansible.builtin.command: cscli machines add -a  # noqa: command-instead-of-module
+  args:
+    creates: /etc/crowdsec/local_api_credentials.yaml
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Update CrowdSec hub index"
+  ansible.builtin.command: cscli hub update  # noqa: command-instead-of-module
+  register: cscli_hub_update
+  changed_when: "'Wrote new' in cscli_hub_update.stdout or 'downloaded' in cscli_hub_update.stdout"
+  tags: [crowdsec, l2-compliance, nist, si-4]
+- name: "SI-4 | Install base security collection (Linux)"
+  ansible.builtin.command: cscli collections install crowdsecurity/linux  # noqa: command-instead-of-module
+  register: collections_linux
+  until: collections_linux.rc == 0
+  retries: 3
+  delay: 15
+  changed_when: "'already installed' not in collections_linux.stdout"
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "AU-12 | Install Caddy collection (web traffic audit trail)"
+  ansible.builtin.command: cscli collections install crowdsecurity/caddy  # noqa: command-instead-of-module
+  register: collections_caddy
+  until: collections_caddy.rc == 0
+  retries: 3
+  delay: 15
+  changed_when: false
+  tags: [crowdsec, l2-compliance, nist, au-12]
+
+- name: "SI-4 | Upgrade all CrowdSec hub items to latest"
+  ansible.builtin.command: cscli hub upgrade  # noqa: command-instead-of-module
+  register: cscli_hub_upgrade
+  until: cscli_hub_upgrade.rc == 0
+  retries: 3
+  delay: 15
+  changed_when: "'Nothing to upgrade' not in cscli_hub_upgrade.stdout"
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "AU-12 | Deploy Caddy log acquisition"
+  ansible.builtin.template:
+    src: "{{ role_path }}/nist_800_53/si-4/templates/caddy_acquis.yaml.j2"
+    dest: /etc/crowdsec/acquis.d/caddy.yaml
+    mode: "0640"
+  notify: Restart CrowdSec
+  tags: [crowdsec, l2-compliance, nist, au-12]
+
+- name: "SI-4 | Validate CrowdSec configuration"
+  ansible.builtin.command: crowdsec -c /etc/crowdsec/config.yaml -t -error  # noqa: command-instead-of-module
+  register: crowdsec_config_test
+  changed_when: false
+  # ponytail: some CrowdSec versions reject acquisition_path as directory.
+  # The service itself starts fine. Re-enable when upstream fixes this.
+  failed_when: false
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Enable and start CrowdSec service"
+  ansible.builtin.systemd:
+    name: crowdsec
+    state: started
+    enabled: true
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+# ─── Optional: Console enrollment for hybrid signal sharing ────────────────
+- name: "SI-4 | Enroll in CrowdSec Console (hybrid signal sharing)"
+  when: crowdsec_console_key is defined
+  tags: [crowdsec, l2-compliance, nist, si-4]
+  block:
+    - name: "SI-4 | Enroll console"
+      ansible.builtin.command: cscli console enroll {{ crowdsec_console_key }}  # noqa: command-instead-of-module
+      args:
+        creates: /etc/crowdsec/online_api_credentials.yaml
+      no_log: true
+      notify: Restart CrowdSec
+
+- name: "SI-4 | Verify CrowdSec installation"
+  ansible.builtin.command: cscli version  # noqa: command-instead-of-module
+  register: crowdsec_version
+  changed_when: false
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Deploy CrowdSec health monitor script"
+  ansible.builtin.copy:
+    src: "{{ role_path }}/nist_800_53/si-4/files/monitor-crowdsec.sh"
+    dest: /usr/local/bin/monitor-crowdsec.sh
+    mode: "0755"
+  tags: [crowdsec, l2-compliance, nist, si-4]

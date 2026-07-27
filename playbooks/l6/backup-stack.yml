@@ -1,0 +1,37 @@
+---
+# ==============================================================================
+# Developmi Stack | L6 Runtime Backup - Stack Mode
+# ==============================================================================
+# Purpose: Restic-based backup of Docker stack configurations.
+# Extracted from stacks.yml Play 4.
+# Independent from L5 app-data backup per ADR-09.
+# ==============================================================================
+
+- name: "L6 | Runtime Backup - stack_backup (Restic → R2 stack-restic/ prefix)"
+  hosts: brain
+  become: true
+  tags: [l6-runtime, stack_backup, restic]
+  pre_tasks:
+    - name: "Preflight: Require overlay-network for backup operations"
+      ansible.builtin.assert:
+        that:
+          - ansible_host is defined
+          - >-
+            lookup(
+              'ansible.builtin.pipe',
+              "python3 -c 'import ipaddress,sys; "
+              ~ "host=sys.argv[1]; subnet=sys.argv[2]; "
+              ~ "\ntry:\n print(ipaddress.ip_address(host) in ipaddress.ip_network(subnet, strict=False))"
+              ~ "\nexcept ValueError:\n print(False)' "
+              ~ (ansible_host | quote)
+              ~ " "
+              ~ (tailscale_subnet | quote)
+            ) == 'True'
+        fail_msg: >-
+          Zero Trust violation on {{ inventory_hostname }}: backup play only
+          allows connections through the management overlay.
+        success_msg: >-
+          Overlay transport validated for {{ inventory_hostname }} ({{ ansible_host }} in {{ tailscale_subnet }}).
+      tags: [l6-runtime, stack_backup, restic]
+  roles:
+    - role: L6_runtime/backup

@@ -1,0 +1,22 @@
+---
+# L6 Runtime Backup - Consolidated dispatcher
+# Source selector via backup_role_source variable:
+#   "stack" (default) - host-level stack backups (Restic → R2 stack-restic/)
+#   "app-data"        - app database dumps + Restic → R2 restic/
+#   "timers"          - systemd timer deployment for DB backups
+# Tags preserved for backward compatibility.
+
+- name: "Include stack backup tasks"
+  ansible.builtin.include_tasks: stack_backup.yml
+  tags: [l6-runtime, stack_backup, restic]
+  when: backup_role_source == "stack" or backup_role_source is not defined
+
+- name: "Include app-data backup tasks"
+  ansible.builtin.include_tasks: app_data_backup.yml
+  tags: [l6-runtime, backup]
+  when: backup_role_source == "app-data"
+
+- name: "Include timer deployment tasks"
+  ansible.builtin.include_tasks: timers.yml
+  tags: [backup-timers]
+  when: backup_role_source == "timers"

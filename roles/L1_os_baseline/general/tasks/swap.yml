@@ -1,0 +1,26 @@
+---
+# ==============================================================================
+# SWAP DISABLE - swapoff + fstab cleanup
+# ==============================================================================
+# ponytail: swapoff -a + regex replace, no custom modules needed.
+# Conditional on swaptotal_mb > 0 AND not in Docker container (proc inherits
+# host swap but container can't manage it - rc=32 on swapoff).
+# fstab cleanup is unconditional (regex no-match = no change = idempotent).
+# ==============================================================================
+
+- name: "L1 | Swap - disable active swap partitions"
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+  when:
+    - ansible_facts['swaptotal_mb'] is defined
+    - ansible_facts['swaptotal_mb'] | int > 0
+    - ansible_facts.get('virtualization_type', '') != 'docker'
+  tags: [common, l1-os-baseline, swap]
+
+- name: "L1 | Swap - remove swap entries from /etc/fstab"
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^\s*[^#]\S+\s+\S+\s+swap\s'
+    replace: ''
+    backup: true
+  tags: [common, l1-os-baseline, swap]

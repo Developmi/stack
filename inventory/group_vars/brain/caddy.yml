@@ -1,0 +1,27 @@
+---
+# =============================================================================
+# Caddy Node Configuration - ALL brain nodes (management)
+# =============================================================================
+# Group-level defaults for the Caddy ingress reverse proxy.
+# Automatically inherited by every node in the [brain] inventory group.
+# Add a new brain node to inventory → zero additional files needed.
+# Consumed by roles/L4_networking/caddy (Caddyfile.j2, tasks/main.yml).
+# =============================================================================
+
+# Node type classification: brain (management) or muscle (worker).
+# Used for preflight validation - ensures node is in a recognized group.
+caddy_type: "brain"
+
+# --- Admin API ---
+# NIST AC-3 / IA-2 | Disabled in production.
+# Set to true for troubleshooting (exposes Caddy config API on localhost:2019).
+caddy_admin_enabled: false
+
+# --- WAF (Coraza) Enforcement Mode ---
+# caddy_coraza_mode is intentionally NOT set here.
+# It must be defined per host as an inline inventory variable in hosts.ini.
+# Each brain node can have its own state: On (blocking), DetectionOnly (tuning), Off (disabled).
+# The preflight assert in tasks/main.yml fails loudly if any node is missing this variable.
+# Example inventory entries:
+#   brain-1 ansible_host=... caddy_node_id=brain-1 caddy_coraza_mode=On
+#   brain-2 ansible_host=... caddy_node_id=brain-2 caddy_coraza_mode=DetectionOnly

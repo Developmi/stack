@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# Notification: Telegram Webhook on Failure
+# =============================================================================
+# Tags: backup_notify, backup
+# Silent success (spec R.07): no notification when backup_errors is empty
+# Non-fatal failure: Telegram unreachable → ignore (ADR-07)
+# =============================================================================
+
+- name: "Notify on failure via Telegram"
+  ansible.builtin.uri:
+    url: "https://api.telegram.org/bot{{ restic_telegram_bot_token }}/sendMessage"
+    method: POST
+    body_format: json
+    body:
+      chat_id: "{{ restic_telegram_chat_id }}"
+      text: |
+        ❌ Backup FAILED on {{ inventory_hostname }}
+        Date: {{ ansible_date_time.iso8601 }}
+        Errors:
+        {% for err in backup_errors %}
+        - {{ err }}
+        {% endfor %}
+      parse_mode: HTML
+  no_log: true
+  ignore_errors: true
+  when: backup_errors | length > 0
+  tags: [backup_notify, backup]
+
+- name: "Silent success - no notification"
+  ansible.builtin.debug:
+    msg: "Backup completed successfully on {{ inventory_hostname }} - no notification sent"
+  when: backup_errors | length == 0
+  tags: [backup_notify, backup]

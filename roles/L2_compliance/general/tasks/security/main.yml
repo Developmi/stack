@@ -1,0 +1,40 @@
+---
+# ==============================================================================
+# SECURITY ROLE - L2 Compliance Hardening Dispatcher
+# ==============================================================================
+# Thin-dispatcher: conditionals + include_tasks only. No business logic inline.
+# Gated by hardening_profile (server|workstation) and os_firewall_backend.
+# ==============================================================================
+
+- name: "L2 | SSH hardening (AC-2)"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/security/ssh_hardening.yml"
+  tags: [ssh, l2-compliance, nist, ac-2]
+
+- name: "L2 | Firewall - os_firewall_backend rules (SC-7)"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/security/{{ os_firewall_backend }}_rules.yml"
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "L2 | fail2ban brute-force protection (AC-2)"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/security/fail2ban.yml"
+  tags: [fail2ban, l2-compliance, nist, ac-2]
+
+- name: "L2 | Kernel hardening via sysctl (CM-7)"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/security/kernel_hardening.yml"
+  tags: [kernel, l2-compliance, nist, cm-7]
+
+- name: "L2 | OCI killswitch - disable cloud-init default user"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/security/oci_killswitch.yml"
+  when: hardening_profile == 'server'
+  tags: [oci, l2-compliance, nist, ac-2]
+
+- name: "L2 | pam_pwquality - password policy (AC-2, CIS 5.3.x)"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/security/pam_pwquality.yml"
+  tags: [pam, l2-compliance, nist, ac-2]
+
+- name: "L2 | Auditd - system monitoring (SI-4, AU-12)"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/security/auditd.yml"
+  tags: [audit, l2-compliance, nist, si-4, au-12]
+
+- name: "L2 | Lynis security auditing (AU-12)"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/security/lynis.yml"
+  tags: [compliance, l2-compliance, nist, au-12]

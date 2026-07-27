@@ -1,0 +1,49 @@
+---
+# =============================================================================
+# Retention: Restic forget --prune via Ephemeral Container
+# =============================================================================
+# Tags: backup_retention, backup
+# NON-CRITICAL failure (ADR-07): backup still reported as successful
+# Conditional: only runs when backup succeeded (backup_restic_failed is false)
+# =============================================================================
+
+- name: "Run Restic forget --prune per app profile (only if backup succeeded)"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: >
+      docker run --rm
+      -e RESTIC_REPOSITORY="s3:{{ restic_r2_endpoint }}/{{ restic_r2_bucket }}/restic/{{ inventory_hostname }}"
+      -e RESTIC_PASSWORD="{{ restic_password_brain_1 }}"
+      -e AWS_ACCESS_KEY_ID="{{ restic_r2_access_key_id }}"
+      -e AWS_SECRET_ACCESS_KEY="{{ restic_r2_secret_access_key }}"
+      -e AWS_DEFAULT_REGION="auto"
+      {{ restic_image }}
+      forget
+      --keep-daily {{ _p.backup.retention_daily | default(backup_keep_daily) }}
+      --keep-weekly {{ _p.backup.retention_weekly | default(backup_keep_weekly) }}
+      --keep-monthly {{ _p.backup.retention_monthly | default(backup_keep_monthly) }}
+      --prune
+  loop: "{{ app_profiles | default([]) }}"
+  loop_control:
+    loop_var: _p
+  register: retention_result
+  changed_when: false
+  ignore_errors: true
+  no_log: true
+  when:
+    - not (backup_restic_failed | default(false)) | bool
+    - _p.backup is defined
+  tags: [backup_retention, backup]
+
+- name: "Record retention errors (non-critical)"
+  ansible.builtin.set_fact:
+    backup_errors: >-
+      {{ backup_errors
+         + ['Retention (forget --prune) failed on ' ~ _pr.item.name | default('unknown') ~ ': '
+            ~ _pr.stderr | default('exit code ' ~ _pr.rc | string) ] }}
+  loop: "{{ retention_result.results | default([]) }}"
+  loop_control:
+    loop_var: _pr
+  when:
+    - _pr is failed
+    - _pr.item.backup is defined
+  tags: [backup_retention, backup]

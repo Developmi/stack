@@ -1,0 +1,67 @@
+# ---
+# COMPLIANCE WARNING:
+# Restic binary is downloaded from GitHub releases with SHA256 verification.
+# Do NOT bypass checksum verification or change the pinned version without
+# security review. The binary is placed at /usr/local/bin/restic (0755 root).
+# ---
+---
+- name: "Ensure /usr/local/bin exists"
+  ansible.builtin.file:
+    path: /usr/local/bin
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Check if Restic is already installed"
+  ansible.builtin.stat:
+    path: /usr/local/bin/restic
+  register: restic_binary_stat
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Download Restic {{ restic_version }} binary"  # noqa: name[template]
+  ansible.builtin.get_url:
+    url: "{{ restic_download_url }}"
+    dest: "/tmp/restic_{{ restic_version }}_linux_{{ restic_arch }}.bz2"
+    mode: "0644"
+    checksum: "sha256:{{ restic_sha256 }}"
+  register: restic_download
+  when: not restic_binary_stat.stat.exists
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Extract Restic binary (bz2 via shell - unarchive module lacks native bz2 support)"  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: "bunzip2 -c /tmp/restic_{{ restic_version }}_linux_{{ restic_arch }}.bz2 > /usr/local/bin/restic"
+    creates: /usr/local/bin/restic
+  when: not restic_binary_stat.stat.exists
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Set Restic binary permissions"
+  ansible.builtin.file:
+    path: /usr/local/bin/restic
+    mode: "0755"
+    owner: root
+    group: root
+  when: not restic_binary_stat.stat.exists
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Verify Restic binary version"  # noqa: command-instead-of-module
+  ansible.builtin.command: /usr/local/bin/restic version
+  register: restic_version_check
+  changed_when: false
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Assert Restic version is {{ restic_version }}"  # noqa: name[template]
+  ansible.builtin.assert:
+    that:
+      - "'restic {{ restic_version }}' in restic_version_check.stdout"
+    success_msg: "Restic {{ restic_version }} installed successfully on {{ ansible_hostname }}"
+    fail_msg: "Restic version mismatch on {{ ansible_hostname }} - expected {{ restic_version }}"
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Clean up download artifact"
+  ansible.builtin.file:
+    path: "/tmp/restic_{{ restic_version }}_linux_{{ restic_arch }}.bz2"
+    state: absent
+  tags: [l6-runtime, stack_backup, restic]

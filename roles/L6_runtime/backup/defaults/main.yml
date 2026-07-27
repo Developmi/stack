@@ -1,0 +1,56 @@
+---
+# L6 Runtime Backup - Consolidated defaults
+# Merged from: roles/stack_backup/, roles/backup/, roles/backup-timers/
+# All secrets are in group_vars/all/secrets.yml (vault-encrypted).
+
+# ── stack_backup defaults ──
+restic_version: "0.19.0"
+restic_arch: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
+restic_sha256: "{{ 'e522ce6bf748d753fee8093e8ec59359972cf5b6bc65fc7c7cf38ae952351d91' if ansible_facts['architecture'] == 'aarch64' else '13176fe6d89d4357947a2cd107218ab2873a5f9d8e1ac2d4cd1c8e07e6839c21' }}"
+restic_download_url: "https://github.com/restic/restic/releases/download/v{{ restic_version }}/restic_{{ restic_version }}_linux_{{ restic_arch }}.bz2"
+
+# Timer staggering per inventory group (stack_backup)
+restic_backup_time_by_group:
+  brain: "02:00"
+  muscle: "03:00"
+  local: "04:00"
+
+restic_check_time_by_group:
+  brain: "Sun 02:00"
+  muscle: "Sun 03:00"
+  local: "Sun 04:00"
+
+restic_prune_time_by_group:
+  brain: "Sat 02:00"
+  muscle: "Sat 03:00"
+  local: "Sat 04:00"
+
+# ── Common (deduplicated) ──
+# R2 endpoint - shared across all three source roles
+restic_r2_endpoint: "https://{{ restic_r2_account_id }}.r2.cloudflarestorage.com"
+restic_r2_bucket: "nist-backups-prod"
+
+# stack_backup: ADR-03 independent Restic repo prefix (stack-restic/)
+restic_repo_url: "s3:{{ restic_r2_endpoint }}/{{ restic_r2_bucket }}/stack-restic/{{ ansible_hostname }}"
+
+# ── backup/ (app-data backup) defaults ──
+restic_image: "restic/restic:0.19.0"
+
+# Retention policy (app-data backup)
+backup_keep_daily: 7
+backup_keep_weekly: 4
+backup_keep_monthly: 12
+
+# ── backup/ + backup-timers/ shared defaults ──
+# Retention policy (stack backup)
+restic_keep_daily: 7
+restic_keep_weekly: 4
+restic_keep_monthly: 3
+
+# ── backup-timers/ defaults ──
+# backup_db_services/backup_volume_services replaced by fileglob scan of apps/*/profile.yml (ADR-03)
+backup_r2_access_key_id: "{{ vault_backup_r2_access_key_id | default('') }}"
+backup_r2_secret_access_key: "{{ vault_backup_r2_secret_access_key | default('') }}"
+
+# ── Gate - shared across all source roles ──
+enable_backups: true

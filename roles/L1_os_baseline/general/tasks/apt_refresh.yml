@@ -1,0 +1,21 @@
+---
+# ponytail: preemptive CrowdSec trixie repo cleanup.
+# OS-specific when: tolerated because this runs before the OS dispatcher
+# and must be available on first boot. Remove when CrowdSec repo issue is upstream-fixed.
+- name: "Preemptively clean stale CrowdSec trixie repo (breaks apt on Debian 13)"
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/crowdsec.list
+    state: absent
+  when: ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] | int >= 13
+  changed_when: false
+  ignore_errors: true
+  tags: [l1-os-baseline]
+
+- name: Refresh apt cache safely
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 0
+    lock_timeout: 600
+    update_cache_retries: 10
+    update_cache_retry_max_delay: 12
+  tags: [l1-os-baseline]

@@ -1,0 +1,81 @@
+---
+# ==============================================================================
+# L4_networking Molecule Test Variables
+# ==============================================================================
+# These variables override inventory defaults for isolated molecule testing.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Core routing
+# ------------------------------------------------------------------------------
+reverse_proxy_backend: caddy
+caddy_type: brain
+caddy_node_id: brain-1
+
+# ------------------------------------------------------------------------------
+# Caddy system user
+# ------------------------------------------------------------------------------
+caddy_user_uid: 1337
+caddy_user_gid: 1337
+
+# ------------------------------------------------------------------------------
+# Container image
+# ------------------------------------------------------------------------------
+caddy_image: ghcr.io/developmi/caddy-waf:v3.2.1
+
+# ------------------------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------------------------
+app_base_dir: /opt/user/apps/testing
+
+# ------------------------------------------------------------------------------
+# Ingress routing catalog (minimal - 1 test service)
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Tailscale subnet (required by Caddyfile.j2 template for vpn_only snippet)
+# ------------------------------------------------------------------------------
+tailscale_subnet: 100.64.0.0/10
+
+# ------------------------------------------------------------------------------
+# ACME email (optional - fallback defined in template)
+# ------------------------------------------------------------------------------
+caddy_acme_email: user@example.com
+
+ingress_security_profiles:
+  default:
+    waf_mode: detection_only
+    cors_enabled: false
+    rate_limit: 100
+    import_waf: false
+    import_vpn_only: false
+
+ingress_services:
+  - name: test-app
+    client: testclient
+    domain: test.example.com
+    upstream: 127.0.0.1:8080
+    security_profile: default
+    target_group: brain
+
+# ------------------------------------------------------------------------------
+# Compose policies (avoid actual deploy - test config/infra only)
+# ------------------------------------------------------------------------------
+ingress_compose_pull_policy: never
+ingress_compose_recreate_policy: never
+ingress_compose_wait_timeout: 30
+
+# ------------------------------------------------------------------------------
+# WAF defaults
+# ------------------------------------------------------------------------------
+waf_mode_default: detection_only
+
+# ------------------------------------------------------------------------------
+# AC-3 compliance: vault_image_* vars for images.yml pattern
+# ------------------------------------------------------------------------------
+vault_image_namespace: "ghcr.io/example"
+vault_github_username: "molecule-test"
+
+# GitHub / registry auth (dummy - GHCR login will fail, which is expected)
+# ------------------------------------------------------------------------------
+github_username: molecule-test
+vault_github_token: dummy-token-for-molecule

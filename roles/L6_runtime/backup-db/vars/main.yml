@@ -1,0 +1,7 @@
+---
+# backup-db role - pinned vars (rarely change)
+restic_version: "0.19.1"
+restic_sha256_linux_amd64: "069133bf0a2fa6d3f72cfec1a346dbbb9fd4b0c23d1ac2c731ecf1aae0e75019"
+restic_sha256_linux_arm64: "8afcab3366bb1ffcba9c586695ae1b650c79c79d59d71dacf2c8d18bb66eaf1d"
+restic_arch: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
+restic_download_url: "https://github.com/restic/restic/releases/download/v{{ restic_version }}/restic_{{ restic_version }}_linux_{{ restic_arch }}.bz2"

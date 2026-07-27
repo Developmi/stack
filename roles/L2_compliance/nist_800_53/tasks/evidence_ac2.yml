@@ -1,0 +1,74 @@
+---
+# -----------------------------------------------------------------
+# NIST Evidence Collection - opt-in via l2_compliance_enabled: true
+# Set in inventory/group_vars/ or pass -e l2_compliance_enabled=true
+# Evidence output: /srv/evidence/nist/<control-id>/
+# -----------------------------------------------------------------
+# ==============================================================================
+# COMPLIANCE - Evidence Collection: AC-2 (Account Management)
+# ==============================================================================
+# Collects: ssh_config snapshot, sudoers audit, human user list.
+# Output: /srv/evidence/nist/ac-2/
+# Read-only - no services restarted, no configs modified.
+# ==============================================================================
+
+- name: "AC-2 | Ensure evidence directory exists"
+  ansible.builtin.file:
+    path: /srv/evidence/nist/ac-2
+    state: directory
+    mode: "0755"
+  tags: [compliance, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Collect sshd_config evidence"
+  ansible.builtin.slurp:
+    src: /etc/ssh/sshd_config
+  register: _ac2_ssh_config
+  tags: [compliance, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Write sshd_config evidence"
+  ansible.builtin.copy:
+    dest: /srv/evidence/nist/ac-2/ssh_config
+    content: "{{ _ac2_ssh_config.content | b64decode }}"
+    mode: "0640"
+  tags: [compliance, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Collect sudoers audit evidence"
+  ansible.builtin.shell: |
+    set -o pipefail
+    echo "=== /etc/sudoers ==="
+    grep -v '^\s*\(#\|$\)' /etc/sudoers 2>/dev/null || echo "(empty or unreadable)"
+    echo ""
+    echo "=== /etc/sudoers.d/ fragments ==="
+    for f in /etc/sudoers.d/*; do
+      [ -f "$f" ] || continue
+      echo "--- $f ---"
+      grep -v '^\s*\(#\|$\)' "$f" 2>/dev/null || echo "(empty)"
+    done
+  args:
+    executable: /bin/bash
+  register: _ac2_sudoers
+  changed_when: false
+  tags: [compliance, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Write sudoers audit evidence"
+  ansible.builtin.copy:
+    dest: /srv/evidence/nist/ac-2/sudoers_audit
+    content: "{{ _ac2_sudoers.stdout }}"
+    mode: "0640"
+  tags: [compliance, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Collect human user list (non-system UID >= 1000)"
+  ansible.builtin.shell: |
+    awk -F: '$3 >= 1000 && $3 < 65534 {print $1 ":" $3 ":" $6 ":" $7}' /etc/passwd
+  args:
+    executable: /bin/bash
+  register: _ac2_users
+  changed_when: false
+  tags: [compliance, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Write user list evidence"
+  ansible.builtin.copy:
+    dest: /srv/evidence/nist/ac-2/user_list
+    content: "{{ _ac2_users.stdout }}"
+    mode: "0640"
+  tags: [compliance, l2-compliance, nist, ac-2]

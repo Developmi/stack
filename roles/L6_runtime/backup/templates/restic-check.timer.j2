@@ -1,0 +1,20 @@
+[Unit]
+Description=Weekly Restic integrity check - {{ ansible_hostname }}
+Requires=restic-check.service
+
+[Timer]
+{# brain=nightly, muscle=hourly — schedule varies by node role #}
+{% if 'brain' in group_names %}
+OnCalendar={{ restic_check_time_by_group.brain }}
+{% elif 'muscle' in group_names %}
+OnCalendar={{ restic_check_time_by_group.muscle }}
+{% elif 'local' in group_names %}
+OnCalendar={{ restic_check_time_by_group.local }}
+{% else %}
+OnCalendar=Sun 02:00
+{% endif %}
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

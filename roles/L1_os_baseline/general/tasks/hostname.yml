@@ -1,0 +1,28 @@
+---
+# ==============================================================================
+# COMMON - Hostname Configuration
+# ==============================================================================
+# Sets hostname from inventory_hostname.
+# Uses `shell` module instead of `ansible.builtin.hostname` because Docker
+# userns-remap on this host causes systemd-hostnamed to fail persisting files
+# via hostnamectl (exit code 1, "Not allowed to update /etc/machine-info").
+# The `use: generic` strategy would be the clean workaround but it maps to
+# BaseStrategy internally which raises NotImplementedError on
+# get_permanent_hostname() - a bug in the hostname module itself.
+# Using `shell` (not `command`) because `|| true` needs shell semantics.
+# The kernel hostname IS set correctly despite the file write failure.
+# The `hostname` CLI can't be used directly - it rejects underscores in names.
+# See: molecule/_shared/create.yml ownership fix for related userns-remap files.
+# ==============================================================================
+
+- name: "L1 | Set hostname from inventory"
+  ansible.builtin.shell:
+    cmd: "hostnamectl set-hostname {{ inventory_hostname }} || true"
+  changed_when: true
+  # Use nodename (kernel uname -n) instead of hostname (/etc/hostname).
+  # hostnamectl updates the kernel hostname correctly even in Docker (userns-remap),
+  # but cannot persist /etc/hostname (EBUSY inside containers). The hostname fact
+  # reads from /etc/hostname and never matches inside Docker, causing idempotence
+  # failures. nodename reflects the kernel hostname which IS updated.
+  when: inventory_hostname != ansible_facts['nodename']
+  tags: [common, l1-os-baseline]

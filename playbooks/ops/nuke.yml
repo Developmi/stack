@@ -1,0 +1,679 @@
+---
+# ==============================================================================
+# Developmi Stack | NUKE PLAYBOOK
+# ==============================================================================
+# Purpose:
+#   Deterministic teardown of infrastructure managed by this repository.
+#
+# Design goals:
+#   - Role-aligned cleanup blocks (ingress, portainer, observability, crowdsec,
+#     tailscale, security, compliance, docker runtime)
+#   - Targeted execution via tags
+#   - Safe defaults and production guardrail
+#
+# Usage examples:
+#   - Full teardown:
+#       ansible-playbook playbooks/ops/nuke.yml --ask-vault-pass
+#   - Only ingress/caddy:
+#       ansible-playbook playbooks/ops/nuke.yml --tags ingress,caddy --ask-vault-pass
+#   - Only portainer:
+#       ansible-playbook playbooks/ops/nuke.yml --tags portainer --ask-vault-pass
+#   - Only tailscale:
+#       ansible-playbook playbooks/ops/nuke.yml --tags tailscale --ask-vault-pass
+#   - Only Grafana container + data:
+#       ansible-playbook playbooks/ops/nuke.yml --tags grafana --ask-vault-pass
+#   - Entire observability stack (VictoriaMetrics/Loki/Grafana) + legacy Uptime Kuma cleanup:
+#       ansible-playbook playbooks/ops/nuke.yml --tags observability_stack --ask-vault-pass
+#   - Only exporters (Node Exporter + cAdvisor):
+#       ansible-playbook playbooks/ops/nuke.yml --tags exporters --ask-vault-pass
+#
+# IMPORTANT:
+#   - Destructive operation.
+#   - Protected paths are never deleted.
+#   - Nuke is blocked for hosts in inventory group 'production'.
+#   - Remote connectivity always respects inventory 'ansible_host'.
+#   - In a Zero Trust setup, nuke/stacks operations must run over Tailscale.
+# ==============================================================================
+
+- name: Nuke Developmi Stack managed infrastructure
+  hosts: all
+  become: true
+  gather_facts: true
+  tags: [nuke]
+
+  vars_prompt:
+    - name: confirm_nuke
+      prompt: |
+        DESTRUCTIVE OPERATION CONFIRMATION
+
+        This will remove infrastructure managed by the Developmi Stack,
+        including Docker stacks, VPN/security tooling, and app data.
+
+        Type DESTROY_NIST_INFRASTRUCTURE to proceed:
+      private: false
+      default: "NO"
+
+  vars:
+    app_root: "{{ app_base_dir | default('/srv/app') }}"
+
+    protected_paths:
+      - /home
+      - /root/.ssh
+      - /etc/ssh
+
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+      - docker-compose
+
+    tailscale_cleanup_paths:
+      - /var/lib/tailscale
+      - /etc/tailscale
+      - /etc/default/tailscaled
+      - /etc/apt/sources.list.d/tailscale.list
+      - /usr/share/keyrings/tailscale-archive-keyring.gpg
+
+    crowdsec_cleanup_paths:
+      - /etc/crowdsec
+      - /var/lib/crowdsec
+      - /var/log/crowdsec
+      - /etc/apt/sources.list.d/crowdsec.list
+      - /etc/apt/keyrings/crowdsec.asc
+      - /usr/local/bin/monitor-crowdsec
+
+    security_cleanup_paths:
+      - /etc/fail2ban
+      - /var/lib/fail2ban
+      - /etc/ufw
+      - /lib/ufw
+      - /etc/iptables
+
+    compliance_cleanup_paths:
+      - /var/log/lynis
+
+  pre_tasks:
+    - name: Require overlay-network ansible_host for nuke operations
+      ansible.builtin.assert:
+        that:
+          - ansible_host is defined
+          - >-
+            lookup(
+              'ansible.builtin.pipe',
+              "python3 -c 'import ipaddress,sys; "
+              ~ "host=sys.argv[1]; subnet=sys.argv[2]; "
+              ~ "\ntry:\n print(ipaddress.ip_address(host) in ipaddress.ip_network(subnet, strict=False))"
+              ~ "\nexcept ValueError:\n print(False)' "
+              ~ (ansible_host | quote)
+              ~ " "
+              ~ (tailscale_subnet | quote)
+            ) == 'True'
+        fail_msg: >-
+          Zero Trust violation on {{ inventory_hostname }}: nuke.yml only allows
+          connections through the management overlay using ansible_host inside
+          {{ tailscale_subnet }}. Public bootstrap access is only permitted in site.yml.
+        success_msg: >-
+          Overlay transport validated for {{ inventory_hostname }} ({{ ansible_host }} in {{ tailscale_subnet }}).
+      tags: [always]
+
+    - name: Verify nuke confirmation token
+      ansible.builtin.fail:
+        msg: "Nuke aborted. Type DESTROY_NIST_INFRASTRUCTURE to continue."
+      when: confirm_nuke != 'DESTROY_NIST_INFRASTRUCTURE'
+      tags: [always]
+
+    - name: Block nuke on production group members
+      ansible.builtin.fail:
+        msg: "Nuke is disabled for hosts in inventory group production."
+      when:
+        - "'production' in groups"
+        - inventory_hostname in groups['production']
+      tags: [always]
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1) INGRESS / CADDY (roles/L4_networking/caddy)
+    # Tags: ingress, caddy
+    # --------------------------------------------------------------------------
+    - name: Ingress | Stop ingress compose project
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_root }}/ingress"
+        state: absent
+        remove_orphans: true
+      failed_when: false
+      tags: [ingress, caddy]
+
+    - name: Ingress | Force-remove caddy-waf container
+      community.docker.docker_container:
+        name: caddy-waf
+        state: absent
+        force_kill: true
+      failed_when: false
+      tags: [ingress, caddy]
+
+    - name: Ingress | Remove ingress filesystem artifacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ app_root }}/ingress"
+        - /etc/caddy
+        - /var/log/caddy
+        - /var/www/html
+      tags: [ingress, caddy]
+
+    - name: Ingress | Remove caddy service account
+      ansible.builtin.user:
+        name: caddy
+        state: absent
+        remove: true
+      failed_when: false
+      tags: [ingress, caddy]
+
+    - name: Ingress | Remove caddy group
+      ansible.builtin.group:
+        name: caddy
+        state: absent
+      failed_when: false
+      tags: [ingress, caddy]
+
+    # --------------------------------------------------------------------------
+    # 2) PORTAINER STACK (roles/L6_runtime/portainer)
+    # Tags: portainer
+    # --------------------------------------------------------------------------
+    - name: Portainer | Stop server compose stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_root }}"
+        files:
+          - portainer-server-compose.yml
+        state: absent
+        remove_orphans: true
+      when: "'brain' in group_names"
+      failed_when: false
+      tags: [portainer]
+
+    - name: Portainer | Stop edge agent compose stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_root }}/portainer_agent"
+        state: absent
+        remove_orphans: true
+      failed_when: false
+      tags: [portainer]
+
+    - name: Portainer | Remove known containers
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: absent
+        force_kill: true
+      loop:
+        - portainer
+        - portainer_edge_agent
+      failed_when: false
+      tags: [portainer]
+
+    - name: Portainer | Remove named volume
+      community.docker.docker_volume:
+        name: portainer_data
+        state: absent
+      failed_when: false
+      tags: [portainer]
+
+    - name: Portainer | Remove portainer filesystem artifacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ app_root }}/portainer-server-compose.yml"
+        - "{{ app_root }}/portainer_certs"
+        - "{{ app_root }}/portainer_agent"
+        - "{{ app_root }}/portainer_agent_data"
+        - "{{ app_root }}/portainer_agent_certs"
+      tags: [portainer]
+
+    # --------------------------------------------------------------------------
+    # 3) OBSERVABILITY / MONITORING (roles/L3_observability/general via monitoring.yml)
+    # Tags: observability, monitoring
+    # Risk note:
+    #   Service-specific tags remove only the targeted container and, when safe,
+    #   that service's dedicated data path. Shared assets (compose files, env,
+    #   shared configs, networks) are tagged separately because removing them can
+    #   break other observability components.
+    #   Nuke still attempts to remove observability networks on broader cleanup
+    #   tags to avoid stale/shared-name networks causing duplicate network bugs on
+    #   future redeployments. If a network is still in use elsewhere, Docker will
+    #   refuse deletion and the task is non-fatal.
+    # --------------------------------------------------------------------------
+    - name: Observability | Stop exporters compose project
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_root }}/observability/exporters"
+        state: absent
+        remove_orphans: true
+      failed_when: false
+      tags: [observability, monitoring, exporters]
+
+    - name: Observability | Stop brain observability compose project
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_root }}/observability"
+        state: absent
+        remove_orphans: true
+      failed_when: false
+      tags: [observability, monitoring, observability_stack]
+
+    - name: Observability | Remove node-exporter container
+      community.docker.docker_container:
+        name: node-exporter
+        state: absent
+        force_kill: true
+      failed_when: false
+      tags: [observability, monitoring, exporters, node_exporter]
+
+    - name: Observability | Remove cadvisor container
+      community.docker.docker_container:
+        name: cadvisor
+        state: absent
+        force_kill: true
+      failed_when: false
+      tags: [observability, monitoring, exporters, cadvisor]
+
+    - name: Observability | Remove VictoriaMetrics container
+      community.docker.docker_container:
+        name: victoria-metrics
+        state: absent
+        force_kill: true
+      failed_when: false
+      tags: [observability, monitoring, observability_stack, victoriametrics]
+
+    - name: Observability | Remove Loki container
+      community.docker.docker_container:
+        name: loki
+        state: absent
+        force_kill: true
+      failed_when: false
+      tags: [observability, monitoring, observability_stack, loki]
+
+    - name: Observability | Remove Grafana container
+      community.docker.docker_container:
+        name: grafana
+        state: absent
+        force_kill: true
+      failed_when: false
+      tags: [observability, monitoring, observability_stack, grafana]
+
+    - name: Observability | Remove legacy Uptime Kuma container
+      community.docker.docker_container:
+        name: uptime-kuma
+        state: absent
+        force_kill: true
+      failed_when: false
+      tags: [observability, monitoring, observability_stack, uptime_kuma]
+
+    - name: Observability | Remove VictoriaMetrics data path
+      ansible.builtin.file:
+        path: "{{ app_root }}/observability/victoria-data"
+        state: absent
+      tags: [observability, monitoring, observability_stack, victoriametrics]
+
+    - name: Observability | Remove Loki data path
+      ansible.builtin.file:
+        path: "{{ app_root }}/observability/loki-data"
+        state: absent
+      tags: [observability, monitoring, observability_stack, loki]
+
+    - name: Observability | Remove Grafana data path
+      ansible.builtin.file:
+        path: "{{ app_root }}/observability/grafana-data"
+        state: absent
+      tags: [observability, monitoring, observability_stack, grafana]
+
+    - name: Observability | Remove legacy Uptime Kuma data path
+      ansible.builtin.file:
+        path: "{{ app_root }}/observability/uptime-kuma-data"
+        state: absent
+      tags: [observability, monitoring, observability_stack, uptime_kuma]
+
+    - name: Observability | Remove exporters compose assets
+      ansible.builtin.file:
+        path: "{{ app_root }}/observability/exporters"
+        state: absent
+      tags: [observability, monitoring, exporters, observability_assets]
+
+    - name: Observability | Remove shared stack config assets
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ app_root }}/observability/docker-compose.yml"
+        - "{{ app_root }}/observability/.env"
+        - "{{ app_root }}/observability/.env.example"
+        - "{{ app_root }}/observability/victoriametrics-scrape.yml"
+        - "{{ app_root }}/observability/loki-config.yml"
+        - "{{ app_root }}/observability/grafana-datasource.yml"
+      tags: [observability, monitoring, observability_stack, observability_assets]
+
+    - name: Observability | Remove managed exporters network
+      community.docker.docker_network:
+        name: "{{ observability_network_name | default('observability_net') }}"
+        state: absent
+      failed_when: false
+      tags: [observability, monitoring, exporters, observability_networks]
+
+    - name: Observability | Remove stack network to avoid stale network reuse
+      community.docker.docker_network:
+        name: "{{ observability_stack_network_name | default('public_net') }}"
+        state: absent
+      failed_when: false
+      tags: [observability, monitoring, observability_stack, observability_networks]
+
+    - name: Observability | Remove observability root directory
+      ansible.builtin.file:
+        path: "{{ app_root }}/observability"
+        state: absent
+      tags: [observability, monitoring]
+
+    # --------------------------------------------------------------------------
+    # 4) CROWDSEC (roles/L2_compliance/nist_800_53/si-4)
+    # Tags: crowdsec
+    # --------------------------------------------------------------------------
+    - name: CrowdSec | Stop services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - crowdsec
+        - crowdsec-firewall-bouncer
+      failed_when: false
+      tags: [crowdsec]
+
+    - name: CrowdSec | Remove packages
+      ansible.builtin.apt:
+        name:
+          - crowdsec
+          - crowdsec-firewall-bouncer-iptables
+        state: absent
+        purge: true
+      failed_when: false
+      tags: [crowdsec]
+
+    - name: CrowdSec | Remove artifacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ crowdsec_cleanup_paths }}"
+      tags: [crowdsec]
+
+    # --------------------------------------------------------------------------
+    # 5) TAILSCALE (roles/L2_compliance/general)
+    # Tags: tailscale
+    # --------------------------------------------------------------------------
+    - name: Tailscale | Disconnect node from mesh
+      ansible.builtin.command:
+        argv: [tailscale, down]
+      changed_when: false
+      failed_when: false
+      tags: [tailscale]
+
+    - name: Tailscale | Logout node from mesh
+      ansible.builtin.command:
+        argv: [tailscale, logout]
+      changed_when: false
+      failed_when: false
+      tags: [tailscale]
+
+    - name: Tailscale | Stop tailscaled service
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: stopped
+        enabled: false
+      failed_when: false
+      tags: [tailscale]
+
+    - name: Tailscale | Release package hold
+      ansible.builtin.command:
+        argv: [apt-mark, unhold, tailscale]
+      changed_when: false
+      failed_when: false
+      tags: [tailscale]
+
+    - name: Tailscale | Remove package
+      ansible.builtin.apt:
+        name: tailscale
+        state: absent
+        purge: true
+      failed_when: false
+      tags: [tailscale]
+
+    - name: Tailscale | Remove artifacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ tailscale_cleanup_paths }}"
+      tags: [tailscale]
+
+    # --------------------------------------------------------------------------
+    # 6) SECURITY BASELINE (roles/L2_compliance/general/tasks/security)
+    # Tags: security
+    # --------------------------------------------------------------------------
+    - name: Security | Stop security services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - fail2ban
+      failed_when: false
+      tags: [security]
+
+    - name: Security | Disable UFW
+      community.general.ufw:
+        state: disabled
+      failed_when: false
+      tags: [security]
+
+    - name: Security | Flush iptables and set ACCEPT policies
+      ansible.builtin.shell: |
+        iptables -P INPUT ACCEPT || true
+        iptables -P FORWARD ACCEPT || true
+        iptables -P OUTPUT ACCEPT || true
+        iptables -F || true
+        iptables -X || true
+        iptables -t nat -F || true
+        iptables -t nat -X || true
+        iptables -t mangle -F || true
+        iptables -t mangle -X || true
+        iptables -t raw -F || true
+        iptables -t raw -X || true
+
+        ip6tables -P INPUT ACCEPT || true
+        ip6tables -P FORWARD ACCEPT || true
+        ip6tables -P OUTPUT ACCEPT || true
+        ip6tables -F || true
+        ip6tables -X || true
+        ip6tables -t nat -F || true
+        ip6tables -t nat -X || true
+        ip6tables -t mangle -F || true
+        ip6tables -t mangle -X || true
+        ip6tables -t raw -F || true
+        ip6tables -t raw -X || true
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+      tags: [security]
+
+    - name: Security | Remove security packages
+      ansible.builtin.apt:
+        name:
+          - fail2ban
+          - ufw
+          - iptables-persistent
+        state: absent
+        purge: true
+      failed_when: false
+      tags: [security]
+
+    - name: Security | Remove security artifacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ security_cleanup_paths }}"
+      tags: [security]
+
+    # --------------------------------------------------------------------------
+    # 7) COMPLIANCE ARTIFACTS (roles/L2_compliance/nist_800_53)
+    # Tags: compliance
+    # --------------------------------------------------------------------------
+    - name: Compliance | Remove Lynis package
+      ansible.builtin.apt:
+        name: lynis
+        state: absent
+        purge: true
+      failed_when: false
+      tags: [compliance]
+
+    - name: Compliance | Remove compliance artifacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ compliance_cleanup_paths }}"
+      tags: [compliance]
+
+    # --------------------------------------------------------------------------
+    # 8) DOCKER RUNTIME + APP ROOT (roles/L6_runtime/docker_compose + stack artifacts)
+    # Tags: docker, runtime
+    # --------------------------------------------------------------------------
+    - name: Docker | Stop any compose stacks under app root
+      ansible.builtin.shell: |
+        set -o pipefail
+        if [ -d "{{ app_root }}" ]; then
+          find "{{ app_root }}" -maxdepth 3 -type f -name docker-compose.yml -print0 |
+          while IFS= read -r -d '' compose_file; do
+            compose_dir="$(dirname "$compose_file")"
+            docker compose -f "$compose_file" down --remove-orphans || true
+            echo "stopped: $compose_dir"
+          done
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+      tags: [docker, runtime]
+
+    - name: Docker | Remove all remaining containers
+      ansible.builtin.shell: |
+        docker ps -aq | xargs -r docker rm -f
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+      tags: [docker, runtime]
+
+    - name: Docker | Remove all custom networks
+      ansible.builtin.shell: |
+        docker network ls --filter type=custom -q | xargs -r docker network rm
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+      tags: [docker, runtime]
+
+    - name: Docker | Remove all volumes
+      ansible.builtin.shell: |
+        docker volume ls -q | xargs -r docker volume rm -f
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+      tags: [docker, runtime]
+
+    - name: Docker | Prune docker system
+      ansible.builtin.command:
+        argv: [docker, system, prune, -af, --volumes]
+      changed_when: false
+      failed_when: false
+      tags: [docker, runtime]
+
+    - name: Docker | Stop and disable docker services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - docker.service
+        - docker.socket
+        - containerd.service
+      failed_when: false
+      tags: [docker, runtime]
+
+    - name: Docker | Release held docker packages
+      ansible.builtin.command:
+        argv: [apt-mark, unhold, docker-ce, docker-ce-cli]
+      changed_when: false
+      failed_when: false
+      tags: [docker, runtime]
+
+    - name: Docker | Remove docker prune cron
+      ansible.builtin.cron:
+        name: Docker system prune
+        state: absent
+        user: root
+      failed_when: false
+      tags: [docker, runtime]
+
+    - name: Docker | Remove docker packages
+      ansible.builtin.apt:
+        name: "{{ docker_packages }}"
+        state: absent
+        purge: true
+      failed_when: false
+      tags: [docker, runtime]
+
+    - name: Docker | Remove docker runtime and repository artifacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/docker
+        - /var/lib/containerd
+        - /etc/docker
+        - /etc/containerd
+        - /run/docker
+        - /run/containerd
+        - /run/docker.sock
+        - /var/run/docker.sock
+        - /etc/apt/sources.list.d/docker.list
+        - /etc/apt/keyrings/docker.asc
+        - /var/log/docker-gc.log
+      tags: [docker, runtime]
+
+    - name: Docker | Remove app root
+      ansible.builtin.file:
+        path: "{{ app_root }}"
+        state: absent
+      tags: [docker, runtime]
+
+    # --------------------------------------------------------------------------
+    # 9) FINAL VERIFICATION
+    # Tags: verify
+    # --------------------------------------------------------------------------
+    - name: Verify protected paths still exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ protected_paths }}"
+      register: protected_paths_status
+      tags: [verify]
+
+    - name: Report protected path status
+      ansible.builtin.debug:
+        msg: "Protected path {{ item.item }} exists={{ item.stat.exists }}"
+      loop: "{{ protected_paths_status.results }}"
+      tags: [verify]
+
+    - name: Report nuke completion
+      ansible.builtin.debug:
+        msg:
+          - "Nuke completed for {{ inventory_hostname }}"
+          - "Run deployment playbooks again from clean state when ready."
+      tags: [verify]

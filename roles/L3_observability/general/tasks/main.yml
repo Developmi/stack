@@ -1,0 +1,90 @@
+# ---
+# COMPLIANCE WARNING:
+# This role may reference sensitive network, user, or credential settings for observability stack.
+# Do NOT expose, override, or parametrize these values in group_vars/all. Only manage via inventory, secrets, or vault with compliance review.
+# ---
+---
+- name: Preflight | Remove directory artifacts from failed Docker mounts
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/observability/{{ item }}"
+    state: absent
+  loop:
+    - blackbox-config.yml
+    - grafana-notifier.yml
+    - grafana-alert-rules.yml
+    - grafana-dashboards.yml
+    - grafana-datasource.yml
+    - loki-config.yml
+    - victoriametrics-scrape.yml
+  when:
+    - app_base_dir is defined
+    - item is regex('\\.yml$')
+  register: _preflight_remove
+  failed_when: false
+  changed_when: false
+  tags: [l3-observability, observability, monitoring]
+
+- name: Preflight | Ensure bind-mount targets exist as regular files
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/observability/{{ item }}"
+    state: touch
+    mode: "0644"
+  loop:
+    - blackbox-config.yml
+    - grafana-notifier.yml
+    - grafana-alert-rules.yml
+    - grafana-dashboards.yml
+    - grafana-datasource.yml
+    - loki-config.yml
+    - victoriametrics-scrape.yml
+  when: app_base_dir is defined
+  changed_when: false
+  tags: [l3-observability, observability, monitoring]
+
+- name: Prepare exporters assets
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/exporters.yml"
+  when: observability_prepare_exporters | default(enable_metrics_exporters | default(false) | bool)
+  tags:
+    - l3-observability
+    - monitoring
+    - exporters
+    - observability
+
+- name: Deploy health check configuration
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/health-checks.yml"
+  when: observability_prepare_stack | default(enable_observability_stack | default(false) | bool)
+  tags:
+    - l3-observability
+    - monitoring
+    - stack
+    - health_checks
+    - observability
+
+- name: Deploy alerting rules
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/alerting.yml"
+  when: observability_prepare_stack | default(enable_observability_stack | default(false) | bool)
+  tags:
+    - l3-observability
+    - monitoring
+    - stack
+    - alerting
+    - observability
+
+- name: Deploy Grafana dashboards
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/dashboards.yml"
+  when: observability_prepare_stack | default(enable_observability_stack | default(false) | bool)
+  tags:
+    - l3-observability
+    - monitoring
+    - stack
+    - dashboards
+    - observability
+
+- name: Prepare and deploy observability stack
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/stack.yml"
+  when: observability_prepare_stack | default(enable_observability_stack | default(false) | bool)
+  tags:
+    - l3-observability
+    - monitoring
+    - stack
+    - observability

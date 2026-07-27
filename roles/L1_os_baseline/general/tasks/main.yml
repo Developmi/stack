@@ -1,0 +1,27 @@
+---
+# ==============================================================================
+# COMMON ROLE - L1 OS Baseline Dispatcher
+# ==============================================================================
+# Thin-dispatcher: conditionals + include_tasks only. No business logic inline.
+# ==============================================================================
+
+- name: "L1 | Gather installed packages"
+  ansible.builtin.package_facts:
+    manager: apt
+  tags: [common, l1-os-baseline]
+
+- name: "L1 | Install base system utilities"
+  ansible.builtin.include_tasks: general/tasks/packages.yml
+  tags: [common, l1-os-baseline]
+
+- name: "L1 | Configure timezone and locale"
+  ansible.builtin.include_tasks: general/tasks/timezone_locale.yml
+  tags: [common, l1-os-baseline]
+
+- name: "L1 | Set hostname from inventory"
+  ansible.builtin.include_tasks: general/tasks/hostname.yml
+  tags: [common, l1-os-baseline]
+
+- name: "L1 | Disable swap"
+  ansible.builtin.include_tasks: general/tasks/swap.yml
+  tags: [common, l1-os-baseline, swap]

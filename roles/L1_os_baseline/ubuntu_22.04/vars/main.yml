@@ -1,0 +1,22 @@
+---
+# ==============================================================================
+# L1 OS Baseline - Ubuntu 22.04 - OS-specific variables
+# ==============================================================================
+# Kernel module blacklist configuration.
+# ==============================================================================
+
+# ── Kernel module blacklist ──────────────────────────────────────────────────
+l1_blacklist_modules:
+  - cramfs
+  - freevxfs
+  - hfs
+  - hfsplus
+  - jffs2
+  - squashfs
+  - udf
+  - vfat
+  - dccp
+  - sctp
+  - rds
+  - tipc
+l1_blacklist_file: /etc/modprobe.d/nist-blacklist.conf

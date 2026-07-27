@@ -1,0 +1,15 @@
+---
+# ==============================================================================
+# L1 OS Baseline - Handlers
+# ==============================================================================
+
+- name: "Rebuild initramfs for current kernel"
+  ansible.builtin.command: update-initramfs -u
+  register: _initramfs_rebuild
+  changed_when: true
+  failed_when: false
+
+- name: "Warn if initramfs rebuild failed"
+  ansible.builtin.debug:
+    msg: "⚠ WARNING: initramfs rebuild failed - {{ _initramfs_rebuild.stderr }}"
+  when: _initramfs_rebuild.rc != 0

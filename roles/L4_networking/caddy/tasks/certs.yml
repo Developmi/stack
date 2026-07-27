@@ -1,0 +1,206 @@
+---
+# ==============================================================================
+# CERTS - Cloudflare Origin Certificate Deployment
+# ==============================================================================
+# Tags: l4-networking, certs
+#
+# Cert path convention (ADR-03):
+#   Vault key: cloudflare_origin_certs.client_<name>
+#   Host path: /srv/caddy/certs/<client>/fullchain.pem + privkey.pem
+#   Container path (via mount): /etc/caddy/certs/<client>/fullchain.pem + privkey.pem
+# ==============================================================================
+
+- name: Preflight | Validate caddy_node_id is set per host
+  ansible.builtin.assert:
+    that:
+      - caddy_node_id is defined
+      - caddy_node_id | length > 0
+    fail_msg: >-
+      caddy_node_id is missing for {{ inventory_hostname }}.
+      Set this per host as an inline inventory variable in inventory/hosts.ini.
+      Example: brain-1 ansible_host=... caddy_node_id=brain-1
+    success_msg: "caddy_node_id is valid: {{ caddy_node_id }}."
+  tags: [l4-networking, certs]
+
+# ------------------------------------------------------------------------------
+# RESOLVE CERTIFICATES NEEDED BY THIS NODE
+# ------------------------------------------------------------------------------
+# SC-12 / SC-28 | Compute which Cloudflare Origin certs this node actually needs.
+# Certificates are only deployed to nodes whose ingress_services reference them
+# (filtered by target_group ∩ (group_names ∪ caddy_node_id)).
+- name: SC-12/SC-28 | Resolve certificates needed by this node
+  ansible.builtin.set_fact:
+    _caddy_needed_clients: >-
+      {{
+        ingress_services
+        | selectattr('client', 'defined')
+        | selectattr('target_group', 'defined')
+        | selectattr('target_group', 'in', _caddy_effective_groups)
+        | map(attribute='client')
+        | unique
+        | list
+      }}
+  when: cloudflare_origin_certs is defined
+  tags: [l4-networking, certs, nist, sc-12, sc-28]
+
+# Cross-validate that client_<name> keys exist in cloudflare_origin_certs
+- name: Preflight | Assert each client has a cloudflare_origin_certs entry
+  ansible.builtin.assert:
+    that:
+      - >-
+        ('client_' ~ item) in cloudflare_origin_certs
+    fail_msg: >-
+      Client '{{ item }}' has no matching cloudflare_origin_certs.client_{{ item }} entry.
+      Add the certificate to vault before deploying.
+      Valid keys in vault: {{ cloudflare_origin_certs.keys() | select('match', '^client_') | list | join(', ') }}
+    success_msg: "client_{{ item }} cert found in cloudflare_origin_certs."
+  loop: "{{ _caddy_needed_clients | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - cloudflare_origin_certs is defined
+    - _caddy_needed_clients | default([]) | length > 0
+  tags: [l4-networking, certs]
+
+# ------------------------------------------------------------------------------
+# ENSURE /srv/caddy BASE DIRECTORY - Umask-Independent (ADR-02)
+# ------------------------------------------------------------------------------
+- name: Ensure /srv/caddy is traversable (explicit mode, not umask-dependent)
+  ansible.builtin.file:
+    path: /srv/caddy
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  tags: [l4-networking, certs, nist, sc-28]
+
+# ------------------------------------------------------------------------------
+# DEPLOY CERTIFICATES - Per-Client Directory Structure
+# ------------------------------------------------------------------------------
+# ADR-03: /srv/caddy/certs/<client>/fullchain.pem + privkey.pem
+- name: SC-28 | Create per-client cert directories
+  ansible.builtin.file:
+    path: "/srv/caddy/certs/{{ item }}"
+    state: directory
+    mode: "0700"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+  loop: "{{ _caddy_needed_clients | default([]) }}"
+  when:
+    - cloudflare_origin_certs is defined
+    - _caddy_needed_clients | default([]) | length > 0
+  tags: [l4-networking, certs, nist, sc-28]
+
+- name: SC-28 | Deploy Cloudflare Origin Certificates (fullchain.pem)
+  ansible.builtin.copy:
+    content: "{{ cloudflare_origin_certs['client_' ~ item].cert }}"
+    dest: "/srv/caddy/certs/{{ item }}/fullchain.pem"
+    mode: "0600"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+  loop: "{{ _caddy_needed_clients | default([]) }}"
+  when:
+    - cloudflare_origin_certs is defined
+    - _caddy_needed_clients | default([]) | length > 0
+    - ('client_' ~ item) in cloudflare_origin_certs
+  tags: [l4-networking, certs, nist, sc-28]
+
+- name: SC-28 | Deploy Cloudflare Origin Private Keys (privkey.pem)
+  ansible.builtin.copy:
+    content: "{{ cloudflare_origin_certs['client_' ~ item].key }}"
+    dest: "/srv/caddy/certs/{{ item }}/privkey.pem"
+    mode: "0600"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+  loop: "{{ _caddy_needed_clients | default([]) }}"
+  when:
+    - cloudflare_origin_certs is defined
+    - _caddy_needed_clients | default([]) | length > 0
+    - ('client_' ~ item) in cloudflare_origin_certs
+  tags: [l4-networking, certs, nist, sc-28]
+  no_log: true
+
+# ------------------------------------------------------------------------------
+# CLOUDFLARE ORIGIN PULL CA BUNDLE
+# ------------------------------------------------------------------------------
+- name: SC-8/SC-13 | Deploy Cloudflare Origin Pull CA bundle (only to nodes that need it)
+  ansible.builtin.copy:
+    src: cloudflare-origin-pull-ca.pem
+    dest: "/srv/caddy/certs/cloudflare-origin-pull-ca.pem"
+    mode: "0644"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+  when: >-
+    ingress_services
+    | selectattr('tls_client_auth', 'defined')
+    | selectattr('tls_client_auth', 'equalto', 'cloudflare')
+    | selectattr('target_group', 'in', _caddy_effective_groups)
+    | list | length > 0
+  tags: [l4-networking, certs, nist, sc-8, sc-13]
+
+# ------------------------------------------------------------------------------
+# CERT EXPIRY VALIDATION (Spec §2)
+# ------------------------------------------------------------------------------
+# Warnings at < 14 days remaining; deployment blocks at < 24 hours.
+- name: Read cert expiry for deployed certificates
+  ansible.builtin.command:
+    cmd: "openssl x509 -enddate -noout -in /srv/caddy/certs/{{ item }}/fullchain.pem"
+  register: _cert_expiry_raw
+  changed_when: false
+  loop: "{{ _caddy_needed_clients | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - cloudflare_origin_certs is defined
+    - _caddy_needed_clients | default([]) | length > 0
+    - ('client_' ~ item) in cloudflare_origin_certs
+  tags: [l4-networking, certs]
+
+- name: Parse cert expiry dates
+  ansible.builtin.set_fact:
+    _cert_expiry_map: >-
+      {{
+        dict(
+          _cert_expiry_raw.results
+          | selectattr('stdout', 'defined')
+          | map('extract', 'item')
+          | zip(
+            _cert_expiry_raw.results
+            | selectattr('stdout', 'defined')
+            | map(attribute='stdout')
+            | map('regex_replace', 'notAfter=', '')
+          )
+        )
+      }}
+  when: _cert_expiry_raw is defined
+  tags: [l4-networking, certs]
+
+- name: Warn on certs expiring within 14 days
+  ansible.builtin.debug:
+    msg: >-
+      ⚠️  WARNING: Certificate for client '{{ item.key }}' expires on {{ item.value }}.
+      Remaining validity is under 14 days. Renew now to avoid downtime.
+  loop: "{{ _cert_expiry_map | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - _cert_expiry_map is defined
+    - >-
+      ((item.value | to_datetime('%b %d %H:%M:%S %Y %Z')) -
+       (ansible_date_time.iso8601 | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).days < 14
+  tags: [l4-networking, certs]
+
+- name: Block deployment on certs expiring within 24 hours
+  ansible.builtin.fail:
+    msg: >-
+      🚫 BLOCKED: Certificate for client '{{ item.key }}' expires in
+      less than 24 hours ({{ item.value }}). Renew before deploying.
+  loop: "{{ _cert_expiry_map | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - _cert_expiry_map is defined
+    - >-
+      ((item.value | to_datetime('%b %d %H:%M:%S %Y %Z')) -
+       (ansible_date_time.iso8601 | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).days < 1
+  tags: [l4-networking, certs]

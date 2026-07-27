@@ -1,0 +1,54 @@
+---
+# =============================================================================
+# Orchestrator: Backup Role main.yml
+# =============================================================================
+# Tags: backup (meta-tag for entire role)
+# Flow: enable_backups check → phase02_deactivate → pre_dump → restic_backup
+#       → retention → notify  (ADR-01)
+# =============================================================================
+
+- name: "Assert backups are enabled"
+  ansible.builtin.assert:
+    that:
+      - enable_backups | default(false) | bool
+    success_msg: "Backups are enabled on {{ inventory_hostname }}"
+    fail_msg: >-
+      Backups disabled via enable_backups: false on {{ inventory_hostname }}.
+      Skipping all backup tasks.
+  tags: [backup]
+
+- name: "Initialize error accumulator"
+  ansible.builtin.set_fact:
+    backup_errors: []
+  tags: [backup]
+
+- name: "Deactivate Phase 02 timers on brain-1"
+  ansible.builtin.include_tasks: phase02_deactivate.yml
+  tags: [backup, backup_deactivate]
+
+- name: "Pre-dump: database and valkey dump collection"
+  ansible.builtin.include_tasks: pre_dump.yml
+  tags: [backup, backup_pre_dump]
+
+- name: "Restic backup to R2"
+  ansible.builtin.include_tasks: restic_backup.yml
+  tags: [backup, backup_restic]
+
+- name: "Verify app_profiles has items for retention loop"
+  ansible.builtin.assert:
+    that:
+      - app_profiles | default([]) | length > 0
+    success_msg: "app_profiles has {{ app_profiles | default([]) | length }} profile(s) - retention loop will execute"
+    fail_msg: >-
+      app_profiles is empty or undefined.
+      backup-appdata.yml requires app_profiles to be populated
+      (normally by apps.yml L5 plays or explicit vars).
+  tags: [backup, backup_retention]
+
+- name: "Retention policy enforcement"
+  ansible.builtin.include_tasks: retention.yml
+  tags: [backup, backup_retention]
+
+- name: "Failure notification"
+  ansible.builtin.include_tasks: notify.yml
+  tags: [backup, backup_notify]

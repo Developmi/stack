@@ -1,0 +1,179 @@
+---
+# ==============================================================================
+# BOOTSTRAP PLAYBOOK - Chicken-and-Egg Solver
+# ==============================================================================
+# Connects as root via dev_admin key (explicit play-level vars).
+# NO role imports, NO dependencies outside core modules + vault.
+# 4 phases: stability → user → SSH hardening → verification.
+# Pre-flight: /etc/bootstrap-complete marker skips everything.
+# Tags per design: bootstrap, phase1-4.
+# ==============================================================================
+
+- name: Bootstrap fresh host as root
+  hosts: all
+  gather_facts: true
+  vars:
+    ansible_user: root
+    ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519"
+    ansible_become: false
+  tags: [bootstrap]
+
+  handlers:
+    - name: Reload sshd
+      ansible.builtin.service:
+        name: sshd
+        state: reloaded
+      tags: [bootstrap, phase3]
+
+  tasks:
+    # ─── Phase 0: Pre-flight ────────────────────────────────────────────────
+    - name: "P0 | Stat /etc/bootstrap-complete"
+      ansible.builtin.stat:
+        path: /etc/bootstrap-complete
+      register: _bootstrap_check
+      tags: [bootstrap]
+
+    - name: "P0 | Skip - host is already bootstrapped"
+      ansible.builtin.meta: end_play
+      when: _bootstrap_check.stat.exists
+      tags: [bootstrap]
+
+    # ─── Phase 1: System Stability ───────────────────────────────────────────
+    - name: "P1 | Kill lingering apt/dpkg processes"
+      ansible.builtin.shell: pkill -9 -x apt dpkg 2>/dev/null || true
+      register: _kill_apt
+      changed_when: _kill_apt.rc == 0
+      failed_when: false
+      tags: [bootstrap, phase1]
+
+    - name: "P1 | Gather package facts"
+      ansible.builtin.package_facts:
+        manager: apt
+      tags: [bootstrap, phase1]
+
+    - name: "P1 | Update apt cache"
+      ansible.builtin.apt:
+        update_cache: true
+        lock_timeout: 60
+      tags: [bootstrap, phase1]
+
+    - name: "P1 | Install prerequisites (validate-before-act)"
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - python3-apt
+        - curl
+        - gnupg
+        - ca-certificates
+        - sudo
+      when: "item not in ansible_facts.packages"
+      tags: [bootstrap, phase1]
+
+    # ─── Phase 2: User Bootstrap ─────────────────────────────────────────────
+    - name: "P2 | Create system users"
+      ansible.builtin.user:
+        name: "{{ item }}"
+        groups: sudo
+        shell: /bin/bash
+        create_home: true
+      loop:
+        - automation
+        - dev_admin
+        - breakglass
+      tags: [bootstrap, phase2]
+
+    - name: "P2 | Create ~/.ssh directories"
+      ansible.builtin.file:
+        path: "/home/{{ item }}/.ssh"
+        state: directory
+        mode: "0700"
+        owner: "{{ item }}"
+        group: "{{ item }}"
+      loop:
+        - automation
+        - dev_admin
+        - breakglass
+      tags: [bootstrap, phase2]
+
+    - name: "P2 | Deploy SSH keys from vault"
+      ansible.builtin.copy:
+        content: "{{ ssh_public_keys[item] }}\n"
+        dest: "/home/{{ item }}/.ssh/authorized_keys"
+        owner: "{{ item }}"
+        group: "{{ item }}"
+        mode: "0600"
+      loop:
+        - automation
+        - dev_admin
+        - breakglass
+      tags: [bootstrap, phase2]
+
+    - name: "P2 | Deploy sudoers fragments"
+      ansible.builtin.copy:
+        content: "{{ item.rule }}\n"
+        dest: "/etc/sudoers.d/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: visudo -cf %s
+      loop:
+        - name: automation
+          rule: "automation ALL=(ALL:ALL) NOPASSWD:ALL"
+        - name: dev_admin
+          rule: "dev_admin ALL=(ALL:ALL) ALL"
+        - name: breakglass
+          rule: "breakglass ALL=(ALL:ALL) ALL"
+      tags: [bootstrap, phase2]
+
+    # ─── Phase 3: SSH Hardening ──────────────────────────────────────────────
+    - name: "P3 | Deploy sshd hardening drop-in"
+      ansible.builtin.copy:
+        content: |
+          PermitRootLogin no
+          PasswordAuthentication no
+          PubkeyAuthentication yes
+          AuthorizedKeysFile .ssh/authorized_keys
+        dest: /etc/ssh/sshd_config.d/10-bootstrap-hardening.conf
+        owner: root
+        group: root
+        mode: "0644"
+        validate: /usr/sbin/sshd -t -f %s
+      notify: Reload sshd
+      tags: [bootstrap, phase3]
+
+    # ─── Phase 4: Verification ───────────────────────────────────────────────
+    - name: "P4 | Test SSH as automation user"
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=accept-new \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -i ~/.ssh/id_ansible_ed25519 \
+            automation@{{ hostvars[inventory_hostname]['ansible_host'] }} whoami
+      register: _ssh_check
+      changed_when: false
+      failed_when: "'automation' not in _ssh_check.stdout"
+      delegate_to: localhost
+      tags: [bootstrap, phase4]
+
+    - name: "P4 | Test sudo as automation user"
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=accept-new \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -i ~/.ssh/id_ansible_ed25519 \
+            automation@{{ hostvars[inventory_hostname]['ansible_host'] }} sudo -n whoami
+      register: _sudo_check
+      changed_when: false
+      failed_when: "'root' not in _sudo_check.stdout"
+      delegate_to: localhost
+      tags: [bootstrap, phase4]
+
+    - name: "P4 | Mark host as bootstrapped"
+      ansible.builtin.copy:
+        content: ""
+        dest: /etc/bootstrap-complete
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [bootstrap, phase4]

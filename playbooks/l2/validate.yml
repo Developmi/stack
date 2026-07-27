@@ -1,0 +1,386 @@
+---
+# ==============================================================================
+# L2 Validation Playbook
+# ==============================================================================
+# Validates L2 security hardening - read-only, non-fatal.
+# Checks SSH config, authorized_keys, UFW, fail2ban, kernel hardening, Tailscale.
+#
+# Run: ansible-playbook -i inventory/hosts.ini playbooks/l2/validate.yml
+# ==============================================================================
+
+- name: "L2 | Validate Security Hardening"
+  hosts: all
+  become: true
+  gather_facts: true
+  tags: [validate, l2-compliance]
+
+  tasks:
+    # ========================================================================
+    # SSH Configuration
+    # ========================================================================
+
+    - name: "L2 | Read SSH daemon configuration"
+      ansible.builtin.shell: |
+        set -o pipefail
+        cat /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: _sshd_config
+      changed_when: false
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Check SSH PermitRootLogin = no"
+      ansible.builtin.set_fact:
+        _l2_ssh_root: "{{ 'PASS' if _sshd_config.stdout is search('^PermitRootLogin\\s+no', multiline=True) else 'FAIL' }}"
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Check SSH PasswordAuthentication = no"
+      ansible.builtin.set_fact:
+        _l2_ssh_pass: "{{ 'PASS' if _sshd_config.stdout is search('^PasswordAuthentication\\s+no', multiline=True) else 'FAIL' }}"
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Check SSH PubkeyAuthentication enabled"
+      ansible.builtin.set_fact:
+        _l2_ssh_pubkey: >-
+          {{ 'FAIL' if (_sshd_config.stdout is search('^#\\s*PubkeyAuthentication', multiline=True))
+                       and not (_sshd_config.stdout is search('^PubkeyAuthentication\\s+yes', multiline=True))
+             else 'PASS' }}
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # authorized_keys
+    # ========================================================================
+
+    - name: "L2 | Check automation authorized_keys"
+      ansible.builtin.stat:
+        path: /home/automation/.ssh/authorized_keys
+      register: _auth_keys_stat
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Set authorized_keys result"
+      ansible.builtin.set_fact:
+        _l2_auth_keys: "{{ 'PASS' if _auth_keys_stat.stat.exists and _auth_keys_stat.stat.size > 0 else 'FAIL' }}"
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # Firewall (os_firewall_backend: nftables or ufw)
+    # ========================================================================
+
+    - name: "L2 | Check nftables ruleset (Debian 12)"
+      ansible.builtin.shell: |
+        set -o pipefail
+        nft list ruleset 2>/dev/null | wc -l
+      args:
+        executable: /bin/bash
+      register: _nft_ruleset
+      changed_when: false
+      when: os_firewall_backend == 'nftables'
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Check UFW status (Ubuntu)"
+      ansible.builtin.shell: |
+        set -o pipefail
+        ufw status verbose
+      args:
+        executable: /bin/bash
+      register: _ufw_status
+      changed_when: false
+      when: os_firewall_backend == 'ufw'
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Set firewall result"
+      ansible.builtin.set_fact:
+        _l2_firewall: >-
+          {{ 'PASS' if (os_firewall_backend == 'nftables' and (_nft_ruleset.stdout | trim | int) > 0)
+                       or (os_firewall_backend == 'ufw' and 'Status: active' in _ufw_status.stdout)
+             else 'FAIL' }}
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # fail2ban (3-step: dpkg → systemctl → client)
+    # ========================================================================
+
+    - name: "L2 | Check fail2ban - package installed"
+      ansible.builtin.command: dpkg -l fail2ban
+      register: _f2b_pkg
+      changed_when: false
+      failed_when: false
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Populate service facts"
+      ansible.builtin.service_facts: {}
+      when: _f2b_pkg.rc == 0
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Check fail2ban - client status"
+      ansible.builtin.command: fail2ban-client status
+      register: _f2b_client
+      changed_when: false
+      failed_when: false
+      when:
+        - _f2b_pkg.rc == 0
+        - ansible_facts.services['fail2ban.service'] is defined
+        - ansible_facts.services['fail2ban.service'].state == 'running'
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Set fail2ban result"
+      ansible.builtin.set_fact:
+        _l2_fail2ban: >-
+          {{ 'NOT INSTALLED' if _f2b_pkg.rc != 0
+             else 'NOT RUNNING' if ansible_facts.services['fail2ban.service'] is not defined or ansible_facts.services['fail2ban.service'].state != 'running'
+             else 'PASS' if _f2b_client.rc == 0
+             else 'FAIL' }}
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # Kernel Hardening
+    # ========================================================================
+
+    - name: "L2 | Check tcp_syncookies"
+      ansible.builtin.shell: |
+        set -o pipefail
+        cat /proc/sys/net/ipv4/tcp_syncookies
+      args:
+        executable: /bin/bash
+      register: _syncookies
+      changed_when: false
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Set tcp_syncookies result"
+      ansible.builtin.set_fact:
+        _l2_syncookies: "{{ 'PASS' if _syncookies.stdout | trim == '1' else 'FAIL (' + (_syncookies.stdout | trim) + ')' }}"
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Check kptr_restrict"
+      ansible.builtin.shell: |
+        set -o pipefail
+        cat /proc/sys/kernel/kptr_restrict
+      args:
+        executable: /bin/bash
+      register: _kptr
+      changed_when: false
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Set kptr_restrict result"
+      ansible.builtin.set_fact:
+        _l2_kptr: "{{ 'PASS' if (_kptr.stdout | trim | int) > 0 else 'FAIL' }}"
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # SSH Crypto Hardening
+    # ========================================================================
+
+    - name: "L2 | Check SSH Ciphers configured"
+      ansible.builtin.set_fact:
+        _l2_ssh_ciphers: >-
+          {{ 'PASS' if _sshd_config.stdout is search('^Ciphers\\s+', multiline=True) else 'FAIL' }}
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Check SSH MACs configured"
+      ansible.builtin.set_fact:
+        _l2_ssh_macs: >-
+          {{ 'PASS' if _sshd_config.stdout is search('^MACs\\s+', multiline=True) else 'FAIL' }}
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Check SSH KexAlgorithms configured"
+      ansible.builtin.set_fact:
+        _l2_ssh_kex: >-
+          {{ 'PASS' if _sshd_config.stdout is search('^KexAlgorithms\\s+', multiline=True) else 'FAIL' }}
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # /proc hidepid=2
+    # ========================================================================
+
+    - name: "L2 | Check /proc mounted with hidepid=2"
+      ansible.builtin.shell: |
+        set -o pipefail
+        mount | grep -F "proc on /proc"
+      args:
+        executable: /bin/bash
+      register: _proc_mount
+      changed_when: false
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Set hidepid result"
+      ansible.builtin.set_fact:
+        _l2_hidepid: "{{ 'PASS' if 'hidepid=2' in _proc_mount.stdout else 'FAIL' }}"
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # pam_pwquality
+    # ========================================================================
+
+    - name: "L2 | Check pam_pwquality in common-password"
+      ansible.builtin.shell: |
+        set -o pipefail
+        grep -E "^password\s+requisite\s+pam_pwquality\.so" /etc/pam.d/common-password
+      args:
+        executable: /bin/bash
+      register: _pam_pwq
+      changed_when: false
+      failed_when: false
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Set pam_pwquality result"
+      ansible.builtin.set_fact:
+        _l2_pam_pwq: "{{ 'PASS' if _pam_pwq.rc == 0 else 'FAIL' }}"
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # Tailscale
+    # ========================================================================
+
+    - name: "L2 | Check Tailscale installed"
+      ansible.builtin.command: dpkg -l tailscale
+      register: _tailscale_check
+      changed_when: false
+      failed_when: false
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Set Tailscale result"
+      ansible.builtin.set_fact:
+        _l2_tailscale: "{{ 'PASS' if _tailscale_check.rc == 0 else 'NOT INSTALLED' }}"
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # Tailscale SSH disabled check
+    # ========================================================================
+
+    - name: "L2 | Check Tailscale SSH is disabled"
+      ansible.builtin.shell: |
+        set -o pipefail
+        tailscale status --json 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: _ts_ssh_check
+      changed_when: false
+      failed_when: false
+      when: _tailscale_check.rc == 0
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Set Tailscale SSH disabled result"
+      ansible.builtin.set_fact:
+        _l2_ts_ssh_disabled: >-
+          {{ 'PASS' if _tailscale_check.rc != 0
+             else 'SKIP' if _ts_ssh_check is skipped
+             else 'PASS' if not ((_ts_ssh_check.stdout | default('{}') | from_json).Self.SSHEnabled | default(true))
+             else 'FAIL'
+          }}
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # SSH public reachability check
+    # ========================================================================
+
+    - name: "L2 | Check SSH rules in nftables"
+      ansible.builtin.shell: |
+        set -o pipefail
+        nft list ruleset 2>/dev/null | grep 'tcp dport 22'
+      args:
+        executable: /bin/bash
+      register: _nft_ssh_rules
+      changed_when: false
+      failed_when: false
+      when:
+        - _tailscale_check.rc == 0
+        - os_firewall_backend == 'nftables'
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Check SSH rules in UFW"
+      ansible.builtin.shell: |
+        set -o pipefail
+        ufw status verbose 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: _ufw_ssh_check
+      changed_when: false
+      failed_when: false
+      when:
+        - _tailscale_check.rc == 0
+        - os_firewall_backend == 'ufw'
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Set SSH public reachability result"
+      ansible.builtin.set_fact:
+        _l2_ssh_public: >-
+          {{ 'SKIP' if nist_bootstrap | default(false)
+             else 'SKIP' if _tailscale_check.rc != 0
+             else 'PASS' if os_firewall_backend == 'nftables' and 'iifname "tailscale0" tcp dport 22 accept' in (_nft_ssh_rules.stdout | default(''))
+             else 'PASS' if os_firewall_backend == 'ufw' and ('DROP' in (_ufw_ssh_check.stdout | default('')) and ('22' in (_ufw_ssh_check.stdout | default(''))))
+             else 'WARN' if os_firewall_backend == 'nftables' and (_nft_ssh_rules is skipped)
+             else 'WARN' if os_firewall_backend == 'ufw' and (_ufw_ssh_check is skipped)
+             else 'FAIL'
+          }}
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # ansible_host in Tailscale subnet check
+    # ========================================================================
+
+    - name: "L2 | Get Tailscale IPv4 for subnet check"
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - ip
+          - "-4"
+      register: _ts_ip_check
+      changed_when: false
+      failed_when: false
+      when: _tailscale_check.rc == 0
+      tags: [validate, l2-hardening]
+
+    - name: "L2 | Set ansible_host in Tailscale subnet result"
+      ansible.builtin.set_fact:
+        _l2_ts_subnet: >-
+          {{ 'SKIP' if _tailscale_check.rc != 0
+             else 'PASS' if ansible_host is match('^100\.([6-9][0-9]\.[0-9]+\.[0-9]+|1[0-1][0-9]\.[0-9]+\.[0-9]+|12[0-7]\.[0-9]+\.[0-9]+)$')
+             else 'WARN'
+          }}
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # Post-bootstrap public SSH gate check
+    # ========================================================================
+
+    - name: "L2 | Set post-bootstrap SSH gate result"
+      ansible.builtin.set_fact:
+        _l2_bootstrap_gate: >-
+          {{ 'SKIP' if _tailscale_check.rc != 0
+             else 'PASS' if (nist_bootstrap | default(false)) and _l2_ssh_public == 'SKIP'
+             else 'PASS' if not (nist_bootstrap | default(false)) and _l2_ssh_public in ['PASS', 'WARN']
+             else 'FAIL'
+          }}
+      tags: [validate, l2-hardening]
+
+    # ========================================================================
+    # Summary
+    # ========================================================================
+
+    - name: "L2 | Print validation summary"
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+            L2 VALIDATION RESULTS - {{ inventory_hostname }}
+          ============================================================
+            SSH PermitRootLogin no         : {{ _l2_ssh_root | default('UNKNOWN') }}
+            SSH PasswordAuthentication no  : {{ _l2_ssh_pass | default('UNKNOWN') }}
+            SSH PubkeyAuthentication       : {{ _l2_ssh_pubkey | default('UNKNOWN') }}
+            authorized_keys present        : {{ _l2_auth_keys | default('UNKNOWN') }}
+            Firewall active                : {{ _l2_firewall | default('UNKNOWN') }}
+            fail2ban running               : {{ _l2_fail2ban | default('UNKNOWN') }}
+            tcp_syncookies = 1             : {{ _l2_syncookies | default('UNKNOWN') }}
+            kptr_restrict > 0              : {{ _l2_kptr | default('UNKNOWN') }}
+            SSH Ciphers configured         : {{ _l2_ssh_ciphers | default('UNKNOWN') }}
+            SSH MACs configured            : {{ _l2_ssh_macs | default('UNKNOWN') }}
+            SSH KexAlgorithms configured   : {{ _l2_ssh_kex | default('UNKNOWN') }}
+            /proc mounted hidepid=2        : {{ _l2_hidepid | default('UNKNOWN') }}
+            pam_pwquality configured       : {{ _l2_pam_pwq | default('UNKNOWN') }}
+            tailscale installed            : {{ _l2_tailscale | default('UNKNOWN') }}
+            Tailscale SSH disabled          : {{ _l2_ts_ssh_disabled | default('UNKNOWN') }}
+            SSH public reachable            : {{ _l2_ssh_public | default('UNKNOWN') }}
+            ansible_host in Tailscale subnet: {{ _l2_ts_subnet | default('UNKNOWN') }}
+            Post-bootstrap public SSH gate  : {{ _l2_bootstrap_gate | default('UNKNOWN') }}
+          ============================================================
+          All checks completed. No changes made.
+      tags: [validate, l2-hardening]

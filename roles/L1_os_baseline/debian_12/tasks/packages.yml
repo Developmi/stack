@@ -1,0 +1,28 @@
+---
+# ==============================================================================
+# L1 OS Baseline - Debian 12 - Package Installation
+# ==============================================================================
+# validate-before-act: skip-if-present guards on all installs.
+# Installs ufw (package only, NO service enable - L2 responsibility),
+# apt-listchanges, needrestart, unattended-upgrades, AppArmor profiles.
+# ==============================================================================
+
+- name: "L1 | Install security and monitoring packages (Debian 12)"
+  ansible.builtin.apt:
+    name:
+      - ufw
+      - apt-listchanges
+      - needrestart
+      - unattended-upgrades
+      - apparmor-profiles
+      - apparmor-utils
+    state: present
+    lock_timeout: "{{ l1_apt_lock_timeout | default(600) }}"
+  when: >
+    ('ufw' not in ansible_facts.packages)
+    or ('apt-listchanges' not in ansible_facts.packages)
+    or ('needrestart' not in ansible_facts.packages)
+    or ('unattended-upgrades' not in ansible_facts.packages)
+    or ('apparmor-profiles' not in ansible_facts.packages)
+    or ('apparmor-utils' not in ansible_facts.packages)
+  tags: [l1-os-baseline, debian]

@@ -1,0 +1,16 @@
+[Unit]
+Description=Database backup (auto-discovered PostgreSQL + MariaDB)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=docker.service network-online.target backup-stack.service
+
+[Service]
+Type=oneshot
+ExecStart={{ backup_script_path }}
+StandardOutput=journal
+StandardError=journal
+User=root
+EnvironmentFile=-/etc/restic/env
+
+[Install]
+WantedBy=multi-user.target

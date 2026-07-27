@@ -1,0 +1,36 @@
+---
+# L1 OS Baseline - Role-level dispatcher
+# Routes to the correct OS-specific sub-role based on ansible facts.
+# general/ tasks apply to ALL OSes; OS-specific folders contain complete tasks.
+
+- name: "L1 | Include general OS baseline tasks"
+  ansible.builtin.include_tasks: general/tasks/main.yml
+  tags: [l1-os-baseline]
+
+- name: "L1 | Include Debian 12 specific tasks"
+  ansible.builtin.include_tasks: debian_12/tasks/main.yml
+  when:
+    - ansible_facts["distribution"] == "Debian"
+    - ansible_facts['distribution_version'] is version("12", ">=")
+    - ansible_facts['distribution_version'] is version("13", "<")
+  tags: [l1-os-baseline, debian]
+
+- name: "L1 | Include Ubuntu 22.04 specific tasks"
+  ansible.builtin.include_tasks: ubuntu_22.04/tasks/main.yml
+  when:
+    - ansible_facts["distribution"] == "Ubuntu"
+    - ansible_facts['distribution_version'] is version("22.04", ">=")
+    - ansible_facts['distribution_version'] is version("24.04", "<")
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Fail on unsupported OS"
+  ansible.builtin.fail:
+    msg: >-
+      Unsupported OS: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}.
+      Supported: Debian 12 (Bookworm), Ubuntu 22.04 (Jammy).
+      See docs/OS_COMPATIBILITY.md.
+  when: >-
+    (ansible_facts["distribution"] == "Debian" and ansible_facts['distribution_version'] is version("12", "<"))
+    or (ansible_facts["distribution"] == "Ubuntu" and ansible_facts['distribution_version'] is version("22.04", "<"))
+    or (ansible_facts["distribution"] not in ["Debian", "Ubuntu"])
+  tags: [l1-os-baseline]

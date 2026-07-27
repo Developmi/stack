@@ -1,0 +1,24 @@
+---
+# Uptime Kuma - Uptime Monitoring (L5)
+name: uptime-kuma
+version: "2.0.2"
+supported_arch: [amd64, arm64]
+target_group: muscle-3
+
+depends_on: []
+
+backup:
+  schedule: "*-*-* 02:00:00"
+  retention_daily: 7
+  retention_weekly: 4
+  retention_monthly: 12
+  db_type: sqlite
+  db_name: uptime_kuma
+
+monitoring:
+  health_endpoint: "/"
+  health_port: 3001
+  scrape_port: 3001
+
+compliance_tags: [nist, si-4, nist, cm-7]
+dr_tier: standard

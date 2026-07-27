@@ -1,0 +1,14 @@
+---
+# L2 Compliance - Sub-role dispatch defaults
+# Each boolean controls whether the corresponding sub-role executes.
+# Override in group_vars or --extra-vars.
+
+l2_security_enabled: true         # SSH hardening, fail2ban, UFW
+l2_user_hardening_enabled: true   # User account hardening
+l2_tailscale_enabled: true        # Tailscale client setup
+l2_crowdsec_enabled: false        # NIST 800-53 SI-4 - opt-in
+l2_compliance_enabled: false      # NIST 800-53 controls - opt-in
+l2_lynis_enabled: false           # Lynis compliance audit - opt-in (NIST AU-12)
+
+# Default: empty user list. Override in group_vars/brain/main.yml or higher.
+user_hardening_users: []

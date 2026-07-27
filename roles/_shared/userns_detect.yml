@@ -1,0 +1,98 @@
+---
+# ponytail: extracted from L4_networking/caddy/tasks/main.yml - single source of truth for userns detection.
+#
+# Shared userns-remap detection include. Replaces 3 independent (and inconsistent)
+# implementations across L3, L4, and L6 with a single parameterized pipeline.
+#
+# Input vars (caller MUST set these before include_tasks):
+#   userns_container_uid  - container's UID (int, e.g. 1337 for caddy, 472 for grafana, 0 for root)
+#   userns_container_gid  - container's GID (int)
+#   userns_output_prefix  - prefix for output facts (string, e.g. "_caddy", "observability", "portainer")
+#
+# Output facts (set by this include):
+#   {prefix}_userns_enabled   - bool: true when Docker userns-remap is active
+#   {prefix}_userns_gid_offset - int: subordinate GID offset from /etc/subgid; 0 when userns not enabled
+#   {prefix}_effective_uid    - int: userns_container_uid + uid_offset (host-side owner for bind-mounts)
+#   {prefix}_effective_gid    - int: userns_container_gid + gid_offset (host-side group for bind-mounts)
+#
+# Graceful degradation: when Docker is absent or userns not enabled, all facts resolve
+# to identity values (enabled=false, offset=0, uid/gid = container values). No task fails.
+
+- name: Detect Docker userns-remap status via SecurityOptions
+  ansible.builtin.command:
+    cmd: "docker info --format '{{ '{{' }}json .SecurityOptions{{ '}}' }}'"
+  register: _docker_security_opts
+  changed_when: false
+  failed_when: false
+  tags: [userns, l3-observability, l4-networking, l6-runtime]
+
+- name: Slurp Docker daemon.json for userns-remap configuration
+  ansible.builtin.slurp:
+    src: /etc/docker/daemon.json
+  register: _docker_daemon_json
+  failed_when: false
+  changed_when: false
+  when: "'name=userns' in (_docker_security_opts.stdout | default(''))"
+  tags: [userns, l3-observability, l4-networking, l6-runtime]
+
+- name: Resolve effective userns-remap account name
+  ansible.builtin.set_fact:
+    _docker_userns_account: >-
+      {{
+        (
+          ((_docker_daemon_json.content | default('') | b64decode | from_json).get('userns-remap', 'default'))
+          if (_docker_daemon_json.content is defined and (_docker_daemon_json.content | length > 0))
+          else 'default'
+        )
+      }}
+  when: "'name=userns' in (_docker_security_opts.stdout | default(''))"
+  tags: [userns, l3-observability, l4-networking, l6-runtime]
+
+- name: Normalize userns-remap account to lookup key
+  ansible.builtin.set_fact:
+    _docker_userns_lookup_user: >-
+      {{
+        'dockremap'
+        if (_docker_userns_account | lower) in ['default', '']
+        else ((_docker_userns_account.split(':'))[0])
+      }}
+  when: "'name=userns' in (_docker_security_opts.stdout | default(''))"
+  tags: [userns, l3-observability, l4-networking, l6-runtime]
+
+- name: Resolve userns subuid offset from /etc/subuid
+  ansible.builtin.command:
+    cmd: "awk -F: -v u={{ _docker_userns_lookup_user | quote }} '$1==u {print $2; exit}' /etc/subuid"
+  register: _dockremap_subuid_offset
+  changed_when: false
+  failed_when: false
+  when: "'name=userns' in (_docker_security_opts.stdout | default(''))"
+  tags: [userns, l3-observability, l4-networking, l6-runtime]
+
+- name: Resolve userns subgid offset from /etc/subgid
+  ansible.builtin.command:
+    cmd: "awk -F: -v u={{ _docker_userns_lookup_user | quote }} '$1==u {print $2; exit}' /etc/subgid"
+  register: _dockremap_subgid_offset
+  changed_when: false
+  failed_when: false
+  when: "'name=userns' in (_docker_security_opts.stdout | default(''))"
+  tags: [userns, l3-observability, l4-networking, l6-runtime]
+
+- name: Assert userns offsets were discovered
+  ansible.builtin.assert:
+    that:
+      - (_dockremap_subuid_offset.stdout | default('') | trim | length) > 0
+      - (_dockremap_subgid_offset.stdout | default('') | trim | length) > 0
+    fail_msg: >-
+      Docker userns-remap is enabled but subuid/subgid offsets for {{ _docker_userns_lookup_user }}
+      were not found. Verify /etc/subuid and /etc/subgid entries.
+    success_msg: "Docker userns offsets detected for {{ _docker_userns_lookup_user }}."
+  when: "'name=userns' in (_docker_security_opts.stdout | default(''))"
+  tags: [userns, l3-observability, l4-networking, l6-runtime]
+
+- name: Set userns detection output facts
+  ansible.builtin.set_fact:
+    "{{ userns_output_prefix }}_userns_enabled": "{{ 'name=userns' in (_docker_security_opts.stdout | default('')) }}"
+    "{{ userns_output_prefix }}_userns_gid_offset": "{{ (_dockremap_subgid_offset.stdout | default('0') | trim | int) }}"
+    "{{ userns_output_prefix }}_effective_uid": "{{ (_dockremap_subuid_offset.stdout | default('0') | trim | int) + (userns_container_uid | int) }}"
+    "{{ userns_output_prefix }}_effective_gid": "{{ (_dockremap_subgid_offset.stdout | default('0') | trim | int) + (userns_container_gid | int) }}"
+  tags: [userns, l3-observability, l4-networking, l6-runtime]

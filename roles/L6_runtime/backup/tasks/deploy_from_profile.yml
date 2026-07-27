@@ -1,0 +1,49 @@
+---
+# Sub-task: process one profile file for backup timers
+# Included by main.yml via with_fileglob over apps/*/profile.yml.
+# Loads profile vars, deploys DB timer+service when backup key is defined,
+# and enables/starts the timer.
+
+- name: "Load profile variables"
+  ansible.builtin.include_vars:
+    file: "{{ item }}"
+    name: _p
+  tags: [l6-runtime, backup_timers]
+  # ponytail: systemd validates OnCalendar itself, regex assert was too restrictive
+
+- name: "Deploy backup-db-{{ _p.name }}.timer"
+  ansible.builtin.template:
+    src: backup-db.timer.j2
+    dest: "/etc/systemd/system/backup-db-{{ _p.name }}.timer"
+    mode: "0644"
+  notify: reload systemd
+  # skip none/custom - these apps don't have a dump-able DB engine
+  when:
+    - enable_backups | default(false) | bool
+    - _p.backup is defined
+    - _p.backup.db_type | default('') not in ['none', 'custom']
+  tags: [l6-runtime, backup_timers]
+
+- name: "Deploy backup-db-{{ _p.name }}.service"
+  ansible.builtin.template:
+    src: backup-db.service.j2
+    dest: "/etc/systemd/system/backup-db-{{ _p.name }}.service"
+    mode: "0644"
+  notify: reload systemd
+  when:
+    - enable_backups | default(false) | bool
+    - _p.backup is defined
+    - _p.backup.db_type | default('') not in ['none', 'custom']
+  tags: [l6-runtime, backup_timers]
+
+- name: "Enable and start backup-db-{{ _p.name }}.timer"
+  ansible.builtin.systemd:
+    name: "backup-db-{{ _p.name }}.timer"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - enable_backups | default(false) | bool
+    - _p.backup is defined
+    - _p.backup.db_type | default('') not in ['none', 'custom']
+  tags: [l6-runtime, backup_timers]

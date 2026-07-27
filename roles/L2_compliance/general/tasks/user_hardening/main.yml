@@ -1,0 +1,38 @@
+---
+# ==============================================================================
+# USER HARDENING ROLE - L2 Compliance Dispatcher (NIST AC-2, AC-6)
+# ==============================================================================
+# Pre-flight: assert ansible_user is root/ubuntu (not yet transitioned).
+# Then: create users → deploy SSH keys → configure sudoers.
+# Tags: functional + l2-compliance + NIST control tags.
+# ==============================================================================
+
+- name: "Include user hardening defaults (user_hardening_users)"
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/general/defaults/user_hardening.yml"
+  tags: [always]
+
+- name: "AC-2 | Skip - already running as automation user"
+  ansible.builtin.meta: end_play
+  when: (ansible_user | default('')) == 'automation'
+  tags: [always]
+
+- name: "AC-2 | Pre-flight: Verify connection user is root or ubuntu"
+  ansible.builtin.assert:
+    that:
+      - (ansible_user | default(ansible_env.USER | default('unknown'))) in ['root', 'ubuntu']
+    fail_msg: "Connection user {{ ansible_user | default(ansible_env.USER) }} is not root or ubuntu. This role must run as root/ubuntu."
+    success_msg: "Connection user: root/ubuntu - safe to create users"
+  tags: [users, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Create system users (dev_admin, automation, breakglass)"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/user_hardening/create_users.yml"
+  tags: [users, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Deploy SSH public keys from vault"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/user_hardening/deploy_keys.yml"
+  tags: [users, l2-compliance, nist, ac-2]
+
+- name: "AC-6 | Configure sudoers fragments"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/user_hardening/configure_sudoers.yml"
+  tags: [users, l2-compliance, nist, ac-6]

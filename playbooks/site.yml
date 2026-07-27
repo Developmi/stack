@@ -1,0 +1,19 @@
+---
+# ==============================================================================
+# Developmi Stack - site.yml (Meta-Playbook)
+# ==============================================================================
+# Meta-playbook that chains atomic per-layer playbooks:
+#   L1 (OS Baseline) → L2 (Hardening · Lockdown)
+#
+# Each layer playbook is independently runnable.
+# Run: uv run ansible-playbook -i inventory/hosts.ini playbooks/site.yml --ask-vault-pass
+# ==============================================================================
+
+- name: Import L1 OS baseline playbook
+  ansible.builtin.import_playbook: l1/baseline.yml
+
+- name: Import L2 compliance hardening playbook
+  ansible.builtin.import_playbook: l2/hardening.yml
+
+- name: Import L2 post-bootstrap lockdown playbook
+  ansible.builtin.import_playbook: l2/lockdown.yml

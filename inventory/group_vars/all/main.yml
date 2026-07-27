@@ -1,0 +1,213 @@
+---
+# Global network defaults
+# Source of truth for the private management overlay used by non-bootstrap playbooks.
+# Set this if you use Headscale or another VPN subnet for remote administration.
+tailscale_subnet: "100.64.0.0/10"
+
+# Observability stack network (for VictoriaMetrics/Grafana/Loki)
+observability_stack_network_name: "public_net"
+observability_stack_network_external: true
+
+# Portainer stack environment defaults for observability compose
+observability_stack_victoria_port: "8428:8428"
+observability_stack_loki_port: "3100:3100"
+observability_stack_grafana_port: "3000:3000"
+
+# Observability compose deployment defaults
+observability_compose_pull_policy: "missing" # valid: always, missing, never, policy
+observability_compose_recreate_policy: "auto" # valid: always, never, auto
+observability_compose_wait_timeout: 300
+observability_cadvisor_port: 18080
+
+# Keep dual-stack filtering enabled by default unless your environment is IPv4-only.
+ufw_enable_ipv6: true
+
+# Control persistent Tailscale webclient exposure (:5252).
+tailscale_enable_webclient: false
+
+# Ingress deployment defaults (safe for all hosts)
+ingress_compose_pull_policy: "missing"
+ingress_compose_recreate_policy: "auto"
+ingress_compose_wait_timeout: 120
+
+# UDP buffer sizes for QUIC/HTTP3 (Caddy, Tailscale, etc.)
+net_core_rmem_max: 25000000
+net_core_rmem_default: 25000000
+
+# Kernel/network sysctl hardening (global, non-sensitive)
+net_ipv4_tcp_syncookies: 1
+kernel_randomize_va_space: 2
+net_ipv4_conf_all_rp_filter: 1
+net_ipv4_conf_default_rp_filter: 1
+net_ipv4_icmp_echo_ignore_broadcasts: 1
+net_ipv4_icmp_ignore_bogus_error_responses: 1
+net_ipv4_conf_all_accept_redirects: 0
+net_ipv6_conf_all_accept_redirects: 0
+net_ipv4_conf_all_send_redirects: 0
+net_ipv4_conf_all_accept_source_route: 0
+net_ipv6_conf_all_accept_source_route: 0
+# kernel.exec-shield removed - not present in modern kernels (6.x+)
+
+# Auditd rules file mode (safe)
+auditd_rules_file_mode: "0640"
+
+# =====================
+# File/Directory Modes (safe to expose)
+file_mode_default: "0644" # Used for most config files
+app_data_dir_mode: "0755" # Used for persistent data directories
+# Default mode for directories (used in roles like crowdsec)
+dir_mode_default: "0755"
+# Default mode for sensitive files (e.g., secrets, audit logs)
+file_mode_sensitive: "0600"
+file_mode_exec: "0755"
+
+# =====================
+# Service/User/Group IDs (safe to expose)
+container_user_nobody: "65534"
+container_group_nogroup: "65534"
+
+# =====================
+# APT lock resolution
+# Set to true to force-kill ANY process holding APT locks (useful when a stuck
+# apt-get/dpkg process can't be waited out). Default: only processes running
+# longer than 15 minutes are auto-cleaned (stale detection).
+# Usage: --extra-vars "apt_force_cleanup=true"
+apt_force_cleanup: false
+
+# Resource Limits (safe to expose)
+systemd_nofile_soft: 65536
+systemd_nofile_hard: 65536
+systemd_nproc_soft: 65536
+systemd_nproc_hard: 65536
+
+# =============================================================================
+# L1-L2 HARDENING
+# =============================================================================
+# 5-layer variable hierarchy (ADR-03): clients > app >
+#   {brain,muscle,local} > all > role defaults.
+# Every tunable below has a default - override at the appropriate layer.
+
+# ─── OS Detection & Normalization ────────────────────────────────────────────
+# _os_family normalizes Pop OS → Ubuntu before any L2+ roles execute.
+# Used by downstream dispatchers (firewall, packages, etc.).
+_os_family: "{{ 'Ubuntu' if ansible_facts['distribution'] in ['Pop', 'Pop!_OS'] else ansible_facts['os_family'] }}"
+
+# os_firewall_backend selects the OS-appropriate firewall:
+#   - Ubuntu / Pop OS → ufw
+#   - Debian 12+        → nftables
+# Override per host if you need a different backend.
+os_firewall_backend: "{{ 'nftables' if (_os_family == 'Debian' and ansible_facts['distribution_major_version'] | int >= 12) else 'ufw' }}"
+
+# ─── Hardening Profile Dispatcher ────────────────────────────────────────────
+# server:      strict firewalls, short fail2ban bans, CrowdSec enforcement
+# workstation: lenient firewalls, longer fail2ban bans, CrowdSec detection_only
+hardening_profile: server
+
+# ─── Network & Access ────────────────────────────────────────────────────────
+# CIDR range from which administrative SSH is permitted.
+# Default: Tailscale overlay (RFC 6598). Override for non-Tailscale deployments.
+admin_cidr: "100.64.0.0/10"
+
+# SSH access sources - shared between nftables and sshd_config
+# Must match LAYER_BOUNDARIES.md §L2 Promise 5
+ssh_allowed_sources: "{{ admin_cidr }}"
+
+# Port whitelist for firewall (ufw allow / nftables accept).
+# SSH (22) is NOT here - handled separately with source restrictions
+# (Tailscale + private subnets only). Add application ports here instead.
+allowed_ports: []
+
+# ─── fail2ban (brute-force protection) ──────────────────────────────────────
+# bantime in seconds (3600 = 1 hour). Workstations override to 600 (10 min).
+fail2ban_bantime: 3600
+
+# maxretry before ban. Server default 3, workstation default 5.
+fail2ban_maxretry: 3
+
+# ─── CrowdSec (collaborative IPS) ────────────────────────────────────────────
+# enforcement:      block at firewall level
+# detection_only:   log + alert, no blocking
+crowdsec_mode: enforcement
+
+# ─── Kernel Hardening (sysctl) ───────────────────────────────────────────────
+kernel_kptr_restrict: 2       # /proc/sys/kernel/kptr_restrict - NIST CM-7
+kernel_dmesg_restrict: 1      # /proc/sys/kernel/dmesg_restrict - NIST CM-7
+# ─── SSH Crypto Hardening (CIS 5.2.14-5.2.16) ────────────────────────────────
+# L2 compliance: enforced by ssh_hardening.yml. Override per-host if needed.
+ssh_ciphers: "chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
+ssh_macs: "hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256"
+ssh_kex_algorithms: "curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha256"
+
+# IPv6 privacy extensions (tempaddr = 2 enables RFC 4941 privacy addresses)
+net_ipv6_conf_all_use_tempaddr: 2
+net_ipv6_conf_default_use_tempaddr: 2
+
+# ─── Bootstrap gate (remove-tailscale-ssh) ────────────────────────────────────
+# nist_bootstrap controls whether public SSH is temporarily allowed
+# during first deployment. Set to true ONLY via --extra-vars during
+# initial make deploy. Default false (locked down).
+#   true  → firewall allows SSH from controller_ip on all interfaces
+#   false → SSH DROPped on all non-tailscale0 interfaces (steady-state)
+# WARNING: Do NOT set this true in a vars file. Always pass as -e.
+nist_bootstrap: false
+
+# controller_ip is the Ansible controller's source IP, used during
+# bootstrap when nist_bootstrap=true. Detected from SSH_CLIENT
+# environment variable (set by SSH daemon on the target node).
+# Falls back to the explicitly passed -e controller_ip=<ip> if
+# SSH_CLIENT is unavailable (e.g., local connection via CLI).
+# NOTE: ansible_host is the TARGET node's IP, NOT the controller's -
+# do NOT use it as the controller_ip.
+controller_ip: "{{ (ansible_env.SSH_CLIENT | default('')).split(' ')[0] | default('undefined') }}"
+
+# l2_tailscale_subnet_router enables IP forwarding for nodes that
+# act as Tailscale subnet routers. Default false (no subnet routing).
+l2_tailscale_subnet_router: false
+
+# =============================================================================
+# L4 NETWORKING / EDGE
+# =============================================================================
+# Pluggable reverse proxy backend selection. Default: caddy.
+# Future backends (traefik, nginx) share the same ingress_services schema.
+reverse_proxy_backend: caddy
+
+# Multi-tenant ingress routing catalog. Each entry maps a client's domain
+# to an upstream backend with WAF and cert isolation.
+# Override in inventory/group_vars/clients/*/vars.yml.
+ingress_services: []
+
+# Default WAF mode for services without an explicit waf_mode.
+# enforcement: block violations (return 403)
+# detection_only: log violations but forward request (safe default for rollout)
+waf_mode_default: detection_only
+
+# =====================
+# BACKUP DEFAULTS (Phase 04)
+# Non-secret defaults - secrets are in secrets.yml (vault-encrypted)
+backup_dump_dir: "/srv/backup/dumps"
+backup_keep_daily: 7
+backup_keep_weekly: 4
+backup_keep_monthly: 12
+
+# =============================================================================
+# L6 RUNTIME ADAPTER
+# =============================================================================
+# Manager: Portainer is optional per ADR-07 (Engine/Manager Decoupling).
+# Set to true to deploy Portainer BE as a stack on top of Engine.
+enable_portainer: false
+
+# ==============================================================================
+# Tailscale Mesh VPN - Installation Variables
+# ==============================================================================
+# Version: v1.98.9 (latest verified)
+# Docs: https://tailscale.com/changelog
+tailscale_version: "1.98.9"
+tailscale_gpg_key_url_debian: "https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg"
+tailscale_gpg_key_url_ubuntu: "https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg"
+tailscale_keyring_path: "/usr/share/keyrings/tailscale-archive-keyring.gpg"
+tailscale_repo_list_path: "/etc/apt/sources.list.d/tailscale.list"
+
+# /proc hidepid=2 reader group (node_exporter, etc.)
+# GID is auto-assigned by Ansible group task, then resolved via getent.
+# No hardcoded GID - value below is the group name only.
+proc_readers_group: proc_readers

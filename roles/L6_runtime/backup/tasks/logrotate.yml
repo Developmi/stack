@@ -1,0 +1,24 @@
+# ---
+# COMPLIANCE WARNING:
+# Logrotate configuration for Restic backup logs.
+# /var/log/restic/backup.log contains timestamps and snapshot metadata.
+# Rotation: daily, 30 copies, compressed. No credentials are logged.
+# ---
+---
+- name: "Ensure log directory exists"
+  ansible.builtin.file:
+    path: /var/log/restic
+    state: directory
+    mode: "0750"
+    owner: root
+    group: root
+  tags: [l6-runtime, stack_backup, restic]
+
+- name: "Deploy logrotate configuration for Restic backups"
+  ansible.builtin.template:
+    src: restic-backup.logrotate.j2
+    dest: /etc/logrotate.d/restic-backup
+    mode: "0644"
+    owner: root
+    group: root
+  tags: [l6-runtime, stack_backup, restic]

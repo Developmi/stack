@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# WAF - Per-Service Mode Validation
+# ==============================================================================
+# Tags: l4-networking, waf
+#
+# WAF config and OWASP CRS rules are baked into the caddy-waf image.
+# This file only validates per-service waf_mode settings.
+# See: roles/L4_networking/caddy/templates/Caddyfile.j2 for WAF directives.
+# ==============================================================================
+
+- name: Preflight | Validate waf_mode on each service
+  ansible.builtin.assert:
+    that:
+      - item.waf_mode | default(waf_mode_default) in ['enforcement', 'detection_only']
+    fail_msg: >-
+      Invalid waf_mode '{{ item.waf_mode | default('undefined') }}' for {{ item.domain }}.
+      Must be 'enforcement' or 'detection_only'.
+  loop: >-
+    {{
+      ingress_services
+      | selectattr('target_group', 'defined')
+      | selectattr('target_group', 'in', group_names + ([caddy_node_id] if caddy_node_id is defined else []))
+      | selectattr('security_profile', 'defined')
+      | list
+    }}
+  loop_control:
+    label: "{{ item.domain }} - waf_mode={{ item.waf_mode | default(waf_mode_default) }}"
+  tags: [l4-networking, waf]

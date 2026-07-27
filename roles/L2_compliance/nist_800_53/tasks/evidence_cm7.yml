@@ -1,0 +1,48 @@
+---
+# -----------------------------------------------------------------
+# NIST Evidence Collection - opt-in via l2_compliance_enabled: true
+# Set in inventory/group_vars/ or pass -e l2_compliance_enabled=true
+# Evidence output: /srv/evidence/nist/<control-id>/
+# -----------------------------------------------------------------
+# ==============================================================================
+# COMPLIANCE - Evidence Collection: CM-7 (Least Functionality)
+# ==============================================================================
+# Collects: loaded kernel modules (lsmod).
+# Output: /srv/evidence/nist/cm-7/
+# Read-only - no services restarted, no configs modified.
+# ==============================================================================
+
+- name: "CM-7 | Ensure evidence directory exists"
+  ansible.builtin.file:
+    path: /srv/evidence/nist/cm-7
+    state: directory
+    mode: "0755"
+  tags: [compliance, l2-compliance, nist, cm-7]
+
+- name: "CM-7 | Collect loaded kernel modules (lsmod)"
+  ansible.builtin.command: lsmod
+  register: _cm7_lsmod
+  changed_when: false
+  tags: [compliance, l2-compliance, nist, cm-7]
+
+- name: "CM-7 | Write kernel modules evidence"
+  ansible.builtin.copy:
+    dest: /srv/evidence/nist/cm-7/kernel_modules
+    content: "{{ _cm7_lsmod.stdout }}"
+    mode: "0640"
+  tags: [compliance, l2-compliance, nist, cm-7]
+
+- name: "CM-7 | Append classification report to evidence"
+  ansible.builtin.blockinfile:
+    path: /srv/evidence/nist/cm-7/kernel_modules
+    marker: "# {mark} CM-7 CLASSIFICATION"
+    block: |
+      === Kernel Module Classification ===
+      Loadable (blacklisted): {{ _cm7_loadable | default([]) | join(', ') }}
+      Builtin (cannot remove): {{ _cm7_builtin | default([]) | join(', ') }}
+      Missing (not present): {{ _cm7_missing | default([]) | join(', ') }}
+
+      === Verification Status ===
+      Loaded after blacklist: {{ 'NONE - PASS' if (_cm7_loaded.stdout | default('')) == '' else 'FOUND: ' + _cm7_loaded.stdout }}
+    mode: "0640"
+  tags: [compliance, l2-compliance, nist, cm-7]

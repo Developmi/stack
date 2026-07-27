@@ -1,0 +1,30 @@
+---
+# =============================================================================
+# BRAIN SERVER - FIREWALL CONFIGURATION
+# =============================================================================
+# Brain-specific firewall variables (Cluster Manager node)
+# Automatically applied to all hosts in [brain] group
+# =============================================================================
+
+# --- SSH Access ---
+firewall_allow_ssh_public: true
+firewall_ssh_rate_limit: true
+firewall_ssh_rate_limit_connections: "10/minute"
+
+# --- Web Traffic ---
+firewall_allow_http: true
+firewall_allow_https: true
+
+# --- Docker Cluster ---
+firewall_allow_docker_ssh: true # Allow containers to access SSH
+firewall_docker_network_range: "172.16.0.0/12"
+
+# =============================================================================
+# ROLE-SPECIFIC BEHAVIOR
+# =============================================================================
+# Brain servers are:
+# - Docker Cluster Manager nodes
+# - Primary orchestration and control plane
+# - Accessible via public IP with rate limiting (Hetzner backup)
+# - Full VPN access for management via Tailscale
+# =============================================================================

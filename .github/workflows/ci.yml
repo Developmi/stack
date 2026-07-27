@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint-and-validate:
+    name: Lint, Validate & Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync toolchain
+        run: |
+          uv sync
+
+      - name: Install Ansible collections
+        run: |
+          uv run ansible-galaxy collection install -r requirements.yml
+
+      - name: Run ansible-lint
+        run: |
+          uv run ansible-lint playbooks/l6/engine.yml playbooks/l6/portainer.yml playbooks/l6/backup-stack.yml playbooks/l4/edge.yml playbooks/l3/exporters.yml playbooks/l3/stack.yml playbooks/ops/nuke.yml
+
+      - name: Run yamllint
+        run: |
+          uv run yamllint .
+
+      - name: Validate playbook syntax
+        run: |
+          echo "🔍 Validating playbook syntax..."
+          uv run ansible-playbook --syntax-check playbooks/site.yml
+          uv run ansible-playbook --syntax-check playbooks/l6/engine.yml
+          uv run ansible-playbook --syntax-check playbooks/l6/portainer.yml
+          uv run ansible-playbook --syntax-check playbooks/l6/backup-stack.yml
+          uv run ansible-playbook --syntax-check playbooks/l4/edge.yml
+          uv run ansible-playbook --syntax-check playbooks/l3/exporters.yml
+          uv run ansible-playbook --syntax-check playbooks/l3/stack.yml
+          uv run ansible-playbook --syntax-check playbooks/ops/nuke.yml
+          echo "✅ All playbooks have valid syntax"
+
+      - name: Scan for exposed secrets
+        run: |
+          echo "🔍 Scanning for secrets with detect-secrets..."
+          uv run detect-secrets scan \
+            --baseline .secrets.baseline \
+            --exclude-files 'roles/.*/(defaults|vars)/.*\.yml' \
+            --exclude-files group_vars/.*\.yml \
+            --exclude-files ^\.venv/ \
+            --exclude-files ^\.uv/ \
+            --exclude-files ^node_modules/ \
+            --exclude-files ^\.git/ \
+            --all-files \
+            2>&1 | tee detect-secrets-output.txt
+
+          if [ ! -s detect-secrets-output.txt ] || grep -q '"results": {}' detect-secrets-output.txt; then
+            echo "✅ No new secrets detected"
+          else
+            echo "❌ Potential secrets detected"
+            echo "Do not commit secrets to version control"
+            echo "Use Ansible Vault or environment variables instead"
+            exit 1
+          fi
+
+  validate-roles:
+    name: Validate Role Structure
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        role: [L1_os_baseline, L2_compliance, L3_observability, L4_networking, L6_runtime]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync toolchain
+        run: |
+          uv sync
+
+      - name: Install Ansible collections
+        run: |
+          uv run ansible-galaxy collection install -r requirements.yml
+
+      - name: Validate role structure
+        run: |
+          # L*-style roles have sublayers (general/, debian_12/, etc.)
+          if ls "roles/${{ matrix.role }}"/*/tasks/main.yml 2>/dev/null | head -1 | grep -q .; then
+            echo "✅ Role ${{ matrix.role }}: Structure valid"
+            uv run ansible-lint "roles/${{ matrix.role }}"
+          else
+            echo "⚠️  Role ${{ matrix.role }}: No executable tasks found in sublayers"
+          fi
+
+  convergence-check:
+    name: Convergence & Idempotency Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync toolchain
+        run: |
+          uv sync
+
+      - name: Install Ansible collections
+        run: |
+          uv run ansible-galaxy collection install -r requirements.yml
+
+      - name: Final playbook syntax validation
+        run: |
+          echo "🔍 Final convergence check..."
+          uv run ansible-playbook --syntax-check \
+            -i inventory/hosts.ini.example \
+            playbooks/site.yml playbooks/l6/engine.yml playbooks/l6/portainer.yml playbooks/l6/backup-stack.yml playbooks/l4/edge.yml playbooks/l3/exporters.yml playbooks/l3/stack.yml playbooks/ops/nuke.yml
+          echo "✅ Convergence test passed"

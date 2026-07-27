@@ -1,0 +1,162 @@
+# ---
+# COMPLIANCE WARNING:
+# This role references sensitive paths, keys, and user/group settings required for Docker security.
+# Do NOT expose, override, or parametrize these values in group_vars/all. Manage secrets and critical settings in group_vars/all/secrets.yml or vault only.
+# ---
+---
+# =============================================================================
+# DOCKER ENGINE INSTALLATION - Production Grade (Architecture Agnostic)
+# =============================================================================
+# Installs Docker Engine with pinned versions for Docker Cluster
+# Arch auto-detected via ansible_facts['architecture'] fact
+# Supports: Debian 11/12, Ubuntu 22.04/24.04, Pop OS (Ubuntu-based)
+# Versions controlled centrally in group_vars/all/secrets.yml
+# =============================================================================
+
+- name: Normalize Pop OS distribution to Ubuntu (Pop OS is Ubuntu-based)
+  ansible.builtin.set_fact:
+    _docker_distro: "{{ 'Ubuntu' if ansible_facts['distribution'] in ['Pop', 'Pop!_OS'] else ansible_facts['distribution'] }}"
+    _docker_release: "{{ ansible_facts['distribution_release'] }}"
+  when: ansible_facts['distribution'] in ['Ubuntu', 'Debian', 'Pop', 'Pop!_OS']
+  tags: [l6-runtime, docker, compose]
+
+- name: Fail if OS is not a supported Docker distribution
+  ansible.builtin.fail:
+    msg: >
+      Unsupported OS for Docker: {{ ansible_facts['distribution'] }}.
+      Supported: Ubuntu, Debian, Pop OS (all with apt-based Docker repos).
+  when: _docker_distro is not defined
+  tags: [l6-runtime, docker, compose]
+
+- name: Validate docker_version_map is defined
+  ansible.builtin.assert:
+    that:
+      - docker_version_map is defined
+      - docker_version_map[_docker_distro] is defined
+      - docker_version_map[_docker_distro][_docker_release] is defined
+    fail_msg: |
+      docker_version_map must be defined in group_vars/all/secrets.yml
+      Current OS: {{ ansible_facts['distribution'] }} {{ _docker_release }}
+      (normalized to {{ _docker_distro }} for Pop OS compatibility)
+    success_msg: "Docker version: {{ docker_version_map[_docker_distro][_docker_release] }}"
+  tags: [l6-runtime, docker, compose]
+
+- name: Display Docker version to be installed
+  ansible.builtin.debug:
+    msg: "🐳 Docker Engine: {{ docker_version_map[_docker_distro][_docker_release] }}"
+  tags: [l6-runtime, docker, compose]
+
+- name: Remove conflicting packages
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-doc
+      - docker-compose
+      - podman-docker
+      - containerd
+      - runc
+    state: absent
+    purge: true
+    lock_timeout: 600
+  register: apt_remove_conflicting
+  failed_when: false
+  tags: [l6-runtime, docker, compose]
+
+- name: Install prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - python3-docker
+    state: present
+    lock_timeout: 600
+  tags: [l6-runtime, docker, compose]
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+  tags: [l6-runtime, docker, compose]
+
+- name: Add Docker GPG key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ _docker_distro | lower }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+  tags: [l6-runtime, docker, compose]
+
+- name: Add Docker repository (Multi-arch auto-detection)
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: https://download.docker.com/linux/{{ _docker_distro | lower }}
+    suites: "{{ _docker_release }}"
+    components: stable
+    architectures: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_facts['architecture'], ansible_facts['architecture']) }}"
+    signed_by: /etc/apt/keyrings/docker.asc
+    state: present
+  tags: [l6-runtime, docker, compose]
+
+- name: Refresh apt cache safely (Docker install dependency)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 0
+    lock_timeout: 600
+    update_cache_retries: 10
+    update_cache_retry_max_delay: 12
+  tags: [l6-runtime, docker, compose]
+
+- name: Install Docker Engine (Pinned version)
+  ansible.builtin.apt:
+    name:
+      - "docker-ce={{ docker_version_map[_docker_distro][_docker_release] }}"
+      - "docker-ce-cli={{ docker_version_map[_docker_distro][_docker_release] }}"
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    allow_downgrade: true
+    lock_timeout: 600
+  tags: [l6-runtime, docker, compose]
+
+- name: Hold Docker packages to prevent upgrades
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - docker-ce
+    - docker-ce-cli
+  tags: [l6-runtime, docker, compose]
+
+- name: Ensure Docker service is enabled and running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags: [l6-runtime, docker, compose]
+
+- name: Configure Docker daemon options (Production Hardening)
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    mode: "0644"
+  notify: Restart Docker
+  tags: [l6-runtime, docker, compose]
+
+- name: Create Docker garbage collection cron job
+  ansible.builtin.cron:
+    name: "Docker system prune"
+    minute: "0"
+    hour: "3"
+    weekday: "0"
+    job: "/usr/bin/docker system prune -af --filter until=168h >> /var/log/docker-gc.log 2>&1"
+    user: root
+  tags: [l6-runtime, docker, compose]
+
+- name: "✅ Docker installation complete"
+  ansible.builtin.debug:
+    msg: "Docker Engine installed and configured for {{ _docker_distro }} {{ _docker_release }}"
+  tags: [l6-runtime, docker, compose]

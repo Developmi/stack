@@ -1,0 +1,67 @@
+---
+# -----------------------------------------------------------------
+# NIST Evidence Collection - opt-in via l2_compliance_enabled: true
+# Set in inventory/group_vars/ or pass -e l2_compliance_enabled=true
+# Evidence output: /srv/evidence/nist/<control-id>/
+# -----------------------------------------------------------------
+# ==============================================================================
+# COMPLIANCE - Evidence Collection: SC-28 (Data at Rest - LUKS Encryption)
+# ==============================================================================
+# Informational-only check for LUKS-encrypted block devices.
+# No enforcement, no failure. Provides compliance auditors with SC-28 status.
+# ==============================================================================
+
+- name: "SC-28 | Ensure evidence directory exists"
+  ansible.builtin.file:
+    path: /srv/evidence/nist/sc-28
+    state: directory
+    mode: "0755"
+  tags: [compliance, l2-compliance, nist, sc-28]
+
+- name: "SC-28 | Check lsblk availability"
+  ansible.builtin.command: which lsblk
+  register: _sc28_lsblk_available
+  changed_when: false
+  failed_when: false
+  tags: [compliance, l2-compliance, nist, sc-28]
+
+- name: "SC-28 | Check for LUKS-encrypted block devices"
+  ansible.builtin.shell: |
+    set -o pipefail
+    lsblk -f | grep crypto_LUKS || echo "(no LUKS devices found)"
+  args:
+    executable: /bin/bash
+  register: _sc28_luks
+  changed_when: false
+  failed_when: false
+  when: _sc28_lsblk_available.rc == 0
+  tags: [compliance, l2-compliance, nist, sc-28]
+
+- name: "SC-28 | Warn if lsblk unavailable"
+  ansible.builtin.debug:
+    msg: "WARNING: lsblk unavailable - cannot check LUKS encryption status"
+  when: _sc28_lsblk_available.rc != 0
+  tags: [compliance, l2-compliance, nist, sc-28]
+
+- name: "SC-28 | Display LUKS encryption status"
+  ansible.builtin.debug:
+    msg: >-
+      SC-28 | {% if _sc28_luks.stdout is defined and _sc28_luks.stdout != '' and _sc28_luks.stdout != '(no LUKS devices found)' %}
+      LUKS encryption DETECTED on:
+      {{ _sc28_luks.stdout }}
+      {% else %}
+      No LUKS-encrypted block devices detected
+      {% endif %}
+  when: _sc28_lsblk_available.rc == 0
+  tags: [compliance, l2-compliance, nist, sc-28]
+
+- name: "SC-28 | Write LUKS status evidence"
+  ansible.builtin.copy:
+    dest: /srv/evidence/nist/sc-28/luks_status
+    content: |
+      === SC-28 Data at Rest - LUKS Encryption Status ===
+      {{ _sc28_luks.stdout | default('lsblk not available') }}
+      ===
+      Note: SC-28 is AUDIT ONLY. Disk encryption is not enforced by this role.
+    mode: "0640"
+  tags: [compliance, l2-compliance, nist, sc-28]

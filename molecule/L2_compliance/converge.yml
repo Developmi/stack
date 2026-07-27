@@ -1,0 +1,117 @@
+---
+# ==============================================================================
+# Molecule Converge - L2 Compliance Hardening
+# ==============================================================================
+# Tests the full L2 compliance hardening role including:
+#   - Security hardening (SSH, nftables/UFW, fail2ban, kernel, pam, auditd)
+#   - User hardening (users, SSH keys, sudoers)
+#
+# Requires molecule-level vars via include_vars + set_fact because
+# inventory/group_vars are not loaded in molecule's auto-generated inventory.
+#
+# Static vars (replicating group_vars/all) are in vars.yml.
+# Dynamic/secret vars are set via set_fact in pre_tasks.
+#
+# Sub-modules explicitly skipped:
+#   - l2_tailscale_enabled: false  (no Tailscale in Docker)
+#   - l2_crowdsec_enabled: false   (opt-in)
+#   - l2_compliance_enabled: false (opt-in evidence collection)
+#   - l2_lynis_enabled: false      (opt-in audit, heavyweight)
+# ==============================================================================
+
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  max_fail_percentage: 0
+
+  pre_tasks:
+    # ── APT Lock Pre-flight (same as playbooks/l2/hardening.yml) ─────────────
+    - name: "L2 | Pre-flight: APT lock detection and cleanup"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../playbooks/_shared/apt_lock_preflight.yml"
+      tags: [always]
+
+    - name: "L2 | Stop APT systemd timers"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+      failed_when: false
+      tags: [always]
+
+    # ── Load molecule test vars (replicates group_vars/all/main.yml) ─────────
+    - name: "Molecule | Load L2 test variables"
+      ansible.builtin.include_vars:
+        file: vars.yml
+
+    # ── Install openssh-server (not present in geerlingguy Docker images) ────
+    # The SSH hardening tasks (ssh_hardening.yml) all target /etc/ssh/sshd_config
+    # which doesn't exist without openssh-server. In production, L1 installs it.
+    - name: "Molecule | Refresh apt cache (geerlingguy image cache may be stale)"
+      ansible.builtin.apt:
+        update_cache: true
+      changed_when: false
+      tags: [always]
+
+    - name: "Molecule | Install openssh-server for SSH hardening tests"
+      ansible.builtin.apt:
+        name: openssh-server
+        state: present
+      tags: [always]
+
+    # sshd -t validation requires /run/sshd to exist (privilege separation dir).
+    # In production sshd is already running; in Docker containers it's not.
+    - name: "Molecule | Ensure /run/sshd exists for sshd -t validation"
+      ansible.builtin.file:
+        path: /run/sshd
+        state: directory
+        mode: "0755"
+      tags: [always]
+
+    # modprobe needed by nftables_rules.yml for nf_conntrack module.
+    # geerlingguy Docker images are minimal - no kmod by default.
+    - name: "Molecule | Install kmod (modprobe) for nftables module loading"
+      ansible.builtin.apt:
+        name: kmod
+        state: present
+      tags: [always]
+
+    # With SYS_MODULE capability (from molecule.yml), modprobe should work
+    # inside the container to load nf_conntrack before nftables rules apply.
+    - name: "Molecule | Pre-load nf_conntrack for nftables ct state rules"
+      ansible.builtin.command: modprobe nf_conntrack
+      changed_when: false
+      failed_when: false
+      tags: [always]
+
+    # ── Dynamic vars (depend on ansible_facts gathered above) ────────────────
+    - name: "Molecule | Set OS detection vars"
+      ansible.builtin.set_fact:
+        _os_family: "{{ 'Ubuntu' if ansible_facts['distribution'] in ['Pop', 'Pop!_OS'] else ansible_facts['os_family'] }}"
+        _dist_major: "{{ ansible_facts['distribution_major_version'] | int }}"
+
+    - name: "Molecule | Set dynamic group_vars for L2"
+      ansible.builtin.set_fact:
+        os_firewall_backend: "{{ 'nftables' if (_os_family == 'Debian' and _dist_major >= 12) else 'ufw' }}"
+        # Skip sub-modules not needed in molecule
+        l2_tailscale_enabled: false
+        l2_crowdsec_enabled: false
+        l2_compliance_enabled: false
+        l2_lynis_enabled: false
+        # SSH public keys for user hardening (molecule synthetic keys)
+        # Vault is not decrypted in molecule, so we provide test keys
+        ssh_public_keys:
+          dev_admin: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMoleculeTestKeyDevAdminTestDoNotUseInProduction"
+          automation: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMoleculeTestKeyAutomationDoNotUseInProduction"
+          breakglass: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMoleculeTestKeyBreakglassDoNotUseInProduction"
+
+  tasks:
+    - name: "L2 | Apply compliance hardening role"
+      ansible.builtin.include_role:
+        name: L2_compliance
+        apply:
+          tags: [l2-compliance]

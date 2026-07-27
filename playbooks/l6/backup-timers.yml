@@ -1,0 +1,40 @@
+---
+# ==============================================================================
+# Developmi Stack | Developmi | Miguel Lozano (SRE & FinOps Architect)
+# ==============================================================================
+# BACKUP TIMER AUTOMATION - systemd scheduling layer
+# ==============================================================================
+# Purpose: Deploy systemd .timer + .service units for database dumps and
+#          Docker volume backups at Tier-defined RPO intervals.
+#          Scheduling layer only - backup execution is handled by
+#          roles/L6_runtime/backup (app-data mode).
+#          NIST SP 800-53 CP-9 and CM-6.
+# ==============================================================================
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-timers.yml --ask-vault-pass
+#   ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-timers.yml --limit brain-1
+# ==============================================================================
+
+- name: "Deploy systemd Backup Timers"
+  hosts: all
+  become: true
+  tags: [l6-runtime, backup-timers]
+  vars:
+    backup_role_source: timers
+  pre_tasks:
+    - name: "Preflight: Require overlay-network ansible_host"
+      ansible.builtin.assert:
+        that:
+          - ansible_host is defined
+          - >-
+            lookup('ansible.builtin.pipe',
+              "python3 -c 'import ipaddress,sys; host=sys.argv[1]; subnet=sys.argv[2]; "
+              ~ "\ntry:\n print(ipaddress.ip_address(host) in ipaddress.ip_network(subnet, strict=False))"
+              ~ "\nexcept ValueError:\n print(False)' "
+              ~ (ansible_host | quote) ~ " " ~ (tailscale_subnet | quote)
+            ) == 'True'
+        fail_msg: >-
+          Zero Trust violation on {{ inventory_hostname }}: backup-timers requires overlay.
+        success_msg: "Overlay validated for {{ inventory_hostname }}."
+  roles:
+    - role: L6_runtime/backup

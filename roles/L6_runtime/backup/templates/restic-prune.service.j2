@@ -1,0 +1,18 @@
+[Unit]
+Description=Weekly Restic forget + prune - {{ ansible_hostname }}
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/restic/env
+Environment="RESTIC_CACHE_DIR=/var/cache/restic"
+Environment="TMPDIR=/var/tmp/restic"
+ExecStartPre=/bin/mkdir -p /var/cache/restic /var/tmp/restic
+ExecStart=/usr/local/bin/restic forget --keep-daily {{ restic_keep_daily }} --keep-weekly {{ restic_keep_weekly }} --keep-monthly {{ restic_keep_monthly }} --prune
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+TimeoutStopSec=2h
+
+[Install]
+WantedBy=default.target

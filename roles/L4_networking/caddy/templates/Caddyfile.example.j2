@@ -1,0 +1,240 @@
+# Caddyfile.example - L4_networking/caddy role (Single Source of Truth)
+# Rendered from vault (secrets.yml), filtered per-node via target_group ∩ group_names.
+#
+# VARIABLE OWNERSHIP (three layers - NEVER mix):
+#   Layer 1 | vault (secrets.yml)         → domains, certs, routes, API keys
+#   Layer 2 | inventory (hosts.ini)       → caddy_node_id, waf_mode_default (per host)
+#   Layer 3 | group_vars (brain|muscle)   → caddy_type, caddy_admin_enabled (group defaults)
+#
+# L4-NETWORKING / EDGE (SDD l4-networking-edge):
+#   ADR-03 - Per-client cert path: /etc/caddy/certs/<client>/fullchain.pem
+#   ADR-04 - Hot-reload via docker exec caddy reload (no connection drops)
+#   ADR-05 - Per-service WAF mode via waf_mode (enforcement | detection_only)
+#   SC-28  | All domains and upstreams live exclusively in the encrypted vault.
+#   SC-7   | Per-service security headers in site blocks.
+#   SC-8   | TLS 1.2/1.3 enforced; HTTP→HTTPS redirect; Cloudflare Origin Pull supported.
+#   AU-12  | JSON access log + Coraza audit log to /data/logs for CrowdSec ingestion.
+#   SI-4   | OWASP CRS via Coraza WAF; per-service enforcement mode (waf_mode).
+#   AC-3   | Admin API disabled in production; localhost-only when troubleshooting.
+#
+# ROUTING: for-loop iterates ingress_services, skipping entries whose target_group
+# does not intersect with the current node's group_names OR match caddy_node_id.
+# target_group examples: "muscle" | "brain" | "muscle-1" | ["muscle-1", "brain-1"]
+#
+# WAF MODE (ADR-05):
+#   waf_mode_default — fallback for services without explicit waf_mode
+#   svc.waf_mode     — per-service override (enforcement | detection_only)
+#
+# WEBSOCKET: when proxy_headers.websocket=true, a @ws matcher bypasses Coraza
+# (Coraza doesn't support WS upgrades). All other HTTP goes through WAF.
+{
+    {% if caddy_admin_enabled | default(false) %}
+    # AC-3 | Admin API on localhost for troubleshooting only
+    admin localhost:2019
+    {% else %}
+    # AC-3 | Admin API disabled in production
+    admin off
+    {% endif %}
+    email {{ caddy_acme_email | default('') }}
+    order coraza_waf first
+    order rate_limit before basicauth
+
+    # AU-12 | Structured JSON access log to stdout (Loki ingestion via Docker log driver)
+    log {
+        output stdout
+        format json
+    }
+
+    # Alternative: file-based log rotation for non-Docker deployments
+    # log {
+    #     output file /data/logs/access.log {
+    #         roll_size 100mb
+    #         roll_keep 5
+    #         roll_keep_for 720h
+    #     }
+    #     format json
+    # }
+
+    # Cloudflare real IP restoration (trusted_proxies)
+    servers {
+        trusted_proxies static {
+            173.245.48.0/20
+            103.21.244.0/22
+            103.22.200.0/22
+            103.31.4.0/22
+            141.101.64.0/18
+            108.162.192.0/18
+            190.93.240.0/20
+            188.114.96.0/20
+            197.234.240.0/22
+            198.41.128.0/17
+            162.158.0.0/15
+            104.16.0.0/13
+            104.24.0.0/14
+            172.64.0.0/13
+            131.0.72.0/22
+        }
+    }
+}
+
+# SC-8 | HTTP → HTTPS redirect
+:80 {
+    redir https://{host}{uri} permanent
+}
+
+# Health check (Docker)
+:2020 {
+    respond "OK" 200
+}
+
+# ── WAF snippet (Coraza + OWASP CRS) ──────────────────────────────────
+# ADR-05: SecRuleEngine set per-service via route /waf* (not globally).
+# Config and CRS rules baked into caddy-waf image at /etc/caddy/.
+(waf) {
+    coraza_waf {
+        directives `
+            Include /etc/caddy/coraza.conf
+            Include /etc/caddy/owasp-crs/crs-setup.conf
+            Include /etc/caddy/owasp-crs/rules/*.conf
+            SecAuditEngine RelevantOnly
+            SecAuditLog /data/logs/coraza-audit.log
+            SecAuditLogFormat JSON
+            SecAuditLogParts ABCDEFGHIJKZ
+        `
+    }
+}
+
+# ── Zero Trust VPN restriction ────────────────────────────────────────
+(vpn_only) {
+    @denied_vpn {
+        not remote_ip {{ tailscale_subnet }} 127.0.0.1/8 ::1
+    }
+    abort @denied_vpn
+}
+
+# ── Dynamic application routes (ADR-03: client-scoped cert paths) ─────
+#
+# Example ingress_services entry in group_vars/all/secrets.yml (vault):
+#
+#   - name: my-app
+#     domain: app.example.com
+#     upstream: my-app-container:8080
+#     target_group: muscle
+#     security_profile: public_waf
+#     client: "client_example"           # tenant slug (required, drives cert path + routing)
+#     tls_client_auth: cloudflare        # optional, enables Origin Pull
+#     waf_mode: enforcement              # optional, overrides waf_mode_default
+#     proxy_headers:
+#       standard: false                  # forward Host + X-Real-IP to backend
+#       websocket: false                 # bypass Coraza for WS upgrades
+#     x_frame_options: DENY
+#     referrer_policy: strict-origin-when-cross-origin
+#     csp: "default-src 'self'; script-src 'self' 'unsafe-inline'..."
+#     permissions_policy: "camera=(), microphone=(), geolocation=()"
+#
+{% for svc in ingress_services %}
+{% if svc.target_group is defined %}
+{% set _tg = [svc.target_group] if svc.target_group is string else svc.target_group %}
+{% if _tg | select('in', group_names) | list | length > 0 or caddy_node_id in _tg %}
+{% set ph = svc.proxy_headers | default({}) %}
+{% set _waf_mode = svc.waf_mode | default(waf_mode_default) %}
+{{ svc.domain }} {
+    {% set _profile = ingress_security_profiles[svc.security_profile] %}
+    {% if _profile.import_vpn_only | default(false) %}
+    import vpn_only
+    {% endif %}
+
+    {% if ph.websocket | default(false) %}
+    # WebSocket bypass - Coraza doesn't support WS upgrades
+    @ws {
+        header Connection *Upgrade*
+        header Upgrade    websocket
+    }
+    handle @ws {
+        reverse_proxy {{ svc.upstream }} {
+            {% if ph.standard | default(false) %}
+            header_up Host      {host}
+            header_up X-Real-IP {remote_host}
+            {% endif %}
+            header_down -Server
+            header_down -X-Powered-By
+        }
+    }
+    handle {
+        {% if _profile.import_waf | default(false) %}
+        import waf
+        route /waf* {
+            coraza_waf {
+                directives `
+                    SecRuleEngine {{ 'On' if _waf_mode == 'enforcement' else 'DetectionOnly' }}
+                    {% if _waf_mode == 'detection_only' %}
+                    SecRuleUpdateActionById 900000 "deny,status:403,log,auditlog"
+                    {% endif %}
+                `
+            }
+        }
+        {% endif %}
+        reverse_proxy {{ svc.upstream }} {
+            {% if ph.standard | default(false) %}
+            header_up Host      {host}
+            header_up X-Real-IP {remote_host}
+            {% endif %}
+            header_down -Server
+            header_down -X-Powered-By
+        }
+    }
+    {% else %}
+    {% if _profile.import_waf | default(false) %}
+    import waf
+    route /waf* {
+        coraza_waf {
+            directives `
+                SecRuleEngine {{ 'On' if _waf_mode == 'enforcement' else 'DetectionOnly' }}
+                {% if _waf_mode == 'detection_only' %}
+                SecRuleUpdateActionById 900000 "deny,status:403,log,auditlog"
+                {% endif %}
+            `
+        }
+    }
+    {% endif %}
+    reverse_proxy {{ svc.upstream }} {
+        {% if ph.standard | default(false) %}
+        header_up Host      {host}
+        header_up X-Real-IP {remote_host}
+        {% endif %}
+        header_down -Server
+        header_down -X-Powered-By
+    }
+    {% endif %}
+
+    {# ADR-03 (v6.0.0): Per-client cert path - client field is mandatory. #}
+    # SC-8 / SC-13 | Cloudflare Origin Certificate (static, no ACME)
+    tls /etc/caddy/certs/{{ svc.client }}/fullchain.pem /etc/caddy/certs/{{ svc.client }}/privkey.pem {
+        protocols tls1.2 tls1.3
+        {% if svc.tls_client_auth is defined and svc.tls_client_auth == 'cloudflare' %}
+        client_auth {
+            trusted_ca_cert_file /etc/caddy/certs/cloudflare-origin-pull-ca.pem
+        }
+        {% endif %}
+    }
+
+    # SC-7 / SC-23 | Per-service security headers
+    header {
+        Strict-Transport-Security   "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options      "nosniff"
+        X-Frame-Options             "{{ svc.x_frame_options | default('DENY') }}"
+        {% if svc.referrer_policy is defined and svc.referrer_policy | length > 0 %}
+        Referrer-Policy             "{{ svc.referrer_policy }}"
+        {% endif %}
+        {% if svc.csp is defined and svc.csp | length > 0 %}
+        Content-Security-Policy     "{{ svc.csp }}"
+        {% endif %}
+        {% if svc.permissions_policy is defined and svc.permissions_policy | length > 0 %}
+        Permissions-Policy          "{{ svc.permissions_policy }}"
+        {% endif %}
+        -Server
+    }
+}
+{% endif %}
+{% endif %}
+{% endfor %}

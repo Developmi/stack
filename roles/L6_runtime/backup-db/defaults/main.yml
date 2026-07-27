@@ -1,0 +1,8 @@
+---
+# backup-db role defaults - overridable per environment
+restic_install_path: "/usr/local/bin/restic"
+restic_env_file: "/etc/restic/env"
+backup_retention_days: 7
+backup_timer_oncalendar: "*-*-* 02:00:00"
+backup_script_path: "/usr/local/bin/backup-databases.sh"
+restic_download_dir: "/tmp"

@@ -1,0 +1,3 @@
+---
+- name: Import L1 OS Baseline Playbook
+  ansible.builtin.import_playbook: ../../playbooks/l1/baseline.yml

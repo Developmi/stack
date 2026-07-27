@@ -1,0 +1,57 @@
+services:
+  # TAG: NETWORK_FROM_GROUP_VARS -> network name is rendered from observability_network_name
+  # ----------------------------------------------------------------
+  # NODE EXPORTER (Host Metrics)
+  # ----------------------------------------------------------------
+  node-exporter:
+    image: {{ node_exporter_image }}
+    container_name: node-exporter
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/host'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - '9100:9100'
+    networks:
+      - {{ observability_network_name }}
+
+  # ----------------------------------------------------------------
+  # CADVISOR (Docker Metrics)
+  # ----------------------------------------------------------------
+  cadvisor:
+    image: {{ cadvisor_image }}
+    container_name: cadvisor
+    restart: unless-stopped
+    read_only: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    tmpfs:
+      - /tmp
+      - /run
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command:
+      - '--store_container_labels=false'
+      - '--docker_only=true'
+      - '--disable_metrics=advtcp,app,cpuLoad,cpuset,hugetlb,memory_numa,oom_event,percpu,perf_event,process,referenced_memory,resctrl,sched,tcp,udp'
+    ports:
+      - '{{ observability_cadvisor_port }}:8080'
+    networks:
+      - {{ observability_network_name }}
+
+networks:
+  # TAG: NETWORK_FROM_GROUP_VARS -> rendered key from observability_network_name
+  {{ observability_network_name }}:
+    driver: bridge

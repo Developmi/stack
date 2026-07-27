@@ -1,0 +1,7 @@
+---
+# L3 Observability - Role-level dispatcher
+# Delegates to the general/ sub-role containing the migrated observability tasks.
+
+- name: "L3 | Include observability tasks"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/main.yml"
+  tags: [l3-observability, observability, monitoring]

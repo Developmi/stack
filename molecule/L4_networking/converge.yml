@@ -1,0 +1,127 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  pre_tasks:
+    # ---------------------------------------------------------------------------
+    # APT Lock pre-flight - resolves lock contention before any apt operations
+    # ---------------------------------------------------------------------------
+    - name: Include APT lock pre-flight tasks
+      ansible.builtin.include_tasks: ../../playbooks/_shared/apt_lock_preflight.yml
+      tags: [always]
+
+    # ---------------------------------------------------------------------------
+    # Refresh APT cache - required by geerlingguy base images (stale cache)
+    # ---------------------------------------------------------------------------
+    - name: Update APT package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 0
+      changed_when: false
+      tags: [always]
+
+    # ---------------------------------------------------------------------------
+    # Include molecule test variables (override inventory defaults)
+    # ---------------------------------------------------------------------------
+    - name: Include L4 test variables
+      ansible.builtin.include_vars:
+        file: vars.yml
+      tags: [always]
+
+    # ---------------------------------------------------------------------------
+    # Set dynamic facts required by the role but not in vars.yml
+    # ---------------------------------------------------------------------------
+    - name: Set dynamic facts for molecule testing
+      ansible.builtin.set_fact:
+        # Molecule always runs on the control host - use ansible_default_ipv4
+        # for any fact-based calculations the role may need
+        _molecule_testing: true
+
+    # ---------------------------------------------------------------------------
+    # Create ingress directory structure - created by app deployment in production
+    # ---------------------------------------------------------------------------
+    - name: Molecule | Create ingress base directory
+      ansible.builtin.file:
+        path: "{{ app_base_dir }}/ingress"
+        state: directory
+        mode: "0755"
+
+    - name: Molecule | Create WAF profiles directory
+      ansible.builtin.file:
+        path: "{{ app_base_dir }}/ingress/waf/profiles"
+        state: directory
+        mode: "0755"
+
+    - name: Molecule | Create Caddy data directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ app_base_dir }}/ingress/caddy-data"
+        - "{{ app_base_dir }}/ingress/caddy-config"
+
+  roles:
+    - role: L4_networking/caddy
+      tags: [l4-networking]
+
+  post_tasks:
+    - name: Post | Verify Caddy system user exists
+      ansible.builtin.getent:
+        database: passwd
+        key: caddy
+
+    - name: Post | Verify ingress directory structure
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ app_base_dir }}/ingress"
+        - "{{ app_base_dir }}/ingress/Caddyfile"
+      register: ingress_dirs
+
+    - name: Post | Assert all ingress paths exist
+      ansible.builtin.assert:
+        that:
+          - ingress_dirs.results | map(attribute='stat.exists') | list | min == true
+        fail_msg: "Ingress paths not created correctly"
+        success_msg: "All ingress paths verified"
+
+    - name: Post | Verify Caddy data and config directories
+      ansible.builtin.stat:
+        path: "{{ app_base_dir }}/ingress/{{ item }}"
+      loop:
+        - caddy-data
+        - caddy-config
+      register: caddy_data_dirs
+
+    - name: Post | Assert Caddy data directories exist
+      ansible.builtin.assert:
+        that:
+          - caddy_data_dirs.results | map(attribute='stat.exists') | list | min == true
+        fail_msg: "Caddy runtime data directories not created"
+        success_msg: "Caddy runtime data directories verified"
+
+    - name: Post | Verify cert directory structure
+      ansible.builtin.stat:
+        path: /srv/caddy
+      register: srv_caddy
+
+    - name: Post | Assert /srv/caddy exists
+      ansible.builtin.assert:
+        that:
+          - srv_caddy.stat.exists
+        fail_msg: "/srv/caddy directory not created"
+        success_msg: "/srv/caddy directory verified"
+
+    - name: Post | Verify WAF profiles directory (created by molecule pre_task)
+      ansible.builtin.stat:
+        path: "{{ app_base_dir }}/ingress/waf/profiles"
+      register: waf_profiles_dir
+
+    - name: Post | Assert WAF profiles directory exists
+      ansible.builtin.assert:
+        that:
+          - waf_profiles_dir.stat.exists
+          - waf_profiles_dir.stat.isdir
+        fail_msg: "WAF profiles directory not created"
+        success_msg: "WAF profiles directory verified"

@@ -1,0 +1,16 @@
+---
+# ==============================================================================
+# CROWDSEC ROLE - L2 Compliance Dispatcher (NIST SI-4)
+# ==============================================================================
+# Thin-dispatcher: conditionals + include_tasks only.
+# Mode gated by crowdsec_mode: enforcement (block at firewall) | detection_only.
+# ==============================================================================
+
+- name: "SI-4 | Install CrowdSec agent and configure"
+  ansible.builtin.include_tasks: "{{ role_path }}/nist_800_53/si-4/tasks/agent.yml"
+  tags: [crowdsec, l2-compliance, nist, si-4]
+
+- name: "SI-4 | Install CrowdSec firewall bouncer (enforcement mode only)"
+  ansible.builtin.include_tasks: "{{ role_path }}/nist_800_53/si-4/tasks/bouncer.yml"
+  when: crowdsec_mode == 'enforcement'
+  tags: [crowdsec, l2-compliance, nist, si-4]

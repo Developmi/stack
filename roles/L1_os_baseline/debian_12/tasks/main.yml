@@ -1,0 +1,43 @@
+---
+# ==============================================================================
+# L1 OS Baseline - Debian 12 Dispatcher
+# ==============================================================================
+
+# ==============================================================================
+
+- name: "L1 | Load Debian 12 specific variables"
+  ansible.builtin.include_vars: ../vars/main.yml
+  tags: [l1-os-baseline, debian]
+
+- name: "L1 | Load Debian 12 defaults"
+  ansible.builtin.include_vars: ../defaults/main.yml
+  tags: [l1-os-baseline, debian]
+
+- name: "L1 | Refresh apt cache safely"
+  ansible.builtin.import_tasks: general/tasks/apt_refresh.yml
+  tags: [l1-os-baseline, debian]
+
+- name: "L1 | Gather package facts"
+  ansible.builtin.package_facts:
+    manager: apt
+  tags: [l1-os-baseline, debian]
+
+- name: "L1 | Install security and monitoring packages (Debian 12)"
+  ansible.builtin.include_tasks: debian_12/tasks/packages.yml
+  tags: [l1-os-baseline, debian]
+
+- name: "L1 | Configure apt periodic updates"
+  ansible.builtin.include_tasks: debian_12/tasks/apt_config.yml
+  tags: [packages, l1-os-baseline]
+
+- name: "L1 | Blacklist insecure kernel modules (Debian 12)"
+  ansible.builtin.include_tasks: debian_12/tasks/kernel_modules.yml
+  tags: [l1-os-baseline, debian]
+
+- name: "L1 | Install and configure unattended-upgrades"
+  ansible.builtin.include_tasks: debian_12/tasks/unattended_upgrades.yml
+  tags: [packages, l1-os-baseline]
+
+- name: "L1 | Pin critical packages via apt-mark hold"
+  ansible.builtin.include_tasks: debian_12/tasks/hold_packages.yml
+  tags: [packages, l1-os-baseline]

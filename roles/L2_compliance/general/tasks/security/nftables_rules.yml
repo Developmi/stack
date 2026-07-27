@@ -1,0 +1,138 @@
+---
+# ==============================================================================
+# SECURITY - nftables Firewall Rules (NIST SC-7) - Debian 12+
+# ==============================================================================
+# Port whitelist driven by allowed_ports variable. SSH handled separately with source restrictions.
+# Default-deny incoming, allow outgoing. Docker bridge allowed.
+# ==============================================================================
+
+- name: "L2 | Fail-safe - SSH must not be in allowed_ports (handled separately via ssh_allowed_sources)"
+  ansible.builtin.assert:
+    that:
+      - 22 not in allowed_ports
+    fail_msg: "CRITICAL: Port 22 found in allowed_ports. Remove it - SSH access is controlled by ssh_allowed_sources (admin_cidr only per L2 contract §Promise 2)."
+  tags: [l2-hardening]
+
+# ponytail: nf_conntrack may not be auto-loaded on minimal installs,
+# causing "ct state" rules to fail with "No such file or directory".
+# Reference: https://dietpi.com/forum/t/solved-problems-starting-nftables/6226
+# Note: nf_conntrack is built into the kernel (CONFIG_NF_CONNTRACK=y) on modern
+# kernels (Debian 12+, Ubuntu 22.04+). In that case modprobe fails with "Module
+# not found" but conntrack already works - the nftables apply validates ct state.
+# failed_when: false prevents false-positives on built-in kernels while still
+# allowing module loading on systems where it's a loadable module.
+- name: "SC-7 | Ensure nf_conntrack kernel module is loaded"
+  ansible.builtin.command: modprobe nf_conntrack
+  changed_when: false
+  failed_when: false
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Install nftables package"
+  ansible.builtin.apt:
+    name: nftables
+    state: present
+    lock_timeout: 600
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Deploy nftables ruleset"
+  ansible.builtin.copy:
+    dest: /etc/nftables.conf
+    content: |
+      #!/usr/sbin/nft -f
+      # NIST SC-7 - nftables ruleset (stack)
+      flush ruleset
+
+      table inet filter {
+          chain input {
+              type filter hook input priority 0; policy drop;
+
+              # Allow loopback
+              iif lo accept
+
+              # Allow established/related
+              ct state established,related accept
+
+              # ICMP (ping)
+              ip protocol icmp icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded } accept
+              ip6 nexthdr icmpv6 icmpv6 type { echo-request, echo-reply, destination-unreachable, time-exceeded, nd-neighbor-solicit, nd-neighbor-advert } accept
+
+              {% if l2_tailscale_enabled | default(true) %}
+              # ponytail: CGNAT range 100.64.0.0/10 is standard for Tailscale - always present
+              ip saddr 100.64.0.0/10 tcp dport 22 accept
+              {% if nist_bootstrap | default(false) %}
+              # Bootstrap: allow SSH from controller IP on all interfaces
+              ip saddr {{ controller_ip | default('127.0.0.1') }} tcp dport 22 accept
+              {% else %}
+              # Steady-state: SSH via Tailscale interface (defense-in-depth)
+              iifname "tailscale0" tcp dport 22 accept
+              {% endif %}
+              # Tailscale WireGuard direct connections
+              udp dport 41641 accept
+              {% else %}
+              # Tailscale disabled - CIDR-based SSH (existing behavior)
+              ip saddr {{ ssh_allowed_sources }} tcp dport 22 accept
+              {% endif %}
+
+              # Whitelisted ports
+              {% for port in allowed_ports %}
+              tcp dport {{ port }} accept
+              {% endfor %}
+
+              # Docker bridge internal
+              ip saddr 172.16.0.0/12 accept
+
+              {% if enable_metrics_exporters | default(false) %}
+              # Metrics exporters (Tailscale only)
+              iifname tailscale0 tcp dport 9100 accept  # Node Exporter
+              iifname tailscale0 tcp dport 18080 accept  # cAdvisor
+              {% endif %}
+
+              {% if 'brain' in group_names %}
+              # Caddy HTTP/HTTPS (brain nodes)
+              tcp dport { 80, 443 } accept
+              udp dport 443 accept  # HTTP/3 QUIC
+              {% endif %}
+
+              # Deny Caddy admin + Prometheus API on Tailscale (defense-in-depth)
+              iifname tailscale0 tcp dport { 2019, 2020 } reject
+
+              {% if hardening_profile == 'workstation' %}
+              # Workstation exceptions
+              udp dport 68 accept  # DHCP client
+              udp dport 5353 accept  # mDNS
+              {% endif %}
+          }
+
+          chain forward {
+              type filter hook forward priority 0; policy accept;
+          }
+
+          chain output {
+              type filter hook output priority 0; policy accept;
+          }
+      }
+    mode: "0640"
+  notify: Restart nftables
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# Validate syntax BEFORE flushing - nft -c checks without modifying the running ruleset.
+# This prevents a fail-open scenario where flush ruleset + invalid syntax = zero firewall.
+- name: "L2 | Validate nftables ruleset syntax before applying"
+  ansible.builtin.command: nft -c -f /etc/nftables.conf
+  changed_when: false
+  check_mode: false
+  tags: [firewall, l2-hardening]
+
+# ponytail: direct apply after template write instead of relying solely on handler -
+# handlers skip on unchanged (changed: false), leaving the ruleset unapplied.
+- name: "L2 | Apply nftables ruleset"
+  ansible.builtin.command: nft -f /etc/nftables.conf
+  changed_when: false
+  tags: [firewall, l2-hardening]
+
+- name: "SC-7 | Enable and start nftables"
+  ansible.builtin.systemd:
+    name: nftables
+    state: started
+    enabled: true
+  tags: [firewall, l2-compliance, nist, sc-7]

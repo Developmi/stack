@@ -1,0 +1,24 @@
+---
+# NocoDB - Database-Spreadsheet Hybrid (L5)
+name: nocodb
+version: "0.262.7"
+supported_arch: [amd64, arm64]
+target_group: muscle-3
+
+depends_on: []
+
+backup:
+  schedule: "*-*-* 00/4:00:00"
+  retention_daily: 7
+  retention_weekly: 4
+  retention_monthly: 12
+  db_type: postgres
+  db_name: nocodb
+
+monitoring:
+  health_endpoint: "/api/v1/health"
+  health_port: 8080
+  scrape_port: 8080
+
+compliance_tags: [nist, ac-2, nist, sc-7, nist, sc-8]
+dr_tier: critical

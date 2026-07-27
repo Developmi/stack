@@ -1,0 +1,31 @@
+---
+# ==============================================================================
+# Developmi Stack | Developmi | Miguel Lozano (SRE & FinOps Architect)
+# ==============================================================================
+# L6 APP DATA BACKUP - Database dumps + restic to R2
+# ==============================================================================
+# Purpose: Execute roles/L6_runtime/backup (app-data mode) for app data backup
+#          (PG, MySQL, SQLite, Valkey dumps) → Restic snapshot → R2 storage.
+#          Independent from stack_backup per ADR-09.
+# ==============================================================================
+# Usage:
+#   make deploy-backup-l5
+#   ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-appdata.yml --ask-vault-pass
+#   ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-appdata.yml --tags backup --limit brain
+# ==============================================================================
+
+- name: "L6 | App Data Backup - roles/L6_runtime/backup (Restic → R2 restic/ prefix)"
+  hosts: brain
+  gather_facts: true
+  become: true
+  tags: [l6-runtime, backup, restic]
+  vars:
+    backup_role_source: app-data
+  pre_tasks:
+    - name: "Gate - skip backup when backups are disabled"
+      ansible.builtin.meta: end_play
+      when: not (enable_backups | default(true))
+      tags: [always]
+  roles:
+    - role: L6_runtime/backup
+      tags: [l6-runtime, backup, restic]

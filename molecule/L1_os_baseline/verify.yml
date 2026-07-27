@@ -1,0 +1,31 @@
+---
+- name: Verify SDD Specifications
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: "GIVEN: Check for running apt/dpkg processes"
+      ansible.builtin.shell: pgrep -a '^(apt|apt-get|dpkg)$' || true
+      register: apt_running_processes
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: Verify no apt/dpkg processes are running (stale locks are ok)"
+      ansible.builtin.assert:
+        that:
+          - apt_running_processes.stdout | default('') == ''
+        fail_msg: "SDD Failed: apt/dpkg processes still running: {{ apt_running_processes.stdout }}"
+        success_msg: "No apt/dpkg processes running."
+
+    - name: "WHEN: Check the kernel module blacklist file content"
+      ansible.builtin.slurp:
+        src: "/etc/modprobe.d/nist-blacklist.conf"
+      register: blacklist_file
+      failed_when: false
+
+    - name: "THEN: Verify that cramfs kernel module is blacklisted"
+      ansible.builtin.assert:
+        that:
+          - blacklist_file.content is defined
+          - blacklist_file.content | b64decode is search('blacklist cramfs')
+        fail_msg: "SDD Failed (NIST CM-7): cramfs not found in kernel module blacklist."
+        success_msg: "cramfs is blacklisted in kernel module blacklist."

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily database backup timer
+Requires=backup-databases.service
+
+[Timer]
+OnCalendar={{ backup_timer_oncalendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,105 @@
+---
+# ==============================================================================
+# SECURITY - fail2ban Brute-Force Protection (NIST AC-2)
+# ==============================================================================
+# Deploys jail.local with configurable bantime/maxretry from variable hierarchy.
+# Dynamic ignoreip built from brain + muscle inventory groups (DD-3).
+# Includes rsyslog polling fallback jail for Debian 12 journald issues (DD-4).
+# ==============================================================================
+
+# ponytail: Debian 12 uses journald - auth.log doesn't exist by default.
+# systemd backend requires python3-systemd. If python3-systemd sourced from
+# different apt repo or absent, fall back to polling + rsyslog.
+- name: "AC-2 | Install python3-systemd (journald backend for fail2ban)"
+  ansible.builtin.apt:
+    name: python3-systemd
+    state: present
+    lock_timeout: 600
+  tags: [fail2ban, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Install fail2ban package"
+  ansible.builtin.apt:
+    name: fail2ban
+    state: present
+    lock_timeout: 600
+  tags: [fail2ban, l2-compliance, nist, ac-2]
+
+# ponytail: rsyslog provides /var/log/auth.log for polling fallback.
+# Non-blocking - if install fails, systemd backend still works.
+- name: "AC-2 | Install rsyslog for auth.log fallback (non-blocking)"
+  ansible.builtin.apt:
+    name: rsyslog
+    state: present
+    lock_timeout: 600
+  register: _rsyslog_install
+  failed_when: false
+  tags: [fail2ban, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Warn if rsyslog install failed (non-blocking)"
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: rsyslog install failed
+      ({{ _rsyslog_install.msg | default('unknown error') }})
+      - polling fallback jail [sshd-authlog] will not work
+      until /var/log/auth.log is available
+  when: _rsyslog_install is failed
+  tags: [fail2ban, l2-compliance, nist, ac-2]
+
+# ---- Dynamic ignoreip from inventory groups (DD-3) ----
+# Static base: localhost + Tailscale subnet. Loop over brain + muscle,
+# extract each host's public_ip, silently skip hosts with undefined IP.
+
+- name: "AC-2 | Set fail2ban_ignoreip (static base: tailscale + localhost)"
+  ansible.builtin.set_fact:
+    fail2ban_ignoreip: "127.0.0.1/8 ::1 100.64.0.0/10"
+  tags: [fail2ban, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Append cluster node public IPs to fail2ban_ignoreip"
+  ansible.builtin.set_fact:
+    fail2ban_ignoreip: "{{ (fail2ban_ignoreip + ' ' + hostvars[item]['public_ip']) | trim }}"
+  loop: "{{ (groups['brain'] | default([])) + (groups['muscle'] | default([])) }}"
+  when: hostvars[item]['public_ip'] is defined and hostvars[item]['public_ip'] not in fail2ban_ignoreip
+  tags: [fail2ban, l2-compliance, nist, ac-2]
+
+# ---- Deploy jail.local ----
+# ponytail: allowipv6=auto silences cosmetic 'not defined in Definition' warning.
+# backend=systemd avoids 'Have not found any log file' crash on Debian 12 journald.
+# [sshd-authlog] is a pre-configured polling fallback (enabled=false by default).
+- name: "AC-2 | Configure fail2ban jail.local"
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.local
+    content: |
+      [DEFAULT]
+      ignoreip = {{ fail2ban_ignoreip | trim }}
+      allowipv6 = auto
+
+      bantime = {{ fail2ban_bantime }}
+      findtime = 10m
+      maxretry = {{ fail2ban_maxretry }}
+      backend = systemd
+
+      [sshd]
+      enabled = true
+      port = ssh
+      backend = systemd
+      mode = aggressive
+      maxretry = {{ fail2ban_maxretry }}
+
+      # ponytail: polling fallback for Debian 12 journald silent failure.
+      # Enable manually: fail2ban-client set sshd-authlog enabled true
+      [sshd-authlog]
+      enabled = false
+      port = ssh
+      backend = polling
+      logpath = /var/log/auth.log
+      maxretry = {{ fail2ban_maxretry }}
+    mode: "0644"
+  notify: Restart fail2ban
+  tags: [fail2ban, l2-compliance, nist, ac-2]
+
+- name: "AC-2 | Ensure fail2ban is running"
+  ansible.builtin.systemd:
+    name: fail2ban
+    state: started
+    enabled: true
+  tags: [fail2ban, l2-compliance, nist, ac-2]

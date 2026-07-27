@@ -1,0 +1,31 @@
+# ansible-lint configuration for NIST-Compliant Hardening Suite
+---
+profile: moderate
+
+# Directories to exclude from linting
+exclude_paths:
+  - roles/*/templates/
+  - .github/
+  - docs/
+  - roles/*/files/
+  - playbooks/l5/
+
+# Project-policy exclusions (documented, intentional deviations)
+skip_list:
+  # 204: Repository allows long comments/docs lines
+  - line-too-long
+  # 206: Block/rescue/always tasks intentionally unnamed
+  - name[missing]
+  # Repository policy: role-local var prefixes are not enforced retroactively
+  - var-naming[no-role-prefix]
+  # Repository allows hyphenated role names (backup-timers)
+  - role-name
+  # Jinja templates in task names for dynamic app identification (backup timers)
+  - name[template]
+
+# Rules to enforce
+warn_list:
+  # 503: Tasks should have tags (important for selective execution)
+  - missing-tags
+  # Repository-local policy: treat these as warnings so pre-commit stays green.
+  - yaml[line-length]

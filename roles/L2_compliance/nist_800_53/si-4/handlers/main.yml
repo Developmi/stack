@@ -1,0 +1,12 @@
+---
+- name: Restart CrowdSec
+  ansible.builtin.systemd:
+    name: crowdsec
+    state: restarted
+  throttle: 1
+
+- name: Restart CrowdSec Firewall Bouncer
+  ansible.builtin.systemd:
+    name: crowdsec-firewall-bouncer
+    state: restarted
+  throttle: 1

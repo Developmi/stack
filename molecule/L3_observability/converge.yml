@@ -1,0 +1,8 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  tasks:
+    - name: "Replace this with the actual role/playbook include for the layer"
+      ansible.builtin.debug:
+        msg: "Executing convergence for the layer"

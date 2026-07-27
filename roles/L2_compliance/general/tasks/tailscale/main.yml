@@ -1,0 +1,572 @@
+# ---
+# COMPLIANCE WARNING:
+# This role manages Tailscale keys, OAuth, and mesh network settings. These are security-critical.
+# Do NOT expose, override, or parametrize these values in group_vars/all. Only manage via inventory, secrets, or vault with compliance review.
+# ---
+---
+# ==============================================================================
+# TAILSCALE CLIENT ROLE - VPN Mesh Network
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Validate required secrets and input formats
+# ------------------------------------------------------------------------------
+
+- name: Enforce Tailscale ACL OAuth secret presence (Zero Trust requirement)
+  ansible.builtin.assert:
+    that:
+      - tailscale_acl_key is defined
+      - tailscale_acl_key | trim | length > 20
+    fail_msg: |
+      Tailscale ACL configuration is required for the brain controller.
+      Required actions:
+      1. Set 'tailscale_acl_key' in group_vars/all/secrets.yml
+      2. Set 'tailscale_acl_client_id' in group_vars/all/secrets.yml
+      3. Use an OAuth client secret for ACL management (tskey-client-*)
+      4. Review ACL template: roles/tailscale_client/templates/tailscale-acls.json.j2
+      Reference: https://tailscale.com/kb/1018/acls/
+  when:
+    - "'brain' in group_names"
+    - inventory_hostname == groups['brain'][0]
+  tags: [tailscale, l2-compliance, acl, security]
+
+
+- name: Validate Tailscale auth key format for node enrollment
+  ansible.builtin.assert:
+    that:
+      - tailscale_auth_key is defined
+      - tailscale_auth_key | trim | length > 20
+      - tailscale_auth_key | trim is match('^tskey-auth-')
+    fail_msg: |
+      Invalid tailscale_auth_key format.
+      Expected an auth key that starts with `tskey-auth-` (generate in Tailscale admin: Keys section).
+  tags: [tailscale, l2-compliance, security]
+  any_errors_fatal: true
+  when:
+    - not (tailscale_manual_auth | default(false))
+
+- name: Validate Tailscale ACL OAuth secret format when provided
+  ansible.builtin.assert:
+    that:
+      - tailscale_acl_key | trim | length > 20
+      - tailscale_acl_key | trim is match('^tskey-client-')
+    fail_msg: |
+      Invalid tailscale_acl_key format.
+      Expected an OAuth client secret that starts with `tskey-client-`.
+      API tokens are intentionally not supported in this role.
+  when: tailscale_acl_key is defined
+  tags: [tailscale, l2-compliance, acl, security]
+
+- name: Validate Tailscale ACL OAuth client ID when OAuth secret is used
+  ansible.builtin.assert:
+    that:
+      - tailscale_acl_client_id is defined
+      - tailscale_acl_client_id | trim | length > 5
+    fail_msg: |
+      tailscale_acl_client_id is required for OAuth-based ACL management.
+      Tailscale API OAuth requires both the client ID and client secret to exchange for a short-lived access token.
+  when:
+    - tailscale_acl_key is defined
+    - tailscale_acl_key | trim is match('^tskey-client-')
+  tags: [tailscale, l2-compliance, acl, security]
+
+# ------------------------------------------------------------------------------
+# Install and configure Tailscale packages and service
+# ------------------------------------------------------------------------------
+
+- name: Determine distribution ID for Tailscale
+  ansible.builtin.set_fact:
+    _tailscale_distro: "{{ 'ubuntu' if ansible_facts['distribution'] | lower in ['pop', 'pop!_os'] else ansible_facts['distribution'] | lower }}"
+    distro_id: "{{ 'ubuntu' if ansible_facts['distribution'] | lower in ['pop', 'pop!_os'] else ansible_facts['distribution'] | lower }}"
+    distro_release: "{{ ansible_facts['distribution_release'] }}"
+  tags: [l2-compliance, tailscale]
+
+- name: Download Tailscale GPG key
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/stable/{{ distro_id }}/{{ distro_release }}.noarmor.gpg"
+    dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    mode: "0644"
+  retries: 3
+  delay: 5
+  tags: [l2-compliance, tailscale]
+
+- name: Add Tailscale repository
+  ansible.builtin.deb822_repository:
+    name: tailscale
+    types: deb
+    uris: https://pkgs.tailscale.com/stable/{{ distro_id }}
+    suites: "{{ distro_release }}"
+    components: main
+    signed_by: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    state: present
+    enabled: true
+  tags: [l2-compliance, tailscale]
+
+- name: Refresh apt cache safely
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 600
+  changed_when: false
+  tags: [l2-compliance, tailscale]
+
+- name: Install Tailscale (version controlled from vault)
+  ansible.builtin.apt:
+    name: "tailscale={{ tailscale_version | default('*') }}"
+    state: present
+    allow_downgrade: true
+    lock_timeout: 600
+    allow_change_held_packages: true
+  tags: [l2-compliance, tailscale]
+
+- name: Hold Tailscale package to prevent auto-upgrades (only when pinned)
+  ansible.builtin.dpkg_selections:
+    name: tailscale
+    selection: hold
+  when:
+    - tailscale_version is defined
+    - tailscale_version != '*'
+  tags: [l2-compliance, tailscale]
+
+- name: Display Tailscale version policy
+  ansible.builtin.debug:
+    msg: >
+      Tailscale version: {{ tailscale_version | default('*') }}
+      {{ '(auto-update enabled)' if (tailscale_version | default('*')) == '*' else '(pinned with dpkg hold)' }}
+  tags: [l2-compliance, tailscale]
+
+- name: Install WireGuard kernel modules (Ubuntu / Pop OS)
+  ansible.builtin.apt:
+    name: "linux-modules-extra-{{ ansible_facts['kernel'] }}"
+    state: present
+    lock_timeout: 600
+    allow_change_held_packages: true
+  register: wireguard_pkg_install
+  when: ansible_facts['distribution'] in ['Ubuntu', 'Pop', 'Pop!_OS']
+  failed_when: >-
+    wireguard_pkg_install is failed and
+    ('No package matching' not in (wireguard_pkg_install.msg | default(''))) and
+    ('Unable to locate package' not in (wireguard_pkg_install.msg | default('')))
+  tags: [l2-compliance, tailscale]
+
+- name: Ensure WireGuard module is loaded
+  community.general.modprobe:
+    name: wireguard
+    state: present
+  register: wireguard_modprobe
+  failed_when: >-
+    wireguard_modprobe is failed and
+    ('module wireguard not found' not in (wireguard_modprobe.msg | default('') | lower)) and
+    ('module not found' not in (wireguard_modprobe.msg | default('') | lower))
+  tags: [l2-compliance, tailscale]
+
+- name: Enable IP forwarding (required for subnet routing)
+  ansible.posix.sysctl:
+    name: "{{ item }}"
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - net.ipv4.ip_forward
+    - net.ipv6.conf.all.forwarding
+  when: l2_tailscale_subnet_router | default(false)
+  tags: [l2-compliance, tailscale]
+
+- name: Enable and start Tailscale service
+  ansible.builtin.systemd:
+    name: tailscaled
+    state: started
+    enabled: true
+  tags: [l2-compliance, tailscale]
+
+- name: Remove incorrect metrics-derived tailscaled UDP port override
+  ansible.builtin.lineinfile:
+    path: /etc/default/tailscaled
+    regexp: '^FLAGS="--port=[0-9]+"$'
+    state: absent
+  when: tailscale_udp_port is not defined
+  notify: Restart Tailscale
+  tags: [l2-compliance, tailscale]
+
+- name: Configure custom tailscaled UDP port when explicitly requested
+  ansible.builtin.lineinfile:
+    path: /etc/default/tailscaled
+    regexp: "^FLAGS="
+    line: 'FLAGS="--port={{ tailscale_udp_port }}"'
+    create: true
+    mode: "0644"
+  when: tailscale_udp_port is defined
+  notify: Restart Tailscale
+  tags: [l2-compliance, tailscale]
+
+# ------------------------------------------------------------------------------
+# Authenticate node and enforce expected node tags
+# ------------------------------------------------------------------------------
+
+- name: Check if Tailscale is already authenticated  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - status
+  register: tailscale_status
+  changed_when: false
+  failed_when: tailscale_status.rc not in [0, 1]
+  tags: [l2-compliance, tailscale]
+
+- name: Determine Tailscale ACL tag for this node
+  ansible.builtin.set_fact:
+    tailscale_acl_tag: >-
+      {{ 'tag:brain' if 'brain' in group_names else 'tag:muscle' if 'muscle' in group_names else 'tag:local' if 'local' in group_names else '' }}
+  tags: [l2-compliance, tailscale]
+
+- name: Validate node has supported ACL tag mapping
+  ansible.builtin.assert:
+    that:
+      - tailscale_acl_tag | length > 0
+    fail_msg: >-
+      Unable to derive Tailscale ACL tag for host {{ inventory_hostname }}.
+      Expected host membership in inventory group 'brain', 'muscle', or 'local'.
+  tags: [l2-compliance, tailscale]
+
+- name: Clear stale Tailscale state when status indicates NeedsLogin
+  when:
+    - tailscale_status.rc != 0
+    - >-
+      'NeedsLogin' in (tailscale_status.stdout | default('')) or
+      'NeedsLogin' in (tailscale_status.stderr | default(''))
+  tags: [l2-compliance, tailscale]
+  block:
+    - name: Stop tailscaled
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: stopped
+      tags: [l2-compliance, tailscale]
+
+    - name: Remove stale state file
+      ansible.builtin.file:
+        path: /var/lib/tailscale/tailscaled.state
+        state: absent
+      tags: [l2-compliance, tailscale]
+
+    - name: Start tailscaled
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: started
+      tags: [l2-compliance, tailscale]
+
+- name: Authenticate node to Tailscale mesh
+  when:
+    - tailscale_status.rc != 0
+    - "'local' not in group_names"
+  tags: [l2-compliance, tailscale]
+  block:
+    - name: Run tailscale up with auth key  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - up
+          - --authkey={{ tailscale_auth_key | trim }}
+          - --accept-routes
+          - "--hostname={{ inventory_hostname }}"
+          - "--advertise-tags={{ tailscale_acl_tag }}"
+          - --reset
+          - --force-reauth
+      no_log: true
+      register: tailscale_up
+      changed_when: tailscale_up.rc == 0
+      failed_when:
+        - tailscale_up.rc != 0
+        - "'backend not running' not in tailscale_up.stderr"
+      retries: 3
+      delay: 5
+      until: tailscale_up.rc == 0
+      tags: [l2-compliance, tailscale]
+  rescue:
+    - name: Capture tailscale up stderr for troubleshooting
+      ansible.builtin.set_fact:
+        tailscale_up_stderr_redacted: >-
+          {{ (tailscale_up.stderr | default('N/A'))
+             | regex_replace('tskey-[A-Za-z0-9_-]+', 'tskey-REDACTED') }}
+      tags: [l2-compliance, tailscale]
+
+    - name: Capture tailscale up stdout for troubleshooting
+      ansible.builtin.set_fact:
+        tailscale_up_stdout_redacted: >-
+          {{ (tailscale_up.stdout | default('N/A'))
+             | regex_replace('tskey-[A-Za-z0-9_-]+', 'tskey-REDACTED') }}
+      tags: [l2-compliance, tailscale]
+
+    - name: Collect Tailscale status for troubleshooting  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - status
+      register: tailscale_status_debug
+      changed_when: false
+      failed_when: tailscale_status_debug.rc not in [0, 1]
+      tags: [l2-compliance, tailscale]
+
+    - name: Collect tailscaled journal for troubleshooting  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        argv:
+          - journalctl
+          - -u
+          - tailscaled
+          - -n
+          - "80"
+          - --no-pager
+      register: tailscaled_journal_debug
+      changed_when: false
+      failed_when: >-
+        tailscaled_journal_debug.rc != 0 and
+        ('No journal files were found' not in (tailscaled_journal_debug.stderr | default('')))
+      tags: [l2-compliance, tailscale]
+
+    - name: Fail with actionable Tailscale diagnostics
+      ansible.builtin.fail:
+        msg: |
+          Tailscale authentication failed after retries.
+          Ensure the OAuth client secret is current and allowed to mint auth keys for {{ tailscale_acl_tag }}.
+          This role passes the secret via stdin without a trailing newline because Tailscale rejects newline-suffixed secrets as invalid keys.
+
+          tailscale up stderr:
+          {{ tailscale_up_stderr_redacted | default('N/A') }}
+
+          tailscale up stdout:
+          {{ tailscale_up_stdout_redacted | default('N/A') }}
+
+          tailscale status:
+          {{ tailscale_status_debug.stdout | default('N/A') }}
+
+          tailscaled journal (last 80 lines):
+          {{ tailscaled_journal_debug.stdout | default('N/A') }}
+      tags: [l2-compliance, tailscale]
+
+- name: Collect current Tailscale status JSON  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - status
+      - --json
+  register: tailscale_status_json
+  changed_when: false
+  failed_when: tailscale_status_json.rc != 0
+  tags: [l2-compliance, tailscale]
+
+- name: Parse currently advertised Tailscale tags
+  ansible.builtin.set_fact:
+    tailscale_current_tags: "{{ (tailscale_status_json.stdout | default('{}') | from_json).Self.Tags | default([]) }}"
+  tags: [l2-compliance, tailscale]
+
+- name: Ensure Tailscale advertised tags match ACL selectors  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - up
+      - --accept-routes
+      - "--hostname={{ inventory_hostname }}"
+      - "--advertise-tags={{ tailscale_acl_tag }}"
+      - "--operator={{ ansible_facts['user_id'] }}"
+  register: tailscale_retag
+  changed_when: tailscale_retag.rc == 0
+  failed_when: tailscale_retag.rc != 0
+  when:
+    - tailscale_status.rc == 0
+    - tailscale_acl_tag not in tailscale_current_tags
+  tags: [l2-compliance, tailscale]
+
+# ------------------------------------------------------------------------------
+# Validate interface, persist MTU, and verify connectivity
+# ------------------------------------------------------------------------------
+
+- name: Refresh network facts for MTU validation
+  ansible.builtin.setup:
+    gather_subset:
+      - network
+  tags: [l2-compliance, tailscale]
+
+- name: Normalize Tailscale interface fact from setup output
+  ansible.builtin.set_fact:
+    tailscale_iface_fact: >-
+      {{
+        (ansible_facts | dict2items
+        | selectattr('key', 'in', ['ansible_tailscale0', 'tailscale0'])
+        | map(attribute='value')
+        | select('mapping')
+        | list
+        | first)
+        | default({})
+      }}
+  tags: [l2-compliance, tailscale]
+
+- name: Parse current Tailscale MTU from Ansible facts
+  ansible.builtin.set_fact:
+    tailscale_mtu_current: "{{ tailscale_iface_fact.get('mtu', '') | string }}"
+  tags: [l2-compliance, tailscale]
+
+- name: Validate current Tailscale MTU was detected
+  ansible.builtin.assert:
+    that:
+      - tailscale_mtu_current | length > 0
+    fail_msg: "Unable to determine tailscale0 MTU from Ansible network facts."
+  tags: [l2-compliance, tailscale]
+
+- name: Make Tailscale MTU persistent (systemd-networkd)
+  ansible.builtin.copy:
+    dest: /etc/systemd/network/10-tailscale.link
+    content: |
+      [Match]
+      OriginalName=tailscale0
+
+      [Link]
+      MTUBytes={{ tailscale_mtu }}
+    mode: "0644"
+  notify: Restart systemd-networkd
+  tags: [l2-compliance, tailscale]
+
+- name: Enforce Tailscale webclient state  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - set
+      - "--webclient={{ 'true' if (tailscale_enable_webclient | bool) else 'false' }}"
+  register: tailscale_webclient
+  changed_when: false
+  failed_when: tailscale_webclient.rc != 0
+  tags: [l2-compliance, tailscale]
+
+- name: Verify Tailscale connection  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - status
+      - --json
+  register: tailscale_verify
+  changed_when: false
+  failed_when: tailscale_verify.rc != 0
+  tags: [l2-compliance, tailscale]
+
+- name: Parse Tailscale IPv4 from Ansible facts
+  ansible.builtin.set_fact:
+    tailscale_ip_address: "{{ tailscale_iface_fact.get('ipv4', {}).get('address', '') }}"
+  tags: [l2-compliance, tailscale]
+
+- name: Resolve Tailscale IPv4 via CLI (most reliable)  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - ip
+      - -4
+  register: tailscale_ip_cli
+  changed_when: false
+  failed_when: false
+  tags: [l2-compliance, tailscale]
+
+- name: Set canonical tailscale_ip fact
+  ansible.builtin.set_fact:
+    tailscale_ip: "{{ tailscale_ip_cli.stdout | trim if (tailscale_ip_cli.rc == 0 and tailscale_ip_cli.stdout | trim | length > 0) else tailscale_ip_address }}"
+  tags: [l2-compliance, tailscale]
+
+- name: Validate Tailscale IPv4 was detected
+  ansible.builtin.assert:
+    that:
+      - tailscale_ip_address | length > 0
+    fail_msg: "Unable to determine tailscale0 IPv4 from Ansible network facts."
+  tags: [l2-compliance, tailscale]
+
+- name: Display Tailscale connection info
+  ansible.builtin.debug:
+    msg:
+      - "Tailscale VPN mesh active"
+      - "IP: {{ tailscale_ip_address }}"
+      - "MTU: {{ tailscale_mtu }} (optimized for WAN)"
+      - "Metrics: http://{{ tailscale_ip_address }}:{{ tailscale_metrics_port | default(41641) }}/metrics"
+  tags: [l2-compliance, tailscale]
+
+# ------------------------------------------------------------------------------
+# Apply ACL policy from the brain controller only
+# ------------------------------------------------------------------------------
+
+- name: Configure Tailscale ACLs (Zero Trust Network Policies)
+  when:
+    - groups['brain'] is defined
+    - inventory_hostname == groups['brain'][0]
+  tags: [tailscale, l2-compliance, acl, security]
+  block:
+    - name: Render and validate ACL policy JSON
+      ansible.builtin.set_fact:
+        tailscale_acl_policy: "{{ lookup('template', role_path + '/general/templates/tailscale/tailscale-acls.json.j2') | from_json }}"
+
+    - name: Determine tailnet selector for ACL API
+      ansible.builtin.set_fact:
+        tailscale_acl_tailnet_selector: >-
+          {{ tailscale_tailnet | trim if (tailscale_tailnet is defined and tailscale_tailnet | trim | length > 0) else '-'
+          }}
+
+    - name: Assert tailscale_tailnet is defined before ACL API calls
+      ansible.builtin.assert:
+        that:
+          - tailscale_acl_tailnet_selector != '-'
+        fail_msg: |
+          tailscale_tailnet is not defined for the brain controller.
+          This variable is required for Tailscale ACL API calls.
+          Set 'tailscale_tailnet' in group_vars/all/vars.yml (e.g., your-tailscale-domain.ts.net).
+      any_errors_fatal: true
+
+    - name: Exchange ACL OAuth client for short-lived API token
+      ansible.builtin.uri:
+        url: https://api.tailscale.com/api/v2/oauth/token
+        method: POST
+        body_format: form-urlencoded
+        body:
+          client_id: "{{ tailscale_acl_client_id | trim }}"
+          client_secret: "{{ tailscale_acl_key | trim }}"
+          grant_type: client_credentials
+        status_code: 200
+        return_content: true
+      register: tailscale_acl_oauth_token
+      delegate_to: localhost
+      become: false
+      no_log: true
+
+    - name: Store short-lived ACL API token
+      ansible.builtin.set_fact:
+        tailscale_acl_bearer_token: "{{ tailscale_acl_oauth_token.json.access_token }}"
+      no_log: true
+
+    - name: Validate ACL API bearer token
+      ansible.builtin.assert:
+        that:
+          - tailscale_acl_bearer_token is defined
+          - tailscale_acl_bearer_token | trim | length > 20
+          - tailscale_acl_bearer_token | trim is match('^tskey-')
+        fail_msg: "Unable to obtain a valid Tailscale API bearer token for ACL management."
+      no_log: true
+
+    - name: Validate Tailscale ACL policy with API
+      ansible.builtin.uri:
+        url: "https://api.tailscale.com/api/v2/tailnet/{{ tailscale_acl_tailnet_selector }}/acl/validate"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ tailscale_acl_bearer_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: "{{ tailscale_acl_policy }}"
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      no_log: true
+
+    - name: Apply Tailscale ACLs via API
+      ansible.builtin.uri:
+        url: "https://api.tailscale.com/api/v2/tailnet/{{ tailscale_acl_tailnet_selector }}/acl"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ tailscale_acl_bearer_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: "{{ tailscale_acl_policy }}"
+        status_code: [200, 201]
+      delegate_to: localhost
+      become: false
+      no_log: true

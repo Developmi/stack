@@ -1,0 +1,40 @@
+---
+dependency:
+  name: galaxy
+driver:
+  name: docker
+platforms:
+  - name: debian12-l2-compliance
+    image: geerlingguy/docker-debian12-ansible:latest
+    pre_build_image: true
+    command: /lib/systemd/systemd
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+  - name: ubuntu2204-l2-compliance
+    image: geerlingguy/docker-ubuntu2204-ansible:latest
+    pre_build_image: true
+    command: /lib/systemd/systemd
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns_mode: host
+    privileged: true
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      remote_tmp: /tmp/.ansible
+  env:
+    ANSIBLE_BECOME_PROMPT_FLAG: ""
+    ANSIBLE_REMOTE_TMP: /tmp/.ansible
+verifier:
+  name: ansible

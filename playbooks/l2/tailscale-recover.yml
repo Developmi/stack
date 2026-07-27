@@ -1,0 +1,169 @@
+---
+# ⚠ WARNING: Manual recovery only - connects via PUBLIC IP.
+# Tailscale SSH has been removed. If Tailscale is down and SSH is locked down,
+# you MUST use cloud provider serial/SPICE console to connect.
+# Only run this playbook when Tailscale is unreachable and you have
+# console access as backup.
+#
+# ==============================================================================
+# TAILSCALE RECONNECTION - Consequence Recovery
+# ==============================================================================
+# Purpose: Reconnect all hosts to Tailscale mesh when SSH multiplexing
+#          socket expiration (ControlPersist=60s bug) caused UNREACHABLE
+#          during PHASE 4 and nodes dropped off the VPN.
+#
+# Usage:
+#   make deploy-tailscale-reconnect
+#   OR
+#   ansible-playbook -i inventory/hosts.ini playbooks/l2/tailscale.yml --ask-vault-pass
+#
+# IMPORTANT: This playbook connects via public_ip (not Tailscale IPs)
+#            because Tailscale is currently DOWN on the nodes.
+# ==============================================================================
+
+- name: "RECOVERY: Reconnect Tailscale VPN Mesh (via public IPs)"
+  hosts: all
+  become: true
+  gather_facts: true
+  any_errors_fatal: false
+  vars:
+    # Override ansible_host with public_ip since Tailscale is down
+    ansible_host: "{{ public_ip }}"
+  tags: [recovery, tailscale, reconnect]
+
+  pre_tasks:
+    - name: "Validate public_ip is defined for all hosts"
+      ansible.builtin.assert:
+        that:
+          - public_ip is defined
+          - public_ip | length > 0
+        fail_msg: "❌ public_ip not defined for {{ inventory_hostname }}. Check inventory/hosts.ini"
+
+    - name: "Validate tailscale_auth_key is present for reconnection"
+      ansible.builtin.assert:
+        that:
+          - tailscale_auth_key is defined
+          - tailscale_auth_key | trim | length > 20
+          - tailscale_auth_key | trim is match('^tskey-auth-')
+        fail_msg: |
+          tailscale_auth_key is required for Tailscale reconnection.
+          Expected an auth key matching pattern: tskey-auth-*
+          Generate one in Tailscale admin console (Keys section).
+      any_errors_fatal: true
+
+    - name: "Display connection mode"
+      ansible.builtin.debug:
+        msg: "🔌 Connecting to {{ inventory_hostname }} via public IP {{ public_ip }} (Tailscale is DOWN)"
+
+  tasks:
+    - name: "Ensure tailscaled is running"
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: started
+        daemon_reload: true
+
+    - name: "Check current Tailscale state"
+      ansible.builtin.command:  # noqa: command-instead-of-module
+        argv:
+          - tailscale
+          - status
+      register: ts_status
+      changed_when: false
+      failed_when: false
+
+    - name: "Display pre-reconnection Tailscale state"
+      ansible.builtin.debug:
+        msg:
+          - "📡 {{ inventory_hostname }} Tailscale state:"
+          - "{{ ts_status.stdout_lines | default(['(no output)']) }}"
+
+    - name: "Determine ACL tag for this node"
+      ansible.builtin.set_fact:
+        _ts_tag: "{{ 'tag:brain' if 'brain' in group_names else 'tag:muscle' }}"
+
+    - name: "Clear stale Tailscale state if NeedsLogin detected"
+      when:
+        - ts_status.rc != 0
+        - "'NeedsLogin' in (ts_status.stdout | default('')) or 'NeedsLogin' in (ts_status.stderr | default(''))"
+      block:
+        - name: "Stop tailscaled for state cleanup"
+          ansible.builtin.systemd:
+            name: tailscaled
+            state: stopped
+
+        - name: "Remove stale Tailscale state file"
+          ansible.builtin.file:
+            path: /var/lib/tailscale/tailscaled.state
+            state: absent
+
+        - name: "Start tailscaled after state cleanup"
+          ansible.builtin.systemd:
+            name: tailscaled
+            state: started
+
+    - name: "Re-authenticate node to Tailscale mesh"
+      ansible.builtin.command:  # noqa: command-instead-of-module
+        argv:
+          - tailscale
+          - up
+          - "--authkey={{ tailscale_auth_key | trim }}"
+          - --ssh=false
+          - --accept-routes
+          - "--hostname={{ inventory_hostname }}"
+          - "--advertise-tags={{ _ts_tag }}"
+          - --reset
+          - --force-reauth
+      register: ts_up
+      changed_when: ts_up.rc == 0
+      failed_when: false
+      retries: 3
+      delay: 10
+      until: ts_up.rc == 0
+      no_log: true
+
+    - name: "Verify reconnection"
+      ansible.builtin.command:  # noqa: command-instead-of-module
+        argv:
+          - tailscale
+          - ip
+          - "-4"
+      register: ts_ip
+      changed_when: false
+      failed_when: ts_ip.rc != 0
+      retries: 5
+      delay: 5
+      until: ts_ip.rc == 0 and (ts_ip.stdout | trim | length > 0)
+
+  post_tasks:
+    - name: "Display Tailscale IP (update hosts.ini with this)"
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "✅ {{ inventory_hostname }} RECONNECTED to Tailscale"
+          - "🔒 VPN IP: {{ ts_ip.stdout | trim }}"
+          - "🌐 Public IP: {{ public_ip }}"
+          - ""
+
+    - name: "Warn if reconnection failed"
+      ansible.builtin.debug:
+        msg:
+          - "⚠️  {{ inventory_hostname }} Tailscale reconnection FAILED"
+          - "    Check: ssh automation@{{ public_ip }} tailscale status"
+          - "    Manual: tailscale up --authkey=tskey-auth-..."
+      when: ts_up.rc != 0
+
+    - name: "Post-recovery instructions"
+      ansible.builtin.debug:
+        msg: |-
+          ==============================================
+          TAILSCALE RECONNECTION COMPLETE
+          ==============================================
+
+          📋 NEXT: Update inventory/hosts.ini with Tailscale IPs:
+          {% for host in ansible_play_hosts %}
+            {{ hostvars[host].inventory_hostname }} ansible_host={{ hostvars[host].ts_ip.stdout | trim | default('PENDING') }}
+          {% endfor %}
+
+          Then resume: make deploy
+          ==============================================
+      run_once: true

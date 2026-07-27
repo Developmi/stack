@@ -1,0 +1,71 @@
+---
+# ==============================================================================
+# Molecule L2 Test Variables
+# ==============================================================================
+# Replicates the subset of inventory/group_vars/all/main.yml that the
+# L2_compliance role depends on but are NOT in its role defaults/main.yml.
+#
+# In molecule, the project's group_vars are NOT loaded (auto-generated
+# inventory is separate). These vars are loaded via include_vars in converge.yml.
+#
+# Sub-modules explicitly skipped:
+#   l2_tailscale_enabled: false  (no Tailscale in Docker)
+#   l2_crowdsec_enabled: false   (opt-in, heavy)
+#   l2_compliance_enabled: false (opt-in evidence collection)
+#   l2_lynis_enabled: false      (opt-in audit)
+# ==============================================================================
+
+# ─── Hardening Profile ────────────────────────────────────────────────────────
+hardening_profile: server
+
+# ─── Firewall (dynamic: os_firewall_backend set in converge pre_tasks) ───────
+admin_cidr: "100.64.0.0/10"
+ssh_allowed_sources: "100.64.0.0/10"
+allowed_ports: []
+ufw_enable_ipv6: true
+nist_bootstrap: false
+controller_ip: undefined
+
+# ─── Kernel / sysctl hardening (NIST CM-7) ────────────────────────────────────
+kernel_randomize_va_space: 2
+kernel_kptr_restrict: 2
+kernel_dmesg_restrict: 1
+net_ipv4_tcp_syncookies: 1
+net_ipv4_conf_all_rp_filter: 1
+net_ipv4_conf_default_rp_filter: 1
+net_ipv4_icmp_echo_ignore_broadcasts: 1
+net_ipv4_icmp_ignore_bogus_error_responses: 1
+net_ipv4_conf_all_accept_redirects: 0
+net_ipv6_conf_all_accept_redirects: 0
+net_ipv4_conf_all_send_redirects: 0
+net_ipv4_conf_all_accept_source_route: 0
+net_ipv6_conf_all_accept_source_route: 0
+net_ipv6_conf_all_use_tempaddr: 2
+net_ipv6_conf_default_use_tempaddr: 2
+net_core_rmem_max: 25000000
+net_core_rmem_default: 25000000
+
+# ─── fail2ban (brute-force protection) ────────────────────────────────────────
+fail2ban_bantime: 3600
+fail2ban_maxretry: 3
+
+# ─── CrowdSec ─────────────────────────────────────────────────────────────────
+crowdsec_mode: enforcement
+
+# ─── SSH Crypto Hardening (CIS 5.2.14-5.2.16) ────────────────────────────────
+ssh_ciphers: "chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
+ssh_macs: "hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256"
+ssh_kex_algorithms: "curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha256"
+
+# ─── Auditd ───────────────────────────────────────────────────────────────────
+auditd_rules_file_mode: "0640"
+
+# ─── Tailscale (skipped but referenced) ───────────────────────────────────────
+tailscale_version: "1.98.8"
+l2_tailscale_subnet_router: false
+
+# ─── Groups ───────────────────────────────────────────────────────────────────
+proc_readers_group: proc_readers
+
+# ─── App path (for Caddy check - no Caddy in molecule) ─────────────────────
+app_base_dir: /opt/user/apps/dummy

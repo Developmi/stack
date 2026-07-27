@@ -1,0 +1,8 @@
+---
+- name: Verify SDD Specifications
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: "THEN: The system must meet the baseline state"
+      ansible.builtin.debug:
+        msg: "Implement SDD assertions here (ansible.builtin.assert)"

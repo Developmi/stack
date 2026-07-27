@@ -1,0 +1,70 @@
+global:
+  scrape_interval: {{ observability_scrape_interval }}
+  scrape_timeout: {{ observability_scrape_timeout }}
+  external_labels:
+    cluster: '{{ cluster_name }}'
+
+scrape_configs:
+  # --- Node Exporter (Host Metrics) ---
+  - job_name: 'node-exporter'
+    static_configs:
+{% for host in groups['all'] %}
+      - targets: ['{{ hostvars[host]['ansible_host'] }}:9100']
+        labels:
+          instance: '{{ host }}'
+{% endfor %}
+
+  # --- cAdvisor (Container Metrics) ---
+  - job_name: 'cadvisor'
+    static_configs:
+{% for host in groups['all'] %}
+      - targets: ['{{ hostvars[host]['ansible_host'] }}:{{ hostvars[host]['observability_cadvisor_port'] | default(observability_cadvisor_port) }}']
+        labels:
+          instance: '{{ host }}'
+{% endfor %}
+
+  # --- VictoriaMetrics (Self Monitoring) ---
+  - job_name: 'victoria-metrics'
+    static_configs:
+      - targets: ['localhost:8428']
+
+  # --- Blackbox Exporter (Self Monitoring) ---
+  - job_name: 'blackbox-exporter'
+    static_configs:
+      - targets: ['blackbox-exporter:{{ observability_blackbox_port }}']
+
+  # --- App Profile Scrape Jobs (L5-driven, graceful skip if app_profiles empty) ---
+{% for app in app_profiles | default([]) %}
+{% if app.monitoring is defined and app.monitoring.scrape_port is defined %}
+  - job_name: 'app_{{ app.name }}'
+    static_configs:
+      - targets: ['localhost:{{ app.monitoring.scrape_port }}']
+{% endif %}
+{% endfor %}
+
+  # --- Blackbox Health Probes (Profile-Driven) ---
+{% set probe_targets = [] %}
+{% for app in app_profiles | default([]) %}
+{% if app.monitoring is defined and app.monitoring.health_endpoint is defined and app.monitoring.health_port is defined %}
+{% set _ = probe_targets.append('http://' ~ app.name ~ ':' ~ app.monitoring.health_port | string ~ app.monitoring.health_endpoint) %}
+{% endif %}
+{% endfor %}
+{% if probe_targets | length > 0 %}
+  - job_name: 'blackbox-http'
+    scrape_interval: {{ observability_health_check_interval }}
+    metrics_path: /probe
+    params:
+      module: [{{ observability_blackbox_module }}]
+    static_configs:
+      - targets:
+{% for target in probe_targets %}
+          - '{{ target }}'
+{% endfor %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:{{ observability_blackbox_port }}
+{% endif %}

@@ -1,0 +1,29 @@
+---
+# L2 Compliance - Role-level dispatch to sub-roles
+# Each sub-role is gated by its enabled flag from defaults/main.yml.
+# Tags preserved at include level for selective execution.
+
+- name: "L2 | Include security hardening (SSH, fail2ban, UFW)"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/security/main.yml"
+  when: l2_security_enabled | default(true)
+  tags: [l2-compliance, security]
+
+- name: "L2 | Include user hardening"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/user_hardening/main.yml"
+  when: l2_user_hardening_enabled | default(true)
+  tags: [l2-compliance, user_hardening]
+
+- name: "L2 | Include Tailscale client"
+  ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/tailscale/main.yml"
+  when: l2_tailscale_enabled | default(true)
+  tags: [l2-compliance, tailscale]
+
+- name: "L2 | Include CrowdSec IPS (NIST SI-4)"
+  ansible.builtin.include_tasks: "{{ role_path }}/../nist_800_53/si-4/tasks/main.yml"
+  when: l2_crowdsec_enabled | default(false)
+  tags: [l2-compliance, nist, si-4]
+
+- name: "L2 | Include NIST 800-53 evidence collection"
+  ansible.builtin.include_tasks: "{{ role_path }}/../nist_800_53/tasks/main.yml"
+  when: l2_compliance_enabled | default(false)
+  tags: [l2-compliance, nist, compliance]

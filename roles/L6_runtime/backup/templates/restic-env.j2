@@ -1,0 +1,14 @@
+# /etc/restic/env - Managed by Ansible. DO NOT EDIT.
+# Credentials for Restic backup operations.
+# Format: KEY=value (systemd EnvironmentFile compatible - NO "export" prefix).
+# Permissions: 0600 root. Do NOT source as non-root.
+
+RESTIC_REPOSITORY={{ restic_repo_url }}
+RESTIC_PASSWORD_FILE=/etc/restic/password.key
+RESTIC_CACHE_DIR=/var/cache/restic
+AWS_ACCESS_KEY_ID={{ restic_r2_access_key_id }}
+AWS_SECRET_ACCESS_KEY={{ restic_r2_secret_access_key }}
+AWS_DEFAULT_REGION=auto
+RESTIC_R2_ACCOUNT_ID={{ restic_r2_account_id }}
+TELEGRAM_BOT_TOKEN={{ restic_telegram_bot_token }}
+TELEGRAM_CHAT_ID={{ restic_telegram_chat_id }}
