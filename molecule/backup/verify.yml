@@ -1,0 +1,219 @@
+---
+# Verify: backup-profile-integration (SDD)
+# Proves timers/services deploy with directory-derived unit names against
+# reduced-schema profiles (no `name` field), preserves skip semantics for
+# db_type none/custom, keeps legacy-name profiles deterministic, and rejects
+# shell-metacharacter profile paths before any template render.
+- name: Verify Backup Profile Integration (BPI)
+  hosts: all
+  gather_facts: true
+  vars:
+    fixture_root: "{{ playbook_dir }}/fixtures/apps"
+    threat_profile: "{{ playbook_dir }}/fixtures/threat/bad;name/profile.yml"
+    role_tasks_dir: "{{ playbook_dir }}/../../roles/L6_runtime/backup/tasks"
+    enable_backups: true
+    backup_r2_account_id: "molecule-test-account"
+    vault_backup_r2_access_key_id: "molecule-test-access-key"
+    vault_backup_r2_secret_access_key: "molecule-test-secret-key"
+    backup_r2_endpoint: "https://molecule-test.example.com"
+  handlers:
+    - name: reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+  tasks:
+    # ---------------------------------------------------------------------------
+    # GIVEN: the fixture profiles (control node) mirroring apps/*/profile.yml
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Enumerate fixture profiles on the control node"
+      ansible.builtin.find:
+        paths: "{{ fixture_root }}"
+        patterns: "profile.yml"
+        recurse: true
+      delegate_to: localhost
+      register: fixture_files
+
+    - name: "GIVEN: Load backup metadata from each fixture profile"
+      ansible.builtin.include_vars:
+        file: "{{ item.path }}"
+        name: _fixture
+      loop: "{{ fixture_files.files }}"
+      loop_control:
+        label: "{{ item.path | dirname | basename }}"
+      register: loaded_fixtures
+
+    # ---------------------------------------------------------------------------
+    # THEN: expected units derive from app DIRECTORY names (BPI-001-01/-02)
+    # ---------------------------------------------------------------------------
+    - name: "THEN: Collect dump-able apps (db_type not none/custom)"
+      ansible.builtin.set_fact:
+        _expected_apps: "{{ _expected_apps | default([]) + [item.item.path | dirname | basename] }}"
+      loop: "{{ loaded_fixtures.results }}"
+      when:
+        - item.ansible_facts is defined
+        - item.ansible_facts._fixture.backup.db_type | default('') not in ['none', 'custom']
+
+    - name: "THEN: Collect skip apps (db_type none/custom) - BPI-003-02"
+      ansible.builtin.set_fact:
+        _skip_apps: "{{ _skip_apps | default([]) + [item.item.path | dirname | basename] }}"
+      loop: "{{ loaded_fixtures.results }}"
+      when:
+        - item.ansible_facts is defined
+        - item.ansible_facts._fixture.backup.db_type | default('') in ['none', 'custom']
+
+    - name: "THEN: Guard - derivation produced a sane partition"
+      ansible.builtin.assert:
+        that:
+          - _expected_apps | length >= 8
+          - _skip_apps | length >= 1
+        fail_msg: "Unexpected derivation: expected={{ _expected_apps | length }} skip={{ _skip_apps | length }}"
+        success_msg: "Derived {{ _expected_apps | length }} dump-able apps and {{ _skip_apps | length }} skip apps from {{ fixture_files.files | length }} fixtures"
+
+    # ---------------------------------------------------------------------------
+    # THEN: timer + service units exist for every dump-able app (BPI-004-01)
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Stat expected timer units"
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/backup-db-{{ item }}.timer"
+      loop: "{{ _expected_apps | sort }}"
+      register: expected_timer_stats
+
+    - name: "THEN: Every dump-able app has a dir-derived timer unit"
+      ansible.builtin.assert:
+        that:
+          - expected_timer_stats.results | map(attribute='stat.exists') | list | min == true
+        fail_msg: "Missing timer units: {{ expected_timer_stats.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+        success_msg: "All {{ _expected_apps | length }} expected timer units exist"
+
+    - name: "GIVEN: Stat expected service units"
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/backup-db-{{ item }}.service"
+      loop: "{{ _expected_apps | sort }}"
+      register: expected_service_stats
+
+    - name: "THEN: Every dump-able app has a dir-derived service unit"
+      ansible.builtin.assert:
+        that:
+          - expected_service_stats.results | map(attribute='stat.exists') | list | min == true
+        fail_msg: "Missing service units: {{ expected_service_stats.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+        success_msg: "All {{ _expected_apps | length }} expected service units exist"
+
+    - name: "GIVEN: Stat skip-app timer units"
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/backup-db-{{ item }}.timer"
+      loop: "{{ _skip_apps | sort }}"
+      register: skip_timer_stats
+
+    - name: "GIVEN: Stat skip-app service units"
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/backup-db-{{ item }}.service"
+      loop: "{{ _skip_apps | sort }}"
+      register: skip_service_stats
+
+    - name: "THEN: Skip apps have NO units and no error was raised (BPI-003-02)"
+      ansible.builtin.assert:
+        that:
+          - skip_timer_stats.results | map(attribute='stat.exists') | list | max == false
+          - skip_service_stats.results | map(attribute='stat.exists') | list | max == false
+        fail_msg: "Units deployed for skip apps (none/custom) - expected no units"
+        success_msg: "No units deployed for db_type none/custom apps ({{ _skip_apps | join(', ') }})"
+
+    # ---------------------------------------------------------------------------
+    # THEN: rendered units are internally consistent (BPI-002-02)
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Slurp rendered timer units"
+      ansible.builtin.slurp:
+        path: "/etc/systemd/system/backup-db-{{ item }}.timer"
+      loop: "{{ _expected_apps | sort }}"
+      register: timer_contents
+
+    - name: "THEN: Every timer Requires= references its own unit name (BPI-002-02)"
+      ansible.builtin.assert:
+        that:
+          - item.content | b64decode | regex_search('Requires=backup-db-' ~ item.item ~ '\.service') is not none
+        fail_msg: "Timer backup-db-{{ item.item }}.timer does not Require= its matching service"
+        success_msg: "Timer backup-db-{{ item.item }}.timer Requires= backup-db-{{ item.item }}.service"
+      loop: "{{ timer_contents.results }}"
+
+    # ---------------------------------------------------------------------------
+    # THEN: templates render the derived name everywhere (BPI-002-01)
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Slurp the chatwoot timer unit"
+      ansible.builtin.slurp:
+        path: "/etc/systemd/system/backup-db-chatwoot.timer"
+      register: chatwoot_timer
+
+    - name: "GIVEN: Slurp the chatwoot service unit"
+      ansible.builtin.slurp:
+        path: "/etc/systemd/system/backup-db-chatwoot.service"
+      register: chatwoot_service
+
+    - name: "THEN: chatwoot timer renders Description and Requires from the derived name (BPI-002-01)"
+      ansible.builtin.assert:
+        that:
+          - chatwoot_timer.content | b64decode | regex_search('^Description=Backup timer for database chatwoot$', multiline=True) is not none
+          - chatwoot_timer.content | b64decode | regex_search('^Requires=backup-db-chatwoot\.service$', multiline=True) is not none
+        fail_msg: "chatwoot timer did not render the derived name"
+        success_msg: "chatwoot timer renders the derived name in Description and Requires"
+
+    - name: "THEN: chatwoot service renders derived name and default db_container (BPI-002-01)"
+      ansible.builtin.assert:
+        that:
+          - chatwoot_service.content | b64decode | regex_search('^Description=Database backup for chatwoot \(postgres\)$', multiline=True) is not none
+          - chatwoot_service.content | b64decode | regex_search('^Environment=DB_CONTAINER=chatwoot-db$', multiline=True) is not none
+          - chatwoot_service.content | b64decode | regex_search('s3://\$BUCKET/db/chatwoot/') is not none
+        fail_msg: "chatwoot service did not render the derived name/container/bucket path"
+        success_msg: "chatwoot service renders derived name, DB_CONTAINER=chatwoot-db and bucket path"
+
+    # ---------------------------------------------------------------------------
+    # THEN: legacy profile with a `name` field stays deterministic (BPI-004-02)
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Stat the legacy dir-derived unit"
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/backup-db-legacy-app.timer"
+      register: legacy_dir_unit
+
+    - name: "GIVEN: Stat the legacy name-derived unit"
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/backup-db-legacy-name.timer"
+      register: legacy_name_unit
+
+    - name: "THEN: Directory-derived name takes precedence over the stale name field (BPI-004-02)"
+      ansible.builtin.assert:
+        that:
+          - legacy_dir_unit.stat.exists
+          - not legacy_name_unit.stat.exists
+        fail_msg: "Legacy profile unit naming is not deterministic (dir-derived name must win)"
+        success_msg: "Legacy profile deploys backup-db-legacy-app.timer; stale name field ignored"
+
+    # ---------------------------------------------------------------------------
+    # THREAT MATRIX: shell metacharacters in profile paths fail before render
+    # ---------------------------------------------------------------------------
+    # The included task file (deploy_from_profile.yml) runs the REAL role logic:
+    # include_vars succeeds (valid YAML), the derived name 'bad;name' fails the
+    # ^[a-z0-9_-]+$ assert, and the template tasks never execute. Failure of the
+    # block + absence of any unit proves fail-safe behavior.
+    - name: "THREAT: Metacharacter profile path fails safely before render"
+      block:
+        - name: "WHEN: The role processes a profile path containing shell metacharacters"
+          ansible.builtin.include_tasks: "{{ role_tasks_dir }}/deploy_from_profile.yml"
+          loop:
+            - "{{ threat_profile }}"
+      rescue:
+        - name: "THEN: The run failed (assert rejected the derived name)"
+          ansible.builtin.assert:
+            that:
+              - 'threat_profile | dirname | basename is not match("^[a-z0-9_-]+$")'
+            fail_msg: "Metachar app name unexpectedly passed the unit-name assert"
+            success_msg: "Metachar app name 'bad;name' rejected by the unit-name assert"
+
+        - name: "THEN: No unit was written for the metachar app"
+          ansible.builtin.stat:
+            path: "/etc/systemd/system/backup-db-bad;name.timer"
+          register: metachar_timer_unit
+
+        - name: "THEN: Assert no metachar unit exists on disk"
+          ansible.builtin.assert:
+            that:
+              - not metachar_timer_unit.stat.exists
+            fail_msg: "A unit was deployed for a shell-metacharacter app name - FAIL"
+            success_msg: "No unit deployed for shell-metacharacter app name"

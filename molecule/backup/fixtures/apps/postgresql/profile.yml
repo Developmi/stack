@@ -1,0 +1,33 @@
+---
+# PostgreSQL - Relational database server (L5)
+supported_arch: [amd64, arm64]
+depends_on: []
+
+monitoring:
+  enabled: true
+  # TCP-based health (no HTTP endpoint); declarative metadata only
+  health_endpoint: "/"
+  health_port: 5432
+  scrape_port: 5432
+
+compliance_tags:
+  - cis-docker:4.1
+  - cis-docker:4.5
+  - cis-docker:5.1
+  - cis-os:5.1.2
+  - soc2:cc6.1
+  - soc2:cc6.6
+  - iso27001:a.8.2.3
+  - iso27001:a.12.4.1
+
+dr_tier: tier2
+
+backup:
+  method: pg_dump
+  schedule: "*-*-* 02:30:00"
+  retention_daily: 14
+  retention_weekly: 8
+  retention_monthly: 12
+  verification: quarterly-restore-test
+  db_type: postgres
+  db_name: postgres

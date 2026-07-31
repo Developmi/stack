@@ -1,0 +1,30 @@
+---
+# Molecule test variables for the backup layer scenario
+# (SDD capability: backup-profile-integration).
+#
+# R2 variables are DUMMY values that satisfy the role's vault-var assert
+# (timers.yml). No backup is executed in this scenario - only systemd
+# timer/service units are deployed and asserted.
+
+enable_backups: true
+backup_r2_account_id: "molecule-test-account"
+vault_backup_r2_access_key_id: "molecule-test-access-key"
+vault_backup_r2_secret_access_key: "molecule-test-secret-key"
+backup_r2_endpoint: "https://molecule-test.example.com"
+backup_r2_bucket: "molecule-backups"
+
+# Fixture apps mirrored from apps/*/profile.yml (reduced schema).
+# legacy-app carries a stale `name` field on purpose (BPI-004-02 regression).
+fixture_apps:
+  - chatwoot
+  - clickhouse
+  - legacy-app
+  - mariadb
+  - metabase
+  - n8n
+  - nocodb
+  - openlit
+  - openwebui
+  - postgresql
+  - twenty-crm
+  - uptime-kuma

@@ -3,9 +3,15 @@
 # Orchestrator: backup-timers role main.yml
 # =============================================================================
 # Source of truth: app profiles on disk (apps/*/profile.yml) per ADR-03.
-# Flow: fileglob scan → include_vars each profile → deploy DB timer when
-#       profile.backup is defined → flush handlers → enable+start timers.
+# Flow: find scan (controller side) → include_vars each profile → deploy DB
+#       timer when profile.backup is defined → flush handlers → enable+start.
 # Independent: no dependency on apps.yml or runtime facts.
+#
+# NOTE: with_fileglob cannot express `apps/*/profile.yml` under
+# ansible-core 2.21.1. The fileglob lookup splits the term into dir+basename
+# and resolves the dir part via the search path, so a wildcard in the
+# directory segment matches nothing. The find module on the controller is
+# used instead - app profiles live on the controller, not on managed hosts.
 # =============================================================================
 
 # NOTE: backup_r2_account_id is stored directly in vault (shared with restic role, no vault_ prefix),
@@ -26,10 +32,20 @@
   when: enable_backups | default(false) | bool
   tags: [l6-runtime, backup_timers]
 
+- name: "Collect app profile files (controller side)"
+  ansible.builtin.find:
+    paths: "{{ inventory_dir }}/../../apps"
+    patterns: "profile.yml"
+    recurse: true
+    file_type: file
+  delegate_to: localhost
+  become: false
+  register: app_profiles
+  tags: [l6-runtime, backup_timers]
+
 - name: "Process each app profile for backup timers"
   ansible.builtin.include_tasks: deploy_from_profile.yml
-  with_fileglob:
-    - "{{ inventory_dir }}/../../apps/*/profile.yml"
+  loop: "{{ app_profiles.files | map(attribute='path') | list | sort }}"
   tags: [l6-runtime, backup_timers]
 
 - name: "Flush handlers (systemd daemon-reload)"

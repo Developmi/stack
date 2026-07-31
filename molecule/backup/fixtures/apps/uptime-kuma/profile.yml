@@ -1,0 +1,30 @@
+---
+# Uptime Kuma - Uptime monitoring (L5)
+supported_arch: [amd64, arm64]
+depends_on: []
+
+monitoring:
+  enabled: true
+  health_endpoint: "/"
+  health_port: 3001
+  scrape_port: 3001
+
+compliance_tags:
+  - cis-docker:4.1
+  - cis-docker:5.1
+  - cis-os:5.1.2
+  - soc2:cc6.1
+  - iso27001:a.8.2.3
+
+dr_tier: tier2
+
+backup:
+  method: file-volume
+  schedule: "*-*-* 02:30:00"
+  retention_daily: 14
+  retention_weekly: 8
+  retention_monthly: 12
+  verification: quarterly-restore-test
+  db_type: sqlite
+  db_name: uptime_kuma
+  volume_name: uptime-kuma_data

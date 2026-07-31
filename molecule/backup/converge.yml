@@ -1,0 +1,75 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  pre_tasks:
+    - name: "Molecule | Include backup test variables"
+      ansible.builtin.include_vars:
+        file: vars.yml
+      tags: [always]
+
+    # The role scans apps/*/profile.yml relative to inventory_dir (timers.yml
+    # uses the find module on the controller, which resolves to
+    # inventory_dir/../../apps). In Molecule the generated inventory lives
+    # under ~/.ansible/tmp/molecule.<run>.backup/, so inventory_dir/../../apps
+    # resolves to ~/.ansible/tmp/apps. Fixture profiles are staged there at
+    # runtime (control node) so the ROLE's real discovery path is exercised
+    # unchanged.
+    - name: "Molecule | Resolve role fileglob root (inventory_dir/../../apps)"
+      ansible.builtin.set_fact:
+        _profile_root: "{{ (inventory_dir + '/../../apps') | realpath }}"
+      tags: [always]
+
+    - name: "Molecule | Ensure fixture app directories exist"
+      ansible.builtin.file:
+        path: "{{ _profile_root }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: "{{ fixture_apps }}"
+      delegate_to: localhost
+      become: false
+      tags: [always]
+
+    - name: "Molecule | Stage fixture profiles under the role fileglob root"
+      ansible.builtin.copy:
+        src: "fixtures/apps/{{ item }}/profile.yml"
+        dest: "{{ _profile_root }}/{{ item }}/profile.yml"
+        mode: "0644"
+      loop: "{{ fixture_apps }}"
+      delegate_to: localhost
+      become: false
+      tags: [always]
+
+    - name: "Molecule | Verify the role discovery resolves every fixture"
+      ansible.builtin.find:
+        paths: "{{ _profile_root }}"
+        patterns: "profile.yml"
+        recurse: true
+        file_type: file
+      delegate_to: localhost
+      become: false
+      register: staged_profiles
+      tags: [always]
+
+    - name: "Molecule | Assert staged profile count"
+      ansible.builtin.assert:
+        that:
+          - staged_profiles.files | length == fixture_apps | length
+        fail_msg: "Role discovery sees {{ staged_profiles.files | length }} profiles, expected {{ fixture_apps | length }}"
+        success_msg: "Role discovery resolves all {{ fixture_apps | length }} fixture profiles"
+      tags: [always]
+
+  roles:
+    - role: L6_runtime/backup
+      vars:
+        backup_role_source: timers
+
+  post_tasks:
+    - name: "Post | List deployed backup timer units"
+      ansible.builtin.command: systemctl list-unit-files --type=timer --no-legend
+      register: deployed_timers
+      changed_when: false
+
+    - name: "Post | Show deployed timer units"
+      ansible.builtin.debug:
+        var: deployed_timers.stdout_lines

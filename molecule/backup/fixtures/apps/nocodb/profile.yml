@@ -1,0 +1,32 @@
+---
+# NocoDB - Database-spreadsheet hybrid (L5)
+supported_arch: [amd64, arm64]
+depends_on: []
+
+monitoring:
+  enabled: true
+  health_endpoint: "/api/v1/health"
+  health_port: 8080
+  scrape_port: 8080
+
+compliance_tags:
+  - cis-docker:4.1
+  - cis-docker:4.5
+  - cis-docker:5.1
+  - cis-os:5.1.2
+  - soc2:cc6.1
+  - soc2:cc6.6
+  - iso27001:a.8.2.3
+  - iso27001:a.12.4.1
+
+dr_tier: tier1
+
+backup:
+  method: pg_dump
+  schedule: "*-*-* 00/4:00:00"
+  retention_daily: 7
+  retention_weekly: 4
+  retention_monthly: 12
+  verification: monthly-restore-test
+  db_type: postgres
+  db_name: nocodb

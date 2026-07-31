@@ -1,0 +1,32 @@
+---
+# Legacy fixture: pre-migration profile that still carries a `name` field.
+# SDD BPI-004-02: the directory-derived name MUST take precedence and unit
+# naming must stay deterministic (backup-db-legacy-app.*, NOT legacy-name).
+name: legacy-name
+supported_arch: [amd64]
+depends_on: []
+
+monitoring:
+  enabled: true
+  health_endpoint: "/"
+  health_port: 9000
+  scrape_port: 9000
+
+compliance_tags:
+  - cis-docker:4.1
+  - cis-docker:5.1
+  - cis-os:5.1.2
+  - soc2:cc6.1
+  - iso27001:a.8.2.3
+
+dr_tier: tier1
+
+backup:
+  method: pg_dump
+  schedule: "*-*-* 00/4:00:00"
+  retention_daily: 7
+  retention_weekly: 4
+  retention_monthly: 12
+  verification: monthly-restore-test
+  db_type: postgres
+  db_name: legacy

@@ -1,0 +1,31 @@
+---
+# Threat fixture: profile path contains a shell metacharacter (`;`).
+# SDD threat matrix: the role MUST reject the derived app name
+# (^[a-z0-9_-]+$) before any template render and write no unit.
+supported_arch: [amd64]
+depends_on: []
+
+monitoring:
+  enabled: true
+  health_endpoint: "/"
+  health_port: 9000
+  scrape_port: 9000
+
+compliance_tags:
+  - cis-docker:4.1
+  - cis-docker:5.1
+  - cis-os:5.1.2
+  - soc2:cc6.1
+  - iso27001:a.8.2.3
+
+dr_tier: tier2
+
+backup:
+  method: pg_dump
+  schedule: "*-*-* 02:30:00"
+  retention_daily: 14
+  retention_weekly: 8
+  retention_monthly: 12
+  verification: quarterly-restore-test
+  db_type: postgres
+  db_name: evil

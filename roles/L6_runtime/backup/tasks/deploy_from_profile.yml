@@ -1,8 +1,9 @@
 ---
 # Sub-task: process one profile file for backup timers
-# Included by main.yml via with_fileglob over apps/*/profile.yml.
-# Loads profile vars, deploys DB timer+service when backup key is defined,
-# and enables/starts the timer.
+# Included by timers.yml via a loop over the controller-side profile files.
+# Loads profile vars, derives the app name from the profile PATH (not from
+# profile content - the reduced schema dropped the `name` field), deploys DB
+# timer+service when backup key is defined, and enables/starts the timer.
 
 - name: "Load profile variables"
   ansible.builtin.include_vars:
@@ -11,10 +12,33 @@
   tags: [l6-runtime, backup_timers]
   # ponytail: systemd validates OnCalendar itself, regex assert was too restrictive
 
-- name: "Deploy backup-db-{{ _p.name }}.timer"
+- name: "Derive app name from profile path"
+  ansible.builtin.set_fact:
+    _app_name: "{{ item | dirname | basename }}"
+  when: enable_backups | default(false) | bool
+  tags: [l6-runtime, backup_timers]
+  # SDD backup-profile-integration: the app name comes from the directory
+  # holding profile.yml (apps/<app>/profile.yml -> <app>). The `name` field
+  # was dropped from the reduced schema; a stale `name` must NOT be used.
+
+- name: "Validate derived app name (systemd unit safety)"
+  ansible.builtin.assert:
+    that:
+      - _app_name is match('^[a-z0-9_-]+$')
+    fail_msg: >-
+      Invalid app name '{{ _app_name }}' derived from profile path
+      '{{ item }}'. App directory names must match ^[a-z0-9_-]+$
+      (systemd unit-name safety).
+    quiet: true
+  when: enable_backups | default(false) | bool
+  tags: [l6-runtime, backup_timers]
+  # Threat matrix: shell metacharacters in profile paths are rejected before
+  # any template render (ExecStart interpolation), so no unit is written.
+
+- name: "Deploy backup-db-{{ _app_name }}.timer"
   ansible.builtin.template:
     src: backup-db.timer.j2
-    dest: "/etc/systemd/system/backup-db-{{ _p.name }}.timer"
+    dest: "/etc/systemd/system/backup-db-{{ _app_name }}.timer"
     mode: "0644"
   notify: reload systemd
   # skip none/custom - these apps don't have a dump-able DB engine
@@ -24,10 +48,10 @@
     - _p.backup.db_type | default('') not in ['none', 'custom']
   tags: [l6-runtime, backup_timers]
 
-- name: "Deploy backup-db-{{ _p.name }}.service"
+- name: "Deploy backup-db-{{ _app_name }}.service"
   ansible.builtin.template:
     src: backup-db.service.j2
-    dest: "/etc/systemd/system/backup-db-{{ _p.name }}.service"
+    dest: "/etc/systemd/system/backup-db-{{ _app_name }}.service"
     mode: "0644"
   notify: reload systemd
   when:
@@ -36,9 +60,9 @@
     - _p.backup.db_type | default('') not in ['none', 'custom']
   tags: [l6-runtime, backup_timers]
 
-- name: "Enable and start backup-db-{{ _p.name }}.timer"
+- name: "Enable and start backup-db-{{ _app_name }}.timer"
   ansible.builtin.systemd:
-    name: "backup-db-{{ _p.name }}.timer"
+    name: "backup-db-{{ _app_name }}.timer"
     enabled: true
     state: started
     daemon_reload: true
