@@ -1,3 +1,175 @@
-# Docker Compose — user-managed
+# Docker Compose - user-managed
 # This stack does NOT deploy applications.
 # The operator is responsible for providing their own compose file.
+
+x-chatwoot-env: &chatwoot_env
+  - FRONTEND_URL=${CHATWOOT_FRONTEND_URL:-https://chat.example.com}
+  - SECRET_KEY_BASE=${CHATWOOT_SECRET_KEY_BASE}
+  - POSTGRES_DATABASE=chatwoot_production
+  - POSTGRES_HOST=chatwoot-db
+  - POSTGRES_PORT=${CHATWOOT_DB_PORT:-5432}
+  - POSTGRES_USERNAME=${CHATWOOT_DB_USER}
+  - POSTGRES_PASSWORD=${CHATWOOT_DB_PASSWORD}
+  - REDIS_URL=redis://default:${CHATWOOT_REDIS_PASSWORD}@chatwoot-valkey:6379
+  - RAILS_ENV=production
+  - INSTALLATION_ENV=docker
+  - MAILER_SENDER_EMAIL=${CHATWOOT_MAILER_SENDER_EMAIL}
+  - SMTP_ADDRESS=${CHATWOOT_SMTP_ADDRESS}
+  - SMTP_USERNAME=${CHATWOOT_SMTP_USERNAME}
+  - SMTP_PASSWORD=${CHATWOOT_SMTP_PASSWORD}
+  - ACTION_CABLE_DISABLE_REQUEST_FORGERY_PROTECTION=true
+
+services:
+  chatwoot-db:
+    image: ${CHATWOOT_DB_IMAGE:-pgvector/pgvector:0.8.6-pg17}
+    restart: always
+    container_name: chatwoot-db
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/postgresql
+    environment:
+      POSTGRES_USER: ${CHATWOOT_DB_USER}
+      POSTGRES_PASSWORD: ${CHATWOOT_DB_PASSWORD}
+      POSTGRES_DB: chatwoot_production
+    volumes:
+      - chatwoot_db_data:/var/lib/postgresql/data
+    networks:
+      - chatwoot_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CHATWOOT_DB_USER} -d chatwoot_production"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  chatwoot-valkey:
+    image: ${CHATWOOT_VALKEY_IMAGE:-valkey/valkey:9.1.1}
+    restart: always
+    container_name: chatwoot-valkey
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+    command: ["valkey-server", "--requirepass", "${CHATWOOT_REDIS_PASSWORD}"]
+    volumes:
+      - chatwoot_valkey_data:/data
+    networks:
+      - chatwoot_net
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a ${CHATWOOT_REDIS_PASSWORD} ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+        reservations:
+          memory: 64m
+
+  chatwoot-web:
+    image: ${CHATWOOT_IMAGE:-chatwoot/chatwoot:v4.13.0}
+    restart: unless-stopped
+    container_name: chatwoot
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    depends_on:
+      chatwoot-db:
+        condition: service_healthy
+      chatwoot-valkey:
+        condition: service_healthy
+    entrypoint: docker/entrypoints/rails.sh
+    command: ["bundle", "exec", "rails", "s", "-p", "3000", "-b", "0.0.0.0"]
+    environment: *chatwoot_env
+    volumes:
+      - chatwoot_storage:/app/storage
+    networks:
+      - chatwoot_net
+      - expose_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  chatwoot-worker:
+    image: ${CHATWOOT_IMAGE:-chatwoot/chatwoot:v4.13.0}
+    restart: unless-stopped
+    container_name: chatwoot-worker
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    depends_on:
+      chatwoot-web:
+        condition: service_healthy
+    entrypoint: docker/entrypoints/rails.sh
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    environment: *chatwoot_env
+    volumes:
+      - chatwoot_storage:/app/storage
+    networks:
+      - chatwoot_net
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep '[s]idekiq' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+volumes:
+  chatwoot_db_data: {}
+  chatwoot_valkey_data: {}
+  chatwoot_storage: {}
+
+networks:
+  expose_network:
+    external: true
+  chatwoot_net:
+    driver: bridge

@@ -1,0 +1,55 @@
+# Docker Compose - user-managed
+# This stack does NOT deploy applications.
+# The operator is responsible for providing their own compose file.
+
+services:
+  mariadb:
+    image: ${MARIADB_IMAGE:-mariadb:11.4.12}
+    container_name: mariadb
+    restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/mysqld
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-mariadb}
+      MARIADB_USER: ${MARIADB_USER:-mariadb}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - mariadb_net
+      - expose_network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+volumes:
+  mariadb_data: {}
+
+networks:
+  expose_network:
+    external: true
+  mariadb_net:
+    driver: bridge

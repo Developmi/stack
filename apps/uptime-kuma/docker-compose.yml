@@ -1,3 +1,61 @@
-# Docker Compose — user-managed
+# Docker Compose - user-managed
 # This stack does NOT deploy applications.
 # The operator is responsible for providing their own compose file.
+
+x-uptime-kuma-env: &uptime_kuma_env
+  UPTIME_KUMA_PORT: ${UPTIME_KUMA_PORT:-3001}
+  UPTIME_KUMA_HOST: ${UPTIME_KUMA_HOST:-0.0.0.0}
+  UPTIME_KUMA_DB_TYPE: ${UPTIME_KUMA_DB_TYPE:-sqlite}
+  UPTIME_KUMA_RATELIMIT: ${UPTIME_KUMA_RATELIMIT:-true}
+  UPTIME_KUMA_WS_MESSAGE_COMPRESSION: ${UPTIME_KUMA_WS_MESSAGE_COMPRESSION:-false}
+  UPTIME_KUMA_DISABLE_FRAME_SAMEORIGIN: ${UPTIME_KUMA_DISABLE_FRAME_SAMEORIGIN:-false}
+  UPTIME_KUMA_DISABLE_LOGO: ${UPTIME_KUMA_DISABLE_LOGO:-false}
+  UPTIME_KUMA_DISABLE_AUTH: ${UPTIME_KUMA_DISABLE_AUTH:-false}
+
+services:
+  uptime-kuma:
+    image: ${UPTIME_KUMA_IMAGE:-louislam/uptime-kuma:2.4.0}
+    container_name: uptime-kuma
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment: *uptime_kuma_env
+    volumes:
+      - uptime-kuma_data:/app/data
+    ports:
+      - "127.0.0.1:3001:3001"
+    networks:
+      - uptime-kuma_net
+      - expose_network
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:${UPTIME_KUMA_PORT:-3001}/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+        reservations:
+          memory: 128m
+
+volumes:
+  uptime-kuma_data:
+    name: uptime-kuma_data
+
+networks:
+  expose_network:
+    external: true
+  uptime-kuma_net:
+    driver: bridge

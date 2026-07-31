@@ -1,3 +1,145 @@
-# Docker Compose — user-managed
+# Docker Compose - user-managed
 # This stack does NOT deploy applications.
 # The operator is responsible for providing their own compose file.
+
+x-openwebui-env: &openwebui_env
+  ENV: ${OPENWEBUI_ENV:-prod}
+  WEBUI_AUTH: ${OPENWEBUI_AUTH:-true}
+  WEBUI_NAME: ${OPENWEBUI_NAME:-OpenWebUI}
+  WEBUI_URL: ${OPENWEBUI_URL:-http://localhost:8080}
+  WEBUI_SECRET_KEY: ${OPENWEBUI_SECRET_KEY}
+  ANONYMIZED_TELEMETRY: ${OPENWEBUI_ANONYMIZED_TELEMETRY:-false}
+  ENABLE_SIGNUP: ${OPENWEBUI_ENABLE_SIGNUP:-false}
+  ENABLE_LOGIN: ${OPENWEBUI_ENABLE_LOGIN:-true}
+  ENABLE_FORWARD_USER_INFO_HEADERS: ${OPENWEBUI_ENABLE_FORWARD_USER_INFO_HEADERS:-true}
+  ENABLE_FOLLOW_UP_GENERATION: ${OPENWEBUI_ENABLE_FOLLOW_UP_GENERATION:-false}
+  ENABLE_TITLE_GENERATION: ${OPENWEBUI_ENABLE_TITLE_GENERATION:-true}
+  DATABASE_URL: postgresql://${OPENWEBUI_DB_USER:-openwebui}:${OPENWEBUI_DB_PASSWORD}@${OPENWEBUI_DB_HOST:-postgres}:${OPENWEBUI_DB_PORT:-5432}/${OPENWEBUI_DB_NAME:-openwebui}
+  REDIS_URL: redis://default:${OPENWEBUI_REDIS_PASSWORD}@${OPENWEBUI_REDIS_HOST:-valkey}:${OPENWEBUI_REDIS_PORT:-6379}
+
+services:
+  postgres:
+    image: ${OPENWEBUI_DB_IMAGE:-postgres:17.10-alpine}
+    container_name: openwebui-db
+    restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/postgresql
+    environment:
+      POSTGRES_USER: ${OPENWEBUI_DB_USER:-openwebui}
+      POSTGRES_PASSWORD: ${OPENWEBUI_DB_PASSWORD}
+      POSTGRES_DB: ${OPENWEBUI_DB_NAME:-openwebui}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - openwebui_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  valkey:
+    image: ${OPENWEBUI_VALKEY_IMAGE:-valkey/valkey:9.1.1}
+    container_name: openwebui-cache
+    restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+    command:
+      - valkey-server
+      - --requirepass
+      - ${OPENWEBUI_REDIS_PASSWORD}
+      - --save
+      - "60"
+      - "1"
+      - --loglevel
+      - warning
+    volumes:
+      - valkey_data:/data
+    networks:
+      - openwebui_net
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a $${OPENWEBUI_REDIS_PASSWORD} ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+        reservations:
+          memory: 128m
+
+  openwebui:
+    image: ${OPENWEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.11.0}
+    container_name: openwebui
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /root/.cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    environment: *openwebui_env
+    volumes:
+      - openwebui_data:/app/backend/data
+    networks:
+      - openwebui_net
+      - expose_network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 512m
+
+volumes:
+  postgres_data: {}
+  valkey_data: {}
+  openwebui_data: {}
+
+networks:
+  expose_network:
+    external: true
+  openwebui_net:
+    driver: bridge

@@ -1,3 +1,163 @@
-# Docker Compose — user-managed
+# Docker Compose - user-managed
 # This stack does NOT deploy applications.
 # The operator is responsible for providing their own compose file.
+
+x-twenty-env: &twenty_env
+  SERVER_URL: ${TWENTY_SERVER_URL}
+  APP_SECRET: ${TWENTY_APP_SECRET}
+  ENCRYPTION_KEY: ${TWENTY_ENCRYPTION_KEY}
+  PG_DATABASE_URL: postgres://${TWENTY_DB_USER}:${TWENTY_DB_PASSWORD}@twenty-db:5432/twenty
+  REDIS_URL: redis://default:${TWENTY_REDIS_PASSWORD}@twenty-valkey:6379
+
+services:
+  twenty-db:
+    image: ${TWENTY_DB_IMAGE:-postgres:17.10-alpine}
+    container_name: twenty-db
+    restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/postgresql
+    environment:
+      POSTGRES_USER: ${TWENTY_DB_USER}
+      POSTGRES_PASSWORD: ${TWENTY_DB_PASSWORD}
+      POSTGRES_DB: twenty
+    volumes:
+      - twenty_db_data:/var/lib/postgresql/data
+    networks:
+      - twenty_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d twenty"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  twenty-valkey:
+    image: ${TWENTY_VALKEY_IMAGE:-valkey/valkey:9.1.1}
+    container_name: twenty-valkey
+    restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+    command:
+      - valkey-server
+      - --requirepass
+      - ${TWENTY_REDIS_PASSWORD}
+    volumes:
+      - twenty_valkey_data:/data
+    networks:
+      - twenty_net
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a $${TWENTY_REDIS_PASSWORD} ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+        reservations:
+          memory: 128m
+
+  twenty:
+    image: ${TWENTY_IMAGE:-twentycrm/twenty:v2.26.0}
+    container_name: twenty
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      twenty-db:
+        condition: service_healthy
+      twenty-valkey:
+        condition: service_healthy
+    environment: *twenty_env
+    volumes:
+      - twenty_storage:/app/storage
+    networks:
+      - twenty_net
+      - expose_network
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/healthz || wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/ || exit 1"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 512m
+
+  twenty-worker:
+    image: ${TWENTY_IMAGE:-twentycrm/twenty:v2.26.0}
+    container_name: twenty-worker
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    command: ["yarn", "worker:prod"]
+    depends_on:
+      twenty-db:
+        condition: service_healthy
+      twenty-valkey:
+        condition: service_healthy
+    environment: *twenty_env
+    volumes:
+      - twenty_storage:/app/storage
+    networks:
+      - twenty_net
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+volumes:
+  twenty_db_data: {}
+  twenty_storage: {}
+  twenty_valkey_data: {}
+
+networks:
+  expose_network:
+    external: true
+  twenty_net:
+    driver: bridge

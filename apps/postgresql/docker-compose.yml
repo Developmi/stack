@@ -1,0 +1,53 @@
+# Docker Compose - user-managed
+# This stack does NOT deploy applications.
+# The operator is responsible for providing their own compose file.
+
+services:
+  postgresql:
+    image: ${POSTGRESQL_IMAGE:-postgres:17.10-alpine}
+    container_name: postgresql
+    restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/postgresql
+    environment:
+      POSTGRES_USER: ${POSTGRESQL_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRESQL_PASSWORD}
+      POSTGRES_DB: ${POSTGRESQL_DB:-postgres}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+    networks:
+      - postgresql_net
+      - expose_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+volumes:
+  postgresql_data: {}
+
+networks:
+  expose_network:
+    external: true
+  postgresql_net:
+    driver: bridge

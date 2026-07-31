@@ -1,24 +1,32 @@
 ---
-# Twenty CRM - Customer Relationship Management (L5)
-name: twenty-crm
-version: "0.40.7"
-supported_arch: [amd64]
-target_group: muscle-3
-
+# Twenty CRM - Customer relationship management (L5)
+supported_arch: [amd64, arm64]
 depends_on: []
 
-backup:
-  schedule: "*-*-* 00/4:00:00"
-  retention_daily: 7
-  retention_weekly: 4
-  retention_monthly: 12
-  db_type: postgres
-  db_name: twenty
-
 monitoring:
+  enabled: true
   health_endpoint: "/health"
   health_port: 3000
   scrape_port: 3000
 
-compliance_tags: [nist, ac-2, nist, sc-7, nist, sc-8, nist, sc-28]
-dr_tier: critical
+compliance_tags:
+  - cis-docker:4.1
+  - cis-docker:4.5
+  - cis-docker:5.1
+  - cis-os:5.1.2
+  - soc2:cc6.1
+  - soc2:cc6.6
+  - iso27001:a.8.2.3
+  - iso27001:a.12.4.1
+
+dr_tier: tier1
+
+backup:
+  method: pg_dump
+  schedule: "*-*-* 00/4:00:00"
+  retention_daily: 7
+  retention_weekly: 4
+  retention_monthly: 12
+  verification: monthly-restore-test
+  db_type: postgres
+  db_name: twenty

@@ -1,11 +1,12 @@
 ---
-# Metabase - Analytics / BI platform (L5)
+# OpenLit - LLM observability platform (L5)
+# Tier3: best-effort; file-volume backup declared, execution is future work.
 supported_arch: [amd64, arm64]
 depends_on: []
 
 monitoring:
   enabled: true
-  health_endpoint: "/api/health"
+  health_endpoint: "/"
   health_port: 3000
   scrape_port: 3000
 
@@ -19,14 +20,14 @@ compliance_tags:
   - iso27001:a.8.2.3
   - iso27001:a.12.4.1
 
-dr_tier: tier1
+dr_tier: tier3
 
 backup:
-  method: pg_dump
-  schedule: "*-*-* 00/4:00:00"
-  retention_daily: 7
+  method: file-volume
+  schedule: "Sun *-*-* 03:00:00"
+  retention_daily: 0
   retention_weekly: 4
-  retention_monthly: 12
-  verification: monthly-restore-test
-  db_type: postgres
-  db_name: metabase
+  retention_monthly: 6
+  verification: none
+  db_type: none
+  db_name: ""

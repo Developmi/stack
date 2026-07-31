@@ -1,3 +1,103 @@
-# Docker Compose — user-managed
+# Docker Compose - user-managed
 # This stack does NOT deploy applications.
 # The operator is responsible for providing their own compose file.
+
+x-metabase-env: &metabase_env
+  - MB_DB_TYPE=postgres
+  - MB_DB_DBNAME=${METABASE_DB_NAME:-metabase}
+  - MB_DB_PORT=${METABASE_DB_PORT:-5432}
+  - MB_DB_USER=${METABASE_DB_USER}
+  - MB_DB_PASS=${METABASE_DB_PASSWORD}
+  - MB_DB_HOST=${METABASE_DB_HOST:-metabase-db}
+  - MB_SITE_NAME=${METABASE_SITE_NAME:-Metabase}
+  - MB_SITE_URL=${METABASE_SITE_URL:-https://metabase.example.com}
+  - JAVA_TIMEZONE=${METABASE_JAVA_TIMEZONE:-UTC}
+  - MB_QUERY_CACHING_MAX_KB=${METABASE_QUERY_CACHING_MAX_KB}
+  - MB_QUERY_CACHING_MAX_TTL=${METABASE_QUERY_CACHING_MAX_TTL}
+
+services:
+  metabase-db:
+    image: ${METABASE_DB_IMAGE:-postgres:17.10-alpine}
+    restart: always
+    container_name: metabase-db
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/postgresql
+    environment:
+      - POSTGRES_USER=${METABASE_DB_USER}
+      - POSTGRES_PASSWORD=${METABASE_DB_PASSWORD}
+      - POSTGRES_DB=${METABASE_DB_NAME:-metabase}
+    volumes:
+      - metabase_db_data:/var/lib/postgresql/data
+    networks:
+      - metabase_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  metabase:
+    image: ${METABASE_IMAGE:-metabase/metabase:v0.63.1}
+    container_name: metabase
+    hostname: metabase
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      metabase-db:
+        condition: service_healthy
+    volumes:
+      - /dev/urandom:/dev/random:ro
+      - metabase_plugins:/plugins
+    environment: *metabase_env
+    expose:
+      - "3000"
+    networks:
+      - metabase_net
+      - expose_network
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "curl --fail -I http://127.0.0.1:3000/api/health || wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 512m
+
+volumes:
+  metabase_db_data: {}
+  metabase_plugins: {}
+
+networks:
+  expose_network:
+    external: true
+  metabase_net:
+    driver: bridge

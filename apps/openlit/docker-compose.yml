@@ -1,0 +1,127 @@
+# Docker Compose - user-managed
+# This stack does NOT deploy applications.
+# The operator is responsible for providing their own compose file.
+
+x-openlit-env: &openlit_env
+  TELEMETRY_ENABLED: "true"
+
+  # Embedded ClickHouse connection (created by the clickhouse service below)
+  INIT_DB_HOST: ${OPENLIT_DB_HOST:-clickhouse}
+  INIT_DB_PORT: ${OPENLIT_DB_PORT:-8123}
+  INIT_DB_DATABASE: ${OPENLIT_DB_NAME:-openlit}
+  INIT_DB_USERNAME: ${OPENLIT_DB_USER:-default}
+  INIT_DB_PASSWORD: ${OPENLIT_DB_PASSWORD}
+
+  # Client (SQLite metadata) + server ports
+  SQLITE_DATABASE_URL: file:/app/client/data/data.db
+  PORT: ${OPENLIT_PORT:-3000}
+  DOCKER_PORT: ${OPENLIT_PORT:-3000}
+
+  # Edition mode for shared OSS/Enterprise contracts
+  OPENLIT_EDITION: ${OPENLIT_EDITION:-oss}
+
+  # OAuth (optional - empty values disable the provider)
+  GOOGLE_CLIENT_ID: ${OPENLIT_GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${OPENLIT_GOOGLE_CLIENT_SECRET:-}
+  GITHUB_CLIENT_ID: ${OPENLIT_GITHUB_CLIENT_ID:-}
+  GITHUB_CLIENT_SECRET: ${OPENLIT_GITHUB_CLIENT_SECRET:-}
+
+  # OpAMP server (TLS)
+  OPAMP_ENVIRONMENT: ${OPENLIT_OPAMP_ENVIRONMENT:-production}
+  OPAMP_CERTS_DIR: "/app/opamp/certs"
+  OPAMP_TLS_INSECURE_SKIP_VERIFY: ${OPENLIT_OPAMP_TLS_INSECURE_SKIP_VERIFY:-false}
+  OPAMP_TLS_REQUIRE_CLIENT_CERT: ${OPENLIT_OPAMP_TLS_REQUIRE_CLIENT_CERT:-true}
+  OPAMP_TLS_MIN_VERSION: ${OPENLIT_OPAMP_TLS_MIN_VERSION:-1.2}
+  OPAMP_TLS_MAX_VERSION: ${OPENLIT_OPAMP_TLS_MAX_VERSION:-1.3}
+  OPAMP_LOG_LEVEL: ${OPENLIT_OPAMP_LOG_LEVEL:-info}
+
+services:
+  clickhouse:
+    image: ${OPENLIT_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:26.3.17.56}
+    container_name: clickhouse
+    restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - KILL
+      - SETGID
+      - SETUID
+    environment:
+      CLICKHOUSE_DB: ${OPENLIT_DB_NAME:-openlit}
+      CLICKHOUSE_USER: ${OPENLIT_DB_USER:-default}
+      CLICKHOUSE_PASSWORD: ${OPENLIT_DB_PASSWORD}
+      CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "true"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:8123:8123"
+    networks:
+      - openlit_net
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user=$${CLICKHOUSE_USER} --password=$${CLICKHOUSE_PASSWORD} --query='SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 100s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 512m
+
+  openlit:
+    image: ${OPENLIT_IMAGE:-ghcr.io/openlit/openlit:1.24.1}
+    container_name: openlit
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    tmpfs:
+      - /tmp
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment: *openlit_env
+    ports:
+      - "127.0.0.1:3001:3000"
+      - "127.0.0.1:4317:4317"
+    volumes:
+      - openlit-data:/app/client/data
+    networks:
+      - openlit_net
+      - expose_network
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+volumes:
+  clickhouse-data: {}
+  openlit-data: {}
+
+networks:
+  expose_network:
+    external: true
+  openlit_net:
+    driver: bridge

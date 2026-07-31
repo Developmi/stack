@@ -1,3 +1,236 @@
-# Docker Compose — user-managed
+# Docker Compose - user-managed
 # This stack does NOT deploy applications.
 # The operator is responsible for providing their own compose file.
+
+x-n8n-env: &n8n_env
+  N8N_HOST: ${N8N_HOST}
+  N8N_PORT: "5678"
+  N8N_PROTOCOL: ${N8N_PROTOCOL:-https}
+  N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL}
+  WEBHOOK_URL: ${N8N_WEBHOOK_URL}
+  N8N_PROXY_HOPS: ${N8N_PROXY_HOPS:-1}
+
+  # Queue Mode
+  EXECUTIONS_MODE: ${N8N_EXECUTIONS_MODE:-queue}
+  QUEUE_BULL_REDIS_HOST: ${N8N_REDIS_HOST:-valkey}
+  QUEUE_BULL_REDIS_PORT: ${N8N_REDIS_PORT:-6379}
+  QUEUE_BULL_REDIS_PASSWORD: ${N8N_REDIS_PASSWORD}
+
+  # Database
+  DB_TYPE: ${N8N_DB_TYPE:-postgresdb}
+  DB_POSTGRESDB_HOST: ${N8N_DB_POSTGRESDB_HOST:-postgres}
+  DB_POSTGRESDB_PORT: ${N8N_DB_POSTGRESDB_PORT:-5432}
+  DB_POSTGRESDB_DATABASE: ${N8N_DB_POSTGRESDB_DATABASE:-n8n}
+  DB_POSTGRESDB_USER: ${N8N_DB_POSTGRESDB_USER:-n8n}
+  DB_POSTGRESDB_PASSWORD: ${N8N_DB_POSTGRESDB_PASSWORD}
+
+  # Authentication
+  N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
+  N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+  N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+
+  # Security & Encryption
+  N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+  N8N_DIAGNOSTICS_ENABLED: ${N8N_DIAGNOSTICS_ENABLED:-false}
+  N8N_VERSION_NOTIFICATIONS_ENABLED: ${N8N_VERSION_NOTIFICATIONS_ENABLED:-false}
+  N8N_PERSONALIZATION_ENABLED: ${N8N_PERSONALIZATION_ENABLED:-false}
+
+  # Workers
+  OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS: ${N8N_OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS:-true}
+  N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN}
+
+  # Logs
+  N8N_LOG_LEVEL: ${N8N_LOG_LEVEL:-info}
+  N8N_LOG_OUTPUT: ${N8N_LOG_OUTPUT:-json}
+
+services:
+  n8n:
+    image: ${N8N_IMAGE:-n8nio/n8n:2.32.7}
+    container_name: n8n
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    environment:
+      <<: *n8n_env
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - n8n_net
+      - expose_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5678/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  n8n-worker:
+    image: ${N8N_IMAGE:-n8nio/n8n:2.32.7}
+    container_name: n8n-worker
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/node/.n8n
+    command: worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    environment:
+      <<: *n8n_env
+      N8N_RUNNERS_MODE: external
+      N8N_RUNNERS_BROKER_LISTEN_ADDRESS: "0.0.0.0"
+      N8N_NATIVE_PYTHON_RUNNER: "true"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 512m
+    networks:
+      - n8n_net
+    healthcheck:
+      test: ["CMD", "node", "-e", "const s=require('net').connect(5679,'127.0.0.1');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  n8n-runner:
+    image: ${N8N_RUNNER_IMAGE:-n8nio/runners:2.32.7}
+    container_name: n8n-runner
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      n8n-worker:
+        condition: service_started
+    environment:
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN}
+      - N8N_RUNNERS_TASK_BROKER_URI=http://n8n-worker:5679
+      - N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT=${N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT:-15}
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+    networks:
+      - n8n_net
+
+  postgres:
+    image: ${N8N_DB_IMAGE:-postgres:17.10-alpine}
+    container_name: n8n-db
+    restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/postgresql
+    environment:
+      - POSTGRES_USER=${N8N_DB_POSTGRESDB_USER:-n8n}
+      - POSTGRES_PASSWORD=${N8N_DB_POSTGRESDB_PASSWORD}
+      - POSTGRES_DB=${N8N_DB_POSTGRESDB_DATABASE:-n8n}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - n8n_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  valkey:
+    image: ${N8N_VALKEY_IMAGE:-valkey/valkey:9.1.1}
+    container_name: n8n-valkey
+    restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+    command:
+      - valkey-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${N8N_REDIS_PASSWORD}
+    volumes:
+      - valkey_data:/data
+    networks:
+      - n8n_net
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a $${N8N_REDIS_PASSWORD} ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+        reservations:
+          memory: 128m
+
+volumes:
+  n8n_data:
+    external: true
+    name: n8n_data
+  postgres_data: {}
+  valkey_data: {}
+
+networks:
+  expose_network:
+    external: true
+  n8n_net:
+    driver: bridge

@@ -1,3 +1,94 @@
-# Docker Compose — user-managed
+# Docker Compose - user-managed
 # This stack does NOT deploy applications.
 # The operator is responsible for providing their own compose file.
+
+x-nocodb-env: &nocodb_env
+  NC_DB: pg://${NOCDB_DB_HOST:-postgres}:${NOCDB_DB_PORT:-5432}?u=${NOCDB_DB_USER:-nocodb}&p=${NOCDB_DB_PASSWORD}&d=${NOCDB_DB_NAME:-nocodb}
+  NC_PUBLIC_URL: ${NOCDB_PUBLIC_URL:-http://localhost:8080}
+  NC_DISABLE_TELEMETRY: ${NOCDB_DISABLE_TELEMETRY:-true}
+
+services:
+  nocodb:
+    image: ${NOCDB_IMAGE:-nocodb/nocodb:2026.06.0}
+    container_name: nocodb
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *nocodb_env
+    volumes:
+      - nocodb_data:/usr/app/data
+    networks:
+      - nocodb_net
+      - expose_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/api/v1/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+  postgres:
+    image: ${NOCDB_DB_IMAGE:-postgres:17.10-alpine}
+    container_name: nocodb-db
+    restart: always
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/postgresql
+    environment:
+      POSTGRES_USER: ${NOCDB_DB_USER:-nocodb}
+      POSTGRES_PASSWORD: ${NOCDB_DB_PASSWORD}
+      POSTGRES_DB: ${NOCDB_DB_NAME:-nocodb}
+    volumes:
+      - nocodb_postgres_data:/var/lib/postgresql/data
+    networks:
+      - nocodb_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+
+volumes:
+  # Pre-existing operator volume - kept external so its data is preserved by
+  # the literal name nocodb_data (n8n precedent, app-stack-structure spec 003).
+  nocodb_data:
+    external: true
+    name: nocodb_data
+  nocodb_postgres_data: {}
+
+networks:
+  expose_network:
+    external: true
+  nocodb_net:
+    driver: bridge
