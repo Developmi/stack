@@ -214,6 +214,7 @@ htmlcov/
 .cache/
 graphify-out/
 .codegraph/
+openspec
 
 # Generic build artifacts
 dist/

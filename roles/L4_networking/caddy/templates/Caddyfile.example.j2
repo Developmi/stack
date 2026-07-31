@@ -22,8 +22,8 @@
 # target_group examples: "muscle" | "brain" | "muscle-1" | ["muscle-1", "brain-1"]
 #
 # WAF MODE (ADR-05):
-#   waf_mode_default — fallback for services without explicit waf_mode
-#   svc.waf_mode     — per-service override (enforcement | detection_only)
+#   waf_mode_default - fallback for services without explicit waf_mode
+#   svc.waf_mode     - per-service override (enforcement | detection_only)
 #
 # WEBSOCKET: when proxy_headers.websocket=true, a @ws matcher bypasses Coraza
 # (Coraza doesn't support WS upgrades). All other HTTP goes through WAF.

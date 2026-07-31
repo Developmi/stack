@@ -4,6 +4,9 @@ extends: default
 
 ignore: |
   .venv/
+  # .env.example files are dotenv format, not YAML - yamllint cannot parse
+  # sectioned KEY=value templates (syntax error on every section break).
+  *.env.example
 
 rules:
   # Line length: allow longer lines for readability
