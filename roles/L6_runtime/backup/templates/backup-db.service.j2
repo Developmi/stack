@@ -1,10 +1,10 @@
 # Jinja2 template: systemd service unit for per-app database dumps
-# Generates: backup-db-{{ _p.name }}.service
+# Generates: backup-db-{{ _app_name }}.service
 # Dispatch by profile.backup.db_type (ADR-03)
 # Uses docker exec for dump, piped to aws s3 cp (or restic for L5 backup role)
 
 [Unit]
-Description=Database backup for {{ _p.name }} ({{ _p.backup.db_type }})
+Description=Database backup for {{ _app_name }} ({{ _p.backup.db_type }})
 
 [Service]
 Type=oneshot
@@ -14,18 +14,18 @@ Environment=BUCKET={{ backup_r2_bucket | default('nist-backups-prod') }}
 Environment=DB_NAME={{ _p.backup.db_name }}
 {% if _p.backup.db_type == 'postgres' %}
 Environment=DB_USER={{ _p.backup.db_user | default('postgres') }}
-Environment=DB_CONTAINER={{ _p.backup.db_container | default(_p.name ~ '-db') }}
-ExecStart=/usr/bin/env bash -c 'docker exec $DB_CONTAINER pg_dump -U $DB_USER $DB_NAME | aws s3 cp - s3://$BUCKET/db/{{ _p.name }}/$(date +%%Y-%%m-%%dT%%H%%M%%S).dump --endpoint-url {{ backup_r2_endpoint }}'
+Environment=DB_CONTAINER={{ _p.backup.db_container | default(_app_name ~ '-db') }}
+ExecStart=/usr/bin/env bash -c 'docker exec $DB_CONTAINER pg_dump -U $DB_USER $DB_NAME | aws s3 cp - s3://$BUCKET/db/{{ _app_name }}/$(date +%%Y-%%m-%%dT%%H%%M%%S).dump --endpoint-url {{ backup_r2_endpoint }}'
 {% elif _p.backup.db_type == 'mysql' %}
 Environment=DB_USER={{ _p.backup.db_user | default('root') }}
-Environment=DB_CONTAINER={{ _p.backup.db_container | default(_p.name ~ '-db') }}
-ExecStart=/usr/bin/env bash -c 'docker exec $DB_CONTAINER mysqldump -u $DB_USER $DB_NAME | aws s3 cp - s3://$BUCKET/db/{{ _p.name }}/$(date +%%Y-%%m-%%dT%%H%%M%%S).sql --endpoint-url {{ backup_r2_endpoint }}'
+Environment=DB_CONTAINER={{ _p.backup.db_container | default(_app_name ~ '-db') }}
+ExecStart=/usr/bin/env bash -c 'docker exec $DB_CONTAINER mysqldump -u $DB_USER $DB_NAME | aws s3 cp - s3://$BUCKET/db/{{ _app_name }}/$(date +%%Y-%%m-%%dT%%H%%M%%S).sql --endpoint-url {{ backup_r2_endpoint }}'
 {% elif _p.backup.db_type == 'sqlite' %}
-Environment=VOLUME={{ _p.backup.volume_name | default(_p.name ~ '_data') }}
-ExecStart=/usr/bin/env bash -c 'docker run --rm -v $VOLUME:/data alpine tar czf - -C /data . | aws s3 cp - s3://$BUCKET/db/{{ _p.name }}/$(date +%%Y-%%m-%%dT%%H%%M%%S).tar.gz --endpoint-url {{ backup_r2_endpoint }}'
+Environment=VOLUME={{ _p.backup.volume_name | default(_app_name ~ '_data') }}
+ExecStart=/usr/bin/env bash -c 'docker run --rm -v $VOLUME:/data alpine tar czf - -C /data . | aws s3 cp - s3://$BUCKET/db/{{ _app_name }}/$(date +%%Y-%%m-%%dT%%H%%M%%S).tar.gz --endpoint-url {{ backup_r2_endpoint }}'
 {% elif _p.backup.db_type == 'valkey' %}
-Environment=DB_CONTAINER={{ _p.backup.db_container | default(_p.name ~ '-db') }}
-ExecStart=/usr/bin/env bash -c 'docker exec $DB_CONTAINER valkey-cli SAVE && docker cp $DB_CONTAINER:/data/dump.rdb /tmp/{{ _p.name }}.rdb && aws s3 cp /tmp/{{ _p.name }}.rdb s3://$BUCKET/db/{{ _p.name }}/$(date +%%Y-%%m-%%dT%%H%%M%%S).rdb --endpoint-url {{ backup_r2_endpoint }} && rm -f /tmp/{{ _p.name }}.rdb'
+Environment=DB_CONTAINER={{ _p.backup.db_container | default(_app_name ~ '-db') }}
+ExecStart=/usr/bin/env bash -c 'docker exec $DB_CONTAINER valkey-cli SAVE && docker cp $DB_CONTAINER:/data/dump.rdb /tmp/{{ _app_name }}.rdb && aws s3 cp /tmp/{{ _app_name }}.rdb s3://$BUCKET/db/{{ _app_name }}/$(date +%%Y-%%m-%%dT%%H%%M%%S).rdb --endpoint-url {{ backup_r2_endpoint }} && rm -f /tmp/{{ _app_name }}.rdb'
 {% else %}
 ExecStart=/bin/false
 {% endif %}

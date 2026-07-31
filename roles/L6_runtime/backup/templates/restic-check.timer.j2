@@ -3,7 +3,7 @@ Description=Weekly Restic integrity check - {{ ansible_hostname }}
 Requires=restic-check.service
 
 [Timer]
-{# brain=nightly, muscle=hourly — schedule varies by node role #}
+{# brain=nightly, muscle=hourly - schedule varies by node role #}
 {% if 'brain' in group_names %}
 OnCalendar={{ restic_check_time_by_group.brain }}
 {% elif 'muscle' in group_names %}
