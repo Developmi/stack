@@ -4,7 +4,7 @@ type: project
 owner: maintainers
 audience: all
 version: v6.0.0
-last-reviewed: 2026-07-16
+last-reviewed: 2026-07-31
 status: active
 project: developmi-stack
 repo: github.com/Developmi/stack
@@ -12,7 +12,7 @@ repo: github.com/Developmi/stack
 
 # Repository Structure
 
-Definitive directory-by-directory walkthrough of the Developmi Stack repository. Covers every top-level directory, all roles across 6 security layers, 11 playbooks, 8 application profiles, inventory structure, runtime adapters, and the Makefile build system.
+Definitive directory-by-directory walkthrough of the Developmi Stack repository. Covers every top-level directory, all roles across 6 security layers, 11 playbooks, 12 application directories (11 standardized + fastapi community example), inventory structure, runtime adapters, and the Makefile build system.
 
 ---
 
@@ -23,7 +23,7 @@ stack/
 ├── playbooks/               # Ansible playbooks - deployment orchestration (l1–l6/, ops/)
 ├── roles/                   # 5 role groups - by security layer (L1–L6)
 ├── inventory/               # Host inventory and group_vars
-├── apps/                    # 8 L5 application profiles (profile, vars)
+├── apps/                    # 12 L5 app directories (11 standardized + fastapi example)
 ├── docs/                    # All project documentation
 ├── scripts/                 # Operational shell scripts
 ├── tests/                   # Test fixtures and validation
@@ -38,16 +38,16 @@ stack/
 └── .yamllint                # YAML lint configuration
 ```
 
-| Directory            | Purpose                                                                            |
-| -------------------- | ---------------------------------------------------------------------------------- |
-| `playbooks/`         | Ansible playbooks orchestrating role execution across host groups (l1–l6/, ops/)    |
-| `roles/`             | 5 role groups - the core logic (grouped by L1–L6 security layer)                   |
-| `inventory/`         | Host inventory (`hosts.ini`) and group variables                                   |
-| `apps/`              | 8 L5 application profile directories (`profile.yml`, `vars.yml`)                   |
-| `docs/`              | All project documentation - architecture, operations, compliance, governance       |
-| `scripts/`           | Operational scripts (`setup.sh`, `monitor-crowdsec.sh`, `validate-hierarchy.sh`)   |
-| `tests/`             | Test fixtures and validation (`.codegraph/`, `fixtures/`)                          |
-| `.github/workflows/` | GitHub Actions CI - lint, security audit                                           |
+| Directory            | Purpose                                                                                                                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `playbooks/`         | Ansible playbooks orchestrating role execution across host groups (l1–l6/, ops/)                                                                   |
+| `roles/`             | 5 role groups - the core logic (grouped by L1–L6 security layer)                                                                                   |
+| `inventory/`         | Host inventory (`hosts.ini`) and group variables                                                                                                   |
+| `apps/`              | 12 L5 application profile directories (11 standardized: `docker-compose.yml` + `.env.example` + `profile.yml`; `fastapi/` keeps the legacy layout) |
+| `docs/`              | All project documentation - architecture, operations, compliance, governance                                                                       |
+| `scripts/`           | Operational scripts (`setup.sh`, `monitor-crowdsec.sh`, `validate-hierarchy.sh`)                                                                   |
+| `tests/`             | Test fixtures and validation (`.codegraph/`, `fixtures/`)                                                                                          |
+| `.github/workflows/` | GitHub Actions CI - lint, security audit                                                                                                           |
 
 ---
 
@@ -79,36 +79,36 @@ Security validation and evidence collection.
 
 VPN mesh and network security boundary (part of L2_compliance role group).
 
-| Role               | Purpose                                                                  | Key Variables                                            |
-| ------------------ | ------------------------------------------------------------------------ | -------------------------------------------------------- |
+| Role                                      | Purpose                                                                  | Key Variables                                            |
+| ----------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------- |
 | `L2_compliance/general` (tailscale tasks) | Tailscale mesh VPN client, OAuth key provisioning, ACL pre-configuration | `tailscale_auth_key`, `tailscale_tags`, `tailscale_args` |
 
 ### L4 - Runtime Engine
 
 Container platform and reverse-proxy layer.
 
-| Role            | Purpose                                                                    | Key Variables                                                  |
-| --------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Role                        | Purpose                                                                    | Key Variables                                                  |
+| --------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | `L6_runtime/docker_compose` | Docker Engine, Compose plugin, user group membership, daemon configuration | `docker_users`, `docker_daemon_opts`, `docker_compose_version` |
-| `L4_networking/caddy` | Caddy reverse proxy + Coraza WAF, TLS termination, service routing         | `caddy_config`, `waf_rules`, `ingress_domains`                 |
+| `L4_networking/caddy`       | Caddy reverse proxy + Coraza WAF, TLS termination, service routing         | `caddy_config`, `waf_rules`, `ingress_domains`                 |
 
 ### L5 - Application Layer
 
 App-specific data backup and scheduling.
 
-| Role            | Purpose                                                                            | Key Variables                                  |
-| --------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `L6_runtime/backup` | Database dump automation (PostgreSQL, MySQL, SQLite, Valkey) + Restic → R2 storage | `backup_databases`, `restic_repo`, `r2_bucket` |
+| Role                   | Purpose                                                                            | Key Variables                                  |
+| ---------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `L6_runtime/backup`    | Database dump automation (PostgreSQL, MySQL, SQLite, Valkey) + Restic → R2 storage | `backup_databases`, `restic_repo`, `r2_bucket` |
 | `L6_runtime/backup-db` | systemd `.timer` + `.service` units for scheduled backup execution                 | `backup_schedule`, `backup_retention`          |
 
 ### L6 - Orchestration & Observability
 
 Container management, runtime backup, and monitoring stack.
 
-| Role              | Purpose                                                               | Key Variables                                       |
-| ----------------- | --------------------------------------------------------------------- | --------------------------------------------------- |
-| `L6_runtime/portainer` | Portainer CE container management UI, agent deployment                | `enable_portainer`, `portainer_edition`             |
-| `L6_runtime/backup`    | Restic-based backup of Docker volumes and stack configs to R2         | `stack_restic_repo`, `r2_stack_bucket`              |
+| Role                       | Purpose                                                               | Key Variables                                       |
+| -------------------------- | --------------------------------------------------------------------- | --------------------------------------------------- |
+| `L6_runtime/portainer`     | Portainer CE container management UI, agent deployment                | `enable_portainer`, `portainer_edition`             |
+| `L6_runtime/backup`        | Restic-based backup of Docker volumes and stack configs to R2         | `stack_restic_repo`, `r2_stack_bucket`              |
 | `L3_observability/general` | Prometheus exporters (node_exporter, cadvisor), VictoriaMetrics stack | `enable_observability`, `vm_url`, `scrape_interval` |
 
 ---
@@ -152,62 +152,39 @@ playbooks/
 
 All playbooks support Ansible tag filtering:
 
-| Tag               | Scope                                    |
-| ----------------- | ---------------------------------------- |
-| `l1-os-baseline`  | Base OS configuration (common, packages) |
-| `l2-compliance`   | NIST compliance hardening and evidence   |
-| `l3-observability`| Observability stack (exporters + monitoring) |
-| `l4-networking`   | Reverse proxy, WAF, ingress              |
-| `l5-app-profiles` | Application deployment                   |
-| `l6-runtime`      | Docker, Portainer, backup, observability |
-| `compliance`      | Evidence collection only                 |
-| `backup`          | Backup operations                        |
+| Tag                | Scope                                        |
+| ------------------ | -------------------------------------------- |
+| `l1-os-baseline`   | Base OS configuration (common, packages)     |
+| `l2-compliance`    | NIST compliance hardening and evidence       |
+| `l3-observability` | Observability stack (exporters + monitoring) |
+| `l4-networking`    | Reverse proxy, WAF, ingress                  |
+| `l5-app-profiles`  | Application deployment                       |
+| `l6-runtime`       | Docker, Portainer, backup, observability     |
+| `compliance`       | Evidence collection only                     |
+| `backup`           | Backup operations                            |
 
 ---
 
 ## Application Profiles (L5)
 
-Eight application profiles live under `apps/`. Each profile contains two files:
+Twelve app directories live under `apps/`: 11 standardized apps (chatwoot, clickhouse, mariadb, metabase, n8n, nocodb, openlit, openwebui, postgresql, twenty-crm, uptime-kuma) plus `fastapi/` - a community-provided example that retains the legacy layout and is excluded from standardization.
 
-| File          | Purpose                                                                                  |
-| ------------- | ---------------------------------------------------------------------------------------- |
-| `profile.yml` | Metadata: name, version, DB type, backup schedule, monitoring endpoints, compliance tags |
-| `vars.yml`    | Variable defaults (non-secret: image tags, ports, resource limits)                       |
+### Standard Layout
 
-> **Note**: Some profiles include a per-app `README.md` with deployment guidance (e.g., `apps/fastapi/README.md`).
+Each standardized app directory contains:
 
-### Profile Table
+| File                 | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker-compose.yml` | Compose stack following the shared pattern: `x-<app>-env` anchor referenced by every service, namespaced `<APP>_` interpolation variables, `${VAR:-default}` for tunables (no default for secrets), image pins as `${APP_IMAGE:-org/image:tag}`, long-form `depends_on` with `condition: service_healthy`, healthcheck on every service, `restart: unless-stopped`, named volumes, `init: true`, `cap_drop: [ALL]` + selective `cap_add`, `security_opt: [no-new-privileges:true]`, `read_only: true` where the image permits, resource limits. No obsolete `version:` field. |
+| `.env.example`       | Full namespaced template defining every interpolation variable, sectioned with `#` comments, real example values, `changeme` secrets, `<APP>_IMAGE` pin matching the compose default (n8n 32-line model).                                                                                                                                                                                                                                                                                                                                                                     |
+| `profile.yml`        | Reduced 6-field profile schema - see [ARCHITECTURE.md §8](../architecture/ARCHITECTURE.md#8-application-profile-schema-reduced-6-field-specification).                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `assets/`            | Optional - exists ONLY when compose bind-mounts files; every referenced file must be committed. Currently NO app bind-mounts files (all config is env-only as of 2026-07-31).                                                                                                                                                                                                                                                                                                                                                                                                 |
 
-| App          | Version | DB Type    | Backup Schedule | DR Tier  | Health Endpoint       |
-| ------------ | ------- | ---------- | --------------- | -------- | --------------------- |
-| `chatwoot`   | 4.12.1  | PostgreSQL | `*/4 * * * *`   | critical | `:3000/`              |
-| `fastapi`    | 1.0.0   | custom     | `0 2 * * *`     | standard | `:8000/health`        |
-| `metabase`   | 0.53.7  | PostgreSQL | `*/4 * * * *`   | critical | `:3000/api/health`    |
-| `n8n`        | 2.20.6  | PostgreSQL | `*/4 * * * *`   | critical | `:5678/healthz`       |
-| `nocodb`     | 0.262.7 | PostgreSQL | `*/4 * * * *`   | critical | `:8080/api/v1/health` |
-| `openwebui`  | 0.9.5   | none       | `0 2 * * *`     | standard | `:8080/health`        |
-| `twenty-crm` | 0.40.7  | PostgreSQL | `*/4 * * * *`   | critical | `:3000/health`        |
-| `uptime-kuma`| 2.0.2   | SQLite     | `0 2 * * *`     | standard | `:3001/`              |
+> **Dropped (2026-07-31)**: the `name`/`version`/`target_group` profile fields and the legacy `vars.yml`/`compose.yml.j2`/`secrets.yml` files are gone. The app name is derived from the directory path (backup role), and the version is the compose image pin - SSOT in [VERSION_PINS.md](../operations/VERSION_PINS.md).
 
-### Profile Schema (13 Fields)
+App catalog (DB type, DR tier, port map): [ARCHITECTURE.md §9](../architecture/ARCHITECTURE.md#9-application-catalog). Tier schedule/retention/verification policy: [BACKUP_STRATEGY.md](../operations/BACKUP_STRATEGY.md).
 
-Each `profile.yml` follows a fixed schema:
-
-| Field             | Description                                        |
-| ----------------- | -------------------------------------------------- |
-| `name`            | Application identifier                             |
-| `version`         | Pinned application version                         |
-| `compose_file`    | Always `compose.yml.j2`                            |
-| `vars_file`       | Always `vars.yml`                                  |
-| `secrets_file`    | Always `secrets.yml`                               |
-| `supported_arch`  | CPU architectures: `[amd64]` or `[amd64, arm64]`   |
-| `depends_on`      | Inter-app dependencies (currently `[]` for all)    |
-| `backup.schedule` | Cron expression for database dumps                 |
-| `backup.db_type`  | `postgres`, `mysql`, `sqlite`, `custom`, or `none` |
-| `monitoring`      | `health_endpoint`, `health_port`, `scrape_port`    |
-| `compliance_tags` | NIST control reference array                       |
-| `dr_tier`         | Disaster recovery tier (`critical`, `standard`)    |
-| `provider`        | Cloud provider label (e.g. `oracle`, `aws`)        |
+> **Note**: `apps/fastapi/` keeps the community layout (see [ARCHITECTURE.md §10](../architecture/ARCHITECTURE.md#10-custom-docker-image-requirements---fastapi)).
 
 ---
 
@@ -216,13 +193,17 @@ Each `profile.yml` follows a fixed schema:
 ```
 apps/
 │       ├── chatwoot/
-│       ├── fastapi/
+│       ├── clickhouse/
+│       ├── mariadb/
 │       ├── metabase/
 │       ├── n8n/
 │       ├── nocodb/
+│       ├── openlit/
 │       ├── openwebui/
+│       ├── postgresql/
 │       ├── twenty-crm/
-│       └── uptime-kuma/
+│       ├── uptime-kuma/
+│       └── fastapi/               # community example (legacy layout, excluded)
 inventory/
 ├── hosts.ini                  # Main inventory - host definitions and groups
 ├── hosts.ini.example          # Template for new deployments
@@ -250,15 +231,13 @@ inventory/
 
 Defined by ADR-03 and ADR-08:
 
-| Position    | Source                              | Mechanism                  |
-| ----------- | ----------------------------------- | -------------------------- |
-| 1           | `group_vars/{brain,muscle,local}/`  | Auto-loaded by Ansible     |
-| 2           | `group_vars/all/`                   | Auto-loaded by Ansible     |
-| 3 (lowest)  | `roles/<role>/defaults/main.yml`    | Auto-loaded by Ansible     |
+| Position   | Source                             | Mechanism              |
+| ---------- | ---------------------------------- | ---------------------- |
+| 1          | `group_vars/{brain,muscle,local}/` | Auto-loaded by Ansible |
+| 2          | `group_vars/all/`                  | Auto-loaded by Ansible |
+| 3 (lowest) | `roles/<role>/defaults/main.yml`   | Auto-loaded by Ansible |
 
 ---
-
-
 
 ## Top-Level Files
 
@@ -289,50 +268,50 @@ The Makefile is the primary operational interface. All targets run through the `
 
 #### Deploy
 
-| Target | Description | Playbook |
-| ---------------------- | ----------------------------------------------- | -------------------------------------------------- |
-| `deploy` | Full L1+L2 hardening | `playbooks/site.yml` |
-| `deploy-l1` | L1 OS baseline only | `playbooks/l1/baseline.yml` |
-| `deploy-bootstrap` | First-deploy bootstrap mode (auto-detects controller_ip) | `playbooks/site.yml -e nist_bootstrap=true` |
-| `deploy-lockdown` | Post-bootstrap SSH lockdown | `playbooks/l2/lockdown.yml` |
-| `deploy-compliance-nist80053` | Collect NIST 800-53 compliance evidence | `playbooks/l2/compliance.yml` |
-| `deploy-tailscale-reconnect` | Tailscale mesh recovery | `playbooks/l2/tailscale-recover.yml` |
-| `deploy-exporters` | Deploy node_exporter + cadvisor | `playbooks/l3/exporters.yml` |
-| `deploy-monitoring-stack` | Deploy VictoriaMetrics + Loki + Grafana (brain) | `playbooks/l3/stack.yml` |
-| `deploy-monitoring` | Full L3: exporters + monitoring stack | `deploy-exporters` + `deploy-monitoring-stack` |
-| `deploy-edge` | Deploy edge proxy (requires EDGE=, HOST=) | `playbooks/l4/edge.yml` |
-| `deploy-engine` | Deploy Docker Engine | `playbooks/l6/engine.yml` |
-| `deploy-portainer` | Deploy Portainer | `playbooks/l6/portainer.yml` |
-| `deploy-backup-stack` | Deploy Restic stack backup (brain only) | `playbooks/l6/backup-stack.yml` |
-| `deploy-backup-appdata` | Deploy app data backup (DB dumps → R2) | `playbooks/l6/backup-appdata.yml` |
-| `deploy-backup-timers` | Deploy systemd backup timers | `playbooks/l6/backup-timers.yml` |
-| `deploy-backup-databases` | Deploy DB auto-discovery backups | `playbooks/l6/backup-databases.yml` |
-| `deploy-backups` | All backup layers (stack→appdata→timers→databases) | umbrella target |
-| `deploy-local` | Workstation hardening | `playbooks/ops/local-devices.yml` |
-| `deploy-custom` | Custom playbook (`PLAYBOOK=<file>.yml`) | variable |
-| `deploy-tags` | Tag-filtered deploy (`ANSIBLE_TAGS=`) | `PLAYBOOK` |
-| `deploy-skip-tags` | Deploy with skipped tags (`ANSIBLE_SKIP_TAGS=`) | `PLAYBOOK` |
-| `dry-run` | Check + diff mode | `PLAYBOOK` |
-| `nuke` | Destructive teardown (requires CONFIRM=) | `playbooks/ops/nuke.yml` |
-| `deploy-platform` | Complete platform (L2→L3→L6, sequential) | meta-target |
-| `bootstrap-host` | Bootstrap fresh host as root | `playbooks/ops/bootstrap.yml` |
-| `audit-full` | Full validation audit (all layers, read-only) | `playbooks/ops/validate.yml` |
-| `validate-l1` | Audit L1 OS baseline (read-only) | `playbooks/ops/validate.yml --tags l1-os-baseline` |
-| `validate-l2` | Audit L2 hardening and integrity (read-only) | `playbooks/l2/validate.yml` |
-| `backup-now` | Trigger immediate backup on brain | `playbooks/l6/backup-stack.yml --tags backup --limit brain` |
+| Target                        | Description                                              | Playbook                                                    |
+| ----------------------------- | -------------------------------------------------------- | ----------------------------------------------------------- |
+| `deploy`                      | Full L1+L2 hardening                                     | `playbooks/site.yml`                                        |
+| `deploy-l1`                   | L1 OS baseline only                                      | `playbooks/l1/baseline.yml`                                 |
+| `deploy-bootstrap`            | First-deploy bootstrap mode (auto-detects controller_ip) | `playbooks/site.yml -e nist_bootstrap=true`                 |
+| `deploy-lockdown`             | Post-bootstrap SSH lockdown                              | `playbooks/l2/lockdown.yml`                                 |
+| `deploy-compliance-nist80053` | Collect NIST 800-53 compliance evidence                  | `playbooks/l2/compliance.yml`                               |
+| `deploy-tailscale-reconnect`  | Tailscale mesh recovery                                  | `playbooks/l2/tailscale-recover.yml`                        |
+| `deploy-exporters`            | Deploy node_exporter + cadvisor                          | `playbooks/l3/exporters.yml`                                |
+| `deploy-monitoring-stack`     | Deploy VictoriaMetrics + Loki + Grafana (brain)          | `playbooks/l3/stack.yml`                                    |
+| `deploy-monitoring`           | Full L3: exporters + monitoring stack                    | `deploy-exporters` + `deploy-monitoring-stack`              |
+| `deploy-edge`                 | Deploy edge proxy (requires EDGE=, HOST=)                | `playbooks/l4/edge.yml`                                     |
+| `deploy-engine`               | Deploy Docker Engine                                     | `playbooks/l6/engine.yml`                                   |
+| `deploy-portainer`            | Deploy Portainer                                         | `playbooks/l6/portainer.yml`                                |
+| `deploy-backup-stack`         | Deploy Restic stack backup (brain only)                  | `playbooks/l6/backup-stack.yml`                             |
+| `deploy-backup-appdata`       | Deploy app data backup (DB dumps → R2)                   | `playbooks/l6/backup-appdata.yml`                           |
+| `deploy-backup-timers`        | Deploy systemd backup timers                             | `playbooks/l6/backup-timers.yml`                            |
+| `deploy-backup-databases`     | Deploy DB auto-discovery backups                         | `playbooks/l6/backup-databases.yml`                         |
+| `deploy-backups`              | All backup layers (stack→appdata→timers→databases)       | umbrella target                                             |
+| `deploy-local`                | Workstation hardening                                    | `playbooks/ops/local-devices.yml`                           |
+| `deploy-custom`               | Custom playbook (`PLAYBOOK=<file>.yml`)                  | variable                                                    |
+| `deploy-tags`                 | Tag-filtered deploy (`ANSIBLE_TAGS=`)                    | `PLAYBOOK`                                                  |
+| `deploy-skip-tags`            | Deploy with skipped tags (`ANSIBLE_SKIP_TAGS=`)          | `PLAYBOOK`                                                  |
+| `dry-run`                     | Check + diff mode                                        | `PLAYBOOK`                                                  |
+| `nuke`                        | Destructive teardown (requires CONFIRM=)                 | `playbooks/ops/nuke.yml`                                    |
+| `deploy-platform`             | Complete platform (L2→L3→L6, sequential)                 | meta-target                                                 |
+| `bootstrap-host`              | Bootstrap fresh host as root                             | `playbooks/ops/bootstrap.yml`                               |
+| `audit-full`                  | Full validation audit (all layers, read-only)            | `playbooks/ops/validate.yml`                                |
+| `validate-l1`                 | Audit L1 OS baseline (read-only)                         | `playbooks/ops/validate.yml --tags l1-os-baseline`          |
+| `validate-l2`                 | Audit L2 hardening and integrity (read-only)             | `playbooks/l2/validate.yml`                                 |
+| `backup-now`                  | Trigger immediate backup on brain                        | `playbooks/l6/backup-stack.yml --tags backup --limit brain` |
 
 > **Note**: `deploy-validate` and `deploy-all` were removed and are no longer available.
 
 #### Verification
 
-| Target                 | Description                               |
-| ---------------------- | ----------------------------------------- |
-| `verify-tailscale`     | `tailscale status` on all hosts           |
-| `verify-crowdsec`      | CrowdSec alerts on all hosts              |
-| `verify-auditd`        | Tail audit logs on all hosts              |
-| `verify-observability` | Check exporters and VM targets            |
-| `verify-timers`        | List backup timers on all hosts           |
-| `show-inventory`       | Print configured inventory path           |
+| Target                 | Description                     |
+| ---------------------- | ------------------------------- |
+| `verify-tailscale`     | `tailscale status` on all hosts |
+| `verify-crowdsec`      | CrowdSec alerts on all hosts    |
+| `verify-auditd`        | Tail audit logs on all hosts    |
+| `verify-observability` | Check exporters and VM targets  |
+| `verify-timers`        | List backup timers on all hosts |
+| `show-inventory`       | Print configured inventory path |
 
 #### Key Variables
 
@@ -349,25 +328,25 @@ The Makefile is the primary operational interface. All targets run through the `
 
 ### Ansible Configuration (`ansible.cfg`)
 
-| Section                  | Key                   | Value                                                                    |
-| ------------------------ | --------------------- | ------------------------------------------------------------------------ |
-| `[defaults]`             | `inventory`           | `inventory/hosts.ini`                                                    |
-|                          | `host_key_checking`   | `True`                                                                   |
-|                          | `retry_files_enabled` | `False`                                                                  |
-|                          | `gathering`           | `smart`                                                                  |
-|                          | `forks`               | `10`                                                                     |
-|                          | `timeout`             | `60`                                                                     |
-|                          | `stdout_callback`     | `default`                                                                |
-|                          | `roles_path`          | `roles`                                                                  |
-|                          | `remote_tmp`          | `~/.ansible/tmp`                                                         |
-| `[ssh_connection]`       | `pipelining`          | `True`                                                                   |
-|                          | `ssh_args`            | `-o ControlMaster=auto -o ControlPersist=600s -o ServerAliveInterval=60 -o ServerAliveCountMax=3`                           |
-|                          | `control_path`        | `/tmp/ansible-ssh-%%h-%%p-%%r`                                           |
-| `[privilege_escalation]` | `become`              | `True`                                                                   |
-|                          | `become_method`       | `sudo`                                                                   |
-|                          | `become_user`         | `root`                                                                   |
-|                          | `become_ask_pass`     | `False`                                                                  |
-|                          | `timeout`             | `60`                                                                     |
+| Section                  | Key                   | Value                                                                                             |
+| ------------------------ | --------------------- | ------------------------------------------------------------------------------------------------- |
+| `[defaults]`             | `inventory`           | `inventory/hosts.ini`                                                                             |
+|                          | `host_key_checking`   | `True`                                                                                            |
+|                          | `retry_files_enabled` | `False`                                                                                           |
+|                          | `gathering`           | `smart`                                                                                           |
+|                          | `forks`               | `10`                                                                                              |
+|                          | `timeout`             | `60`                                                                                              |
+|                          | `stdout_callback`     | `default`                                                                                         |
+|                          | `roles_path`          | `roles`                                                                                           |
+|                          | `remote_tmp`          | `~/.ansible/tmp`                                                                                  |
+| `[ssh_connection]`       | `pipelining`          | `True`                                                                                            |
+|                          | `ssh_args`            | `-o ControlMaster=auto -o ControlPersist=600s -o ServerAliveInterval=60 -o ServerAliveCountMax=3` |
+|                          | `control_path`        | `/tmp/ansible-ssh-%%h-%%p-%%r`                                                                    |
+| `[privilege_escalation]` | `become`              | `True`                                                                                            |
+|                          | `become_method`       | `sudo`                                                                                            |
+|                          | `become_user`         | `root`                                                                                            |
+|                          | `become_ask_pass`     | `False`                                                                                           |
+|                          | `timeout`             | `60`                                                                                              |
 
 ### Dependency Manifest (`requirements.yml`)
 

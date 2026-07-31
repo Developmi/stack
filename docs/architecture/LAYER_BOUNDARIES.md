@@ -4,7 +4,7 @@ type: architecture
 owner: maintainers
 audience: maintainer
 version: v6.0.0
-last-reviewed: 2026-07-16
+last-reviewed: 2026-07-31
 status: active
 project: developmi-stack
 repo: github.com/Developmi/stack
@@ -23,13 +23,13 @@ enforcement mechanism for **Principle 8: Layers don't reach across boundaries**.
 
 These rules apply to ALL boundaries and are non-negotiable:
 
-| Rule                             | Description                                                                                                                                                     | Violation Example                                            |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| **Upward dependency only**       | L(n) depends ONLY on L(n-1). L(n) never depends on L(n+1).                                                                                                      | L5 referencing L6 runtime internals                          |
-| **No skipping layers**           | L(n) calls L(n-1), never L(n-2). If L3 needs OS facts, it asks L2, not L1.                                                                                      | L3 directly running `apt` commands                           |
-| **No circular dependencies**     | The dependency graph MUST be a DAG. L(n) → L(n-1) → … → L1 is the only flow.                                                                                    | L1 importing L4 ingress rules                                |
-| **L0 Isolation**                 | L0 is private. It is referenced ONLY as an external prerequisite. No OpenTofu configs, no cloud credentials, no provider-specific logic in the OpenSource repo. | `roles/L1_os_baseline/general/` containing `provider = "oracle"`             |
-| **Trust boundaries are one-way** | Upper layers TRUST lower layers. Lower layers NEVER trust upper layers. L2 does not assume L5 sent valid data.                                                  | L2 opening a port because L5 asked for it without validation |
+| Rule                             | Description                                                                                                                                                     | Violation Example                                                |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| **Upward dependency only**       | L(n) depends ONLY on L(n-1). L(n) never depends on L(n+1).                                                                                                      | L5 referencing L6 runtime internals                              |
+| **No skipping layers**           | L(n) calls L(n-1), never L(n-2). If L3 needs OS facts, it asks L2, not L1.                                                                                      | L3 directly running `apt` commands                               |
+| **No circular dependencies**     | The dependency graph MUST be a DAG. L(n) → L(n-1) → … → L1 is the only flow.                                                                                    | L1 importing L4 ingress rules                                    |
+| **L0 Isolation**                 | L0 is private. It is referenced ONLY as an external prerequisite. No OpenTofu configs, no cloud credentials, no provider-specific logic in the OpenSource repo. | `roles/L1_os_baseline/general/` containing `provider = "oracle"` |
+| **Trust boundaries are one-way** | Upper layers TRUST lower layers. Lower layers NEVER trust upper layers. L2 does not assume L5 sent valid data.                                                  | L2 opening a port because L5 asked for it without validation     |
 
 ```
 Dependency flow:  L0 (private) ← L1 ← L2 ← L3 ← L4 ← L5 ← L6
@@ -88,13 +88,13 @@ OpenSource surface. Audit trail: `docs/compliance/evidence/L0_AUDIT.md`.
 
 ### Contract Breach
 
-| Failure Mode                                            | Consequence                                                                                         | Detection                                                                         |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Host unreachable via SSH                                | All layers fail. L1 cannot apply OS baseline.                                                       | Ansible `gather_facts` timeout. `make deploy` fails immediately.                  |
-| Wrong architecture provisioned (arm64 instead of amd64) | `supported_arch` validation in `apps.yml` blocks L5 deployment. L1–L4 may still apply but L5+ fail. | Pre-flight arch check in `apps.yml`.                                              |
-| Insufficient disk/CPU                                   | L5 apps fail to start (disk full), L6 containers crash.                                             | Monitoring alerts (L3). Docker health checks fail.                                |
-| Provider security groups too permissive                 | L2 firewall cannot compensate for provider-level gaps.                                              | Security audit at L2; `compliance.yml` compares expected vs actual.               |
-| DNS not delegated                                       | L4 Caddy cannot obtain TLS certificates. External services unreachable.                             | Caddy logs TLS handshake failures. L3 health checks fail. |
+| Failure Mode                                            | Consequence                                                                                         | Detection                                                           |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Host unreachable via SSH                                | All layers fail. L1 cannot apply OS baseline.                                                       | Ansible `gather_facts` timeout. `make deploy` fails immediately.    |
+| Wrong architecture provisioned (arm64 instead of amd64) | `supported_arch` validation in `apps.yml` blocks L5 deployment. L1–L4 may still apply but L5+ fail. | Pre-flight arch check in `apps.yml`.                                |
+| Insufficient disk/CPU                                   | L5 apps fail to start (disk full), L6 containers crash.                                             | Monitoring alerts (L3). Docker health checks fail.                  |
+| Provider security groups too permissive                 | L2 firewall cannot compensate for provider-level gaps.                                              | Security audit at L2; `compliance.yml` compares expected vs actual. |
+| DNS not delegated                                       | L4 Caddy cannot obtain TLS certificates. External services unreachable.                             | Caddy logs TLS handshake failures. L3 health checks fail.           |
 
 ---
 
@@ -132,7 +132,6 @@ L1 MUST detect the host architecture (amd64/arm64) and make it available as
 - MUST NOT install application packages (PostgreSQL, Redis, app-specific). That is L5/L6.
 - MUST NOT touch monitoring agents or scrape targets. That is L3.
 - MUST NOT reference cloud provider APIs or credentials. That is L0.
-
 
 ### Depends On
 
@@ -304,6 +303,7 @@ firewall modification capability. A compromised L3 can:
 - Read logs (exfiltrate sensitive data from log lines)
 
 L3 is trusted to observe but not to act. It is the "canary in the coal mine"
+
 - if L3 is silent, assume something is wrong.
 
 ### Contract Breach
@@ -381,14 +381,14 @@ Caddy configuration changes require the same review rigor as L2 changes.
 
 ### Contract Breach
 
-| Failure Mode                       | Consequence                                                           | Detection                                                                                                                                |
-| ---------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Caddy not running or unreachable   | All apps are inaccessible from the internet. 502/503 for all domains. | L3 alert: Caddy health endpoint unreachable. External health check (e.g., UptimeRobot) confirms.                                         |
-| TLS certificate expired or invalid | Browsers show security warnings. Users cannot access apps.            | Caddy logs `x509: certificate expired`. L3 alert on cert expiry < 7 days.                                                                |
-| WAF misconfigured or bypassed      | SQLi, XSS, path traversal reach applications.                         | Caddy WAF audit log. L3 anomaly detection on request patterns. Penetration test.                                                         |
+| Failure Mode                       | Consequence                                                           | Detection                                                                                        |
+| ---------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Caddy not running or unreachable   | All apps are inaccessible from the internet. 502/503 for all domains. | L3 alert: Caddy health endpoint unreachable. External health check (e.g., UptimeRobot) confirms. |
+| TLS certificate expired or invalid | Browsers show security warnings. Users cannot access apps.            | Caddy logs `x509: certificate expired`. L3 alert on cert expiry < 7 days.                        |
+| WAF misconfigured or bypassed      | SQLi, XSS, path traversal reach applications.                         | Caddy WAF audit log. L3 anomaly detection on request patterns. Penetration test.                 |
 
-| Caddy logs not shipped to Loki     | No access logs. Post-incident forensics impossible.                   | L3 alert: Caddy log ingestion rate = 0. Grafana Loki shows gap for Caddy log stream.                                                     |
-| Docker network unavailable         | Caddy cannot reach upstream containers. 502 Bad Gateway.              | Caddy logs 502 to upstream. `docker network ls` shows missing network. L3 health check shows app container up but unreachable via Caddy. |
+| Caddy logs not shipped to Loki | No access logs. Post-incident forensics impossible. | L3 alert: Caddy log ingestion rate = 0. Grafana Loki shows gap for Caddy log stream. |
+| Docker network unavailable | Caddy cannot reach upstream containers. 502 Bad Gateway. | Caddy logs 502 to upstream. `docker network ls` shows missing network. L3 health check shows app container up but unreachable via Caddy. |
 
 ---
 
@@ -396,26 +396,33 @@ Caddy configuration changes require the same review rigor as L2 changes.
 
 **Tag**: `l5-app-profile`
 **Directories**: `apps/`
-**Playbooks**: N/A (reference-only via apps/ + Portainer)
+**Playbooks**: N/A (reference-only; compose files are operator-managed)
 
 ### Responsibility
 
-L5 defines application profiles — tested reference configurations for the
-operator to deploy. It owns: the 11-field YAML profile schema (`profile.yml`),
-Jinja2 compose templates (`compose.yml.j2`), application variables
-(`vars.yml`), application secrets (`secrets.yml`), backup schedules and
-retention for app data (`roles/L6_runtime/backup/`), and pre-flight validation
-(secrets assertion, architecture check).
+L5 defines application profiles - tested reference configurations for the
+operator to deploy. It owns: the reduced 6-field YAML profile schema
+(`profile.yml`), the standard `apps/<app>/` layout (`docker-compose.yml` with
+the `x-<app>-env` anchor pattern, `.env.example`, optional `assets/`), backup
+themes (method/schedule/retention/verification) consumed by
+`roles/L6_runtime/backup/`, and pre-flight validation (architecture check).
 
-L5 is the **reference layer** — tested YAML profiles that the operator may
+The app name is **derived from the profile directory path** (`apps/<name>/profile.yml`
+→ `<name>`) by the backup role - there is no `name` field. Versions come from
+the compose image pin (`${APP_IMAGE:-org/image:tag}`) - there is no `version`
+field. The schema reference (fields, validation rules, dropped fields) lives in
+[ARCHITECTURE.md §8](ARCHITECTURE.md#8-application-profile-schema-reduced-6-field-specification).
+
+L5 is the **reference layer** - tested YAML profiles that the operator may
 use to deploy their own application instances.
 
 ### Promises
 
-1. **Profile schema is enforced** - every `profile.yml` is validated: 6 MUST fields present, paths reference existing files, `supported_arch` is a non-empty array.
-2. **Secrets schema is declared** - `secrets.yml` documents the required secret keys for each profile. The operator resolves them in their Vault context.
-3. **Architecture is documented** - `supported_arch` in each profile declares the architectures the app image supports.
+1. **Profile schema is enforced** - every `profile.yml` declares the 6 fields: `supported_arch`, `depends_on`, `monitoring`, `compliance_tags`, `dr_tier`, `backup`; `name`/`version`/`target_group` are absent.
+2. **Compose pattern is uniform** - every standardized app follows the shared pattern: `x-<app>-env` anchors, namespaced `<APP>_` variables, `${VAR:-default}` tunables, `${APP_IMAGE:-...}` pins, healthchecks on every service, hardening (init, cap_drop, no-new-privileges, named volumes).
+3. **Architecture is documented** - `supported_arch` in each profile declares the architectures the pinned image is published for, verified per manifest.
 4. **Dependencies are declared** - `depends_on` lists the roles/apps required before deployment.
+5. **Backup themes are declared** - `backup.method`, `schedule`, retention, and `verification` per DR tier; `db_type`/`db_name` retained for backup-role dispatch.
 
 ### Forbids
 
@@ -423,8 +430,9 @@ use to deploy their own application instances.
 - MUST NOT configure firewall rules. That is L2.
 - MUST NOT configure monitoring targets. That is L3 (L5 only declares `monitoring.health_endpoint` - L3 acts on it).
 - MUST NOT configure Caddy ingress routes. That is L4 (L5 only provides ingress service data - L4 renders it).
-- MUST NOT store application secrets in plain text. Secrets reference via the profile schema.
+- MUST NOT store application secrets in committed files. `.env.example` carries `changeme` placeholders; the operator provides real values in `.env`.
 - MUST NOT import variables from `group_vars/{brain,muscle,local}/` - host-class variables belong to the host, not the app.
+- MUST NOT reference files that do not exist (`compose.yml.j2`, `vars.yml`, `secrets.yml` are not part of the standardized layout).
 
 ### Depends On
 
@@ -435,7 +443,7 @@ use to deploy their own application instances.
 
 ### Provides To
 
-- **L6 (Runtime)** - profile schema with compose template paths, vars, and secrets references.
+- **L6 (Runtime)** - compose files + `.env.example` + profile schema (backup themes for `roles/L6_runtime/backup/`).
 - **L4 (Networking)** - ingress service data (domain, port) for reverse proxy configuration.
 - **L3 (Observability)** - `monitoring.health_endpoint` and `monitoring.scrape_port` for each app.
 
@@ -449,13 +457,13 @@ that operators rely on when running applications.
 
 ### Contract Breach
 
-| Failure Mode                           | Consequence                                                                           | Detection                                                                                                        |
-| -------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Profile missing MUST fields            | Profile validation fails. Operator cannot use the profile.                            | Ansible assertion task. Clear error listing missing fields.                                                      |
-| `supported_arch` mismatch              | Profile declares arch the target host does not support.                               | Pre-flight arch check. Error: "Host arch 'arm64' not in supported_arch ['amd64']".                               |
-| Secrets not resolved                   | Profile references secrets that operator has not provided.                            | Secrets assertion lists missing keys.                                                                           |
-| Backup job fails silently              | App data not backed up. Data loss on disk failure.                                    | L3 alert: backup job exit code ≠ 0. Grafana dashboard shows "last backup age" > schedule interval.               |
-| App profile references host-class vars | Profile picks up wrong port/firewall config from host group. Cross-layer coupling.    | Lint rule: profiles must not import `group_vars/{brain,muscle,local}/` variables.                                |
+| Failure Mode                           | Consequence                                                                        | Detection                                                                                          |
+| -------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Profile missing MUST fields            | Profile validation fails. Operator cannot use the profile.                         | Schema check: the 6 fields must be present; `name`/`version`/`target_group` must be absent.        |
+| `supported_arch` mismatch              | Profile declares arch the target host does not support.                            | Pre-flight arch check. Error: "Host arch 'arm64' not in supported_arch ['amd64']".                 |
+| `changeme` placeholder reaches runtime | Containers start with default/example credentials.                                 | Operator review on deploy; `detect-secrets` scan of `apps/`.                                       |
+| Backup job fails silently              | App data not backed up. Data loss on disk failure.                                 | L3 alert: backup job exit code ≠ 0. Grafana dashboard shows "last backup age" > schedule interval. |
+| App profile references host-class vars | Profile picks up wrong port/firewall config from host group. Cross-layer coupling. | Lint rule: profiles must not import `group_vars/{brain,muscle,local}/` variables.                  |
 
 ---
 
@@ -537,10 +545,10 @@ monitoring (by stopping monitoring containers).
 | Docker socket exposed without auth       | Attacker with network access controls all containers. Host root compromise possible.                  | Audit: check `docker.service` socket binding (`unix:///var/run/docker.sock` only, no TCP). L2 firewall blocks port 2375/2376. |
 | Compose stack fails to deploy            | App not running. `docker compose up` exits non-zero.                                                  | `apps.yml` fails. L3 health check shows app container missing. Caddy returns 502.                                             |
 | Portainer removed and stacks break       | Violation of ADR-07. Compose stacks are coupled to Portainer.                                         | Integration test: remove Portainer container, verify `docker compose ls` shows all stacks still active.                       |
-| `backup` not running               | Runtime state not backed up. Portainer configs lost on disk failure.                                  | L3 alert: `backup` job exit code ≠ 0. Backup age exceeds schedule interval.                                             |
-| `backup` touches app data          | Boundary violation: L6 accessing L5 data. Backups are incomplete (runtime state mixed with app data). | Audit: `roles/L6_runtime/backup/` tasks must not reference `/srv/app/<name>/` or app database paths.                                |
+| `backup` not running                     | Runtime state not backed up. Portainer configs lost on disk failure.                                  | L3 alert: `backup` job exit code ≠ 0. Backup age exceeds schedule interval.                                                   |
+| `backup` touches app data                | Boundary violation: L6 accessing L5 data. Backups are incomplete (runtime state mixed with app data). | Audit: `roles/L6_runtime/backup/` tasks must not reference `/srv/app/<name>/` or app database paths.                          |
 | Compose depends on Portainer for deploy  | Portainer becomes required. Engine-Manager decoupling violated. Can't deploy without Portainer.       | CI test: deploy an app profile with `stack_portainer_enabled: false`. Must succeed.                                           |
-| Adapter uses per-app conditionals        | `deploy.yml.j2` contains `if app == "chatwoot"`. Runtime adapter is not agnostic.                     | Code review: `roles/L6_runtime/compose/deploy.yml.j2` must contain zero app names.                                                     |
+| Adapter uses per-app conditionals        | `deploy.yml.j2` contains `if app == "chatwoot"`. Runtime adapter is not agnostic.                     | Code review: `roles/L6_runtime/compose/deploy.yml.j2` must contain zero app names.                                            |
 
 ---
 
@@ -577,7 +585,6 @@ In a total platform failure, restore layers **bottom-up**:
 - ADR-07: [ADR-07.md](adr/ADR-07.md) - Engine/Manager decoupling
 - ADR-08: [ADR-08.md](adr/ADR-08.md) - Backup Roles Consolidation (superseded)
 - ADR-09: [ADR-09.md](adr/ADR-09.md) - AMD64/ARM64 Mandatory Compatibility
-
 
 ---
 

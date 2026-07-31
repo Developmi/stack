@@ -26,11 +26,11 @@ You need to understand what each class does before assigning one.
 
 **Hardening profile** - the `hardening_profile` dispatcher (in [HARDENING-STATUS.md](../security/HARDENING-STATUS.md#hardening-profile-dispatcher)) routes `brain`/`muscle` → `server`, `local` → `workstation`.
 
-**Brain vs muscle roles** — both run Docker, but with different purposes:
+**Brain vs muscle roles** - both run Docker, but with different purposes:
 - **brain** = operations + observability (runs Docker, monitoring stack, edge proxy, backup orchestration)
 - **muscle** = application runtime (runs Docker, application containers, backup-db for databases)
 
-The suite does NOT deploy applications — it prepares the hardened foundation. Application deployment is the operator's responsibility using reference profiles at `apps/`.
+The suite does NOT deploy applications - it prepares the hardened foundation. Application deployment is the operator's responsibility using reference profiles at `apps/`.
 
 ## Assigning a Host to a Class
 

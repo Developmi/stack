@@ -22,7 +22,7 @@ Operational rules:
 - Node-based tooling policy: use `pnpm` only (no `npm`).
 - Prettier execution must run through `pnpm` (for example, `pnpm dlx prettier@3.8.1`).
 - `make lint` is strict and validates YAML plus all playbooks automatically (no `PLAYBOOK` argument needed).
-- The suite does NOT deploy applications — it provides reference profiles under `apps/` for operator-managed deployment.
+- The suite does NOT deploy applications - it provides reference profiles under `apps/` for operator-managed deployment.
 
 ---
 
@@ -416,7 +416,7 @@ Verification coverage:
 
 > **Note:** The suite does NOT deploy applications. Application deployment is the operator's responsibility using the reference profiles under `apps/`.
 
-- [x] N/A — Application deployment is out of scope for this hardening suite. Reference profiles are provided under `apps/<name>/` for operator-managed stacks.
+- [x] N/A - Application deployment is out of scope for this hardening suite. Reference profiles are provided under `apps/<name>/` for operator-managed stacks.
 
 #### 2.5.9 Vault Operations (Validated but Excluded from Baseline)
 
@@ -609,7 +609,7 @@ curl -fsS https://<public-domain>/health 2>&1 | head -5
 
 ### 4.7 L5 - App Profiles
 
-Backup and application reference layer. Runs database dumps and Restic backups for app data. The suite does NOT deploy applications — it provides reference profiles under `apps/` for operator-managed deployment.
+Backup and application reference layer. Runs database dumps and Restic backups for app data. The suite does NOT deploy applications - it provides reference profiles under `apps/` for operator-managed deployment.
 
 **Prerequisites:** L4 complete, `enable_backups: true` (default).
 

@@ -4,7 +4,7 @@ type: operations
 owner: maintainers
 audience: operator
 version: v6.0.0
-last-reviewed: 2026-07-16
+last-reviewed: 2026-07-31
 status: active
 project: developmi-stack
 repo: github.com/Developmi/stack
@@ -14,7 +14,7 @@ repo: github.com/Developmi/stack
 
 Two-layer backup architecture for the Developmi Stack platform, covering application data (L5) and runtime state (L6). This document describes the mechanisms, schedules, retention policies, verification methods, and restore procedures.
 
-**Source of truth caveat**: Per-app backup schedules and retention values in this document are informational. The canonical source of truth is `apps/*/profile.yml`. This document MUST be updated when profiles change (SCE-BAK-006).
+**Source of truth caveat**: Tier-level backup policy - schedules, retention, and verification per DR tier - is the SSOT in §4 of this document (updated 2026-07-31 with the DR-tier model). Per-app values are declared in `apps/*/profile.yml` and MUST stay in sync with this document (SCE-BAK-006).
 
 ---
 
@@ -22,16 +22,16 @@ Two-layer backup architecture for the Developmi Stack platform, covering applica
 
 The platform separates backup into two independent layers per [ADR-09](../architecture/adr/ADR-09.md) (now superseded - both layers served by a single consolidated `roles/L6_runtime/backup/` role with `backup_role_source` dispatch):
 
-| Layer  | Role                  | What It Protects                                                | Restic Repo Prefix | Mechanism                  |
-| ------ | --------------------- | --------------------------------------------------------------- | ------------------ | -------------------------- |
-| **L5** | `roles/L6_runtime/backup/`       | Application data: database dumps, uploads, config files         | `restic/`          | Ephemeral Docker container |
+| Layer  | Role                       | What It Protects                                                | Restic Repo Prefix | Mechanism                  |
+| ------ | -------------------------- | --------------------------------------------------------------- | ------------------ | -------------------------- |
+| **L5** | `roles/L6_runtime/backup/` | Application data: database dumps, uploads, config files         | `restic/`          | Ephemeral Docker container |
 | **L6** | `roles/L6_runtime/backup/` | Runtime state: Docker volumes, Portainer configs, Compose state | `stack-restic/`    | Installed Restic binary    |
 
 ### Why Two Layers?
 
 L5 and L6 are intentionally separate - they protect different things with different recovery paths and different schedules:
 
-- **App data** (L5) changes every few minutes (user-generated content, workflow state, analytics). Backups run every 4 minutes for critical apps.
+- **App data** (L5) changes every few minutes (user-generated content, workflow state, analytics). tier1 app backups run every 4 hours; tier2 daily; tier3 weekly (see §4).
 - **Runtime state** (L6) changes infrequently (Docker configs, volume data). Backups run once daily.
 
 ### Boundary Contract
@@ -60,16 +60,16 @@ The separate prefixes prevent cross-contamination - an L5 retention policy never
 
 L5 application data backup uses two separate mechanisms that serve different purposes:
 
-| Aspect              | Playbook Restic Backup                      | Systemd Timer S3 Pipe               |
-|---------------------|---------------------------------------------|-------------------------------------|
-| Entry point         | `ansible-playbook playbooks/l6/backup-appdata.yml`  | systemd `backup-db-*.timer`         |
-| Orchestrator        | Ansible (playbook)                          | systemd (independent per-host)      |
-| Database dump       | `pre_dump.yml` (auto-detect containers)     | `docker exec` inline in unit        |
-| Upload mechanism    | Restic `restic/restic:0.19.0` → R2          | `aws s3 cp` pipe → R2               |
-| Restic retention    | `forget --prune` (daily/weekly/monthly)     | NONE (raw dumps accumulate)         |
-| Notification        | Telegram on failure only                    | NONE                                |
-| Scope               | Inventory group `brain` only                | All hosts with profiles             |
-| Invocation          | Manual / CI/CD                              | Automatic on schedule               |
+| Aspect           | Playbook Restic Backup                             | Systemd Timer S3 Pipe          |
+| ---------------- | -------------------------------------------------- | ------------------------------ |
+| Entry point      | `ansible-playbook playbooks/l6/backup-appdata.yml` | systemd `backup-db-*.timer`    |
+| Orchestrator     | Ansible (playbook)                                 | systemd (independent per-host) |
+| Database dump    | `pre_dump.yml` (auto-detect containers)            | `docker exec` inline in unit   |
+| Upload mechanism | Restic `restic/restic:0.19.0` → R2                 | `aws s3 cp` pipe → R2          |
+| Restic retention | `forget --prune` (daily/weekly/monthly)            | NONE (raw dumps accumulate)    |
+| Notification     | Telegram on failure only                           | NONE                           |
+| Scope            | Inventory group `brain` only                       | All hosts with profiles        |
+| Invocation       | Manual / CI/CD                                     | Automatic on schedule          |
 
 **Key difference**: The playbook provides full lifecycle backup (dump → Restic → retention → notify). The systemd timers provide **schedule-only** raw dump uploads - no Restic, no retention, no notification. Use the playbook for comprehensive protection; use timers for automated scheduled dumps between playbook runs.
 
@@ -94,11 +94,13 @@ The L5 playbook backup flow is orchestrated by `playbooks/l6/backup-appdata.yml`
 
 The systemd timers deployed by `roles/L6_runtime/backup/` run independently on each host, executing per-app `docker exec` + `aws s3 cp` pipes without Restic, retention, or notification:
 
-- Each app profile with a supported `db_type` (`postgres`, `mysql`, `sqlite`, `valkey`) generates a `backup-db-<appname>.timer` unit.
+- Each app profile with a supported `db_type` (`postgres`, `mariadb`, `mysql`, `mongodb`, `sqlite`) generates a `backup-db-<app>.timer` unit. The app name is **derived from the profile directory path** (`apps/<name>/profile.yml` → `<name>`), validated against `^[a-z0-9_-]+$` before render; a legacy `name` field (pre-2026-07-31) is ignored.
 - The timer's `ExecStart` runs: `docker exec <container> pg_dump ... | aws s3 cp - s3://<bucket>/db/<app>/<timestamp>.dump`
 - Raw dump files accumulate in the R2 bucket under the `db/<app>/` prefix - **no retention**.
 - **No Telegram notification** on failure. Failures are silent unless the operator monitors `systemctl` or `journalctl`.
-- Apps with `db_type: none` or `db_type: custom` produce `ExecStart=/bin/false` - the timer fires but does nothing.
+- Apps with `db_type: none` or `db_type: custom` produce `ExecStart=/bin/false` - the timer fires but does nothing (openlit, `db_type: none`, renders no unit at all).
+
+> **Declared, not executed (2026-07-31)**: `clickhouse-backup` and `file-volume` backup methods are **declared** in profiles but **not yet executed** by the role (it executes pg/mysql/mariadb/mongodb/sqlite today). clickhouse renders an `ExecStart=/bin/false` unit; uptime-kuma keeps an executable sqlite volume-tar with `volume_name: uptime-kuma_data` (its compose MUST name the volume exactly that). Execution support is future work (change `apps-stack-standardization`, Out of Scope).
 
 The systemd timers are intended as scheduled dump automation **between** playbook-based Restic runs, not as a replacement for full-lifecycle backup.
 
@@ -110,9 +112,9 @@ L5 backup targets the **brain** host exclusively. All database containers live o
 
 The suite provides backup for:
 
-- **Database backup (L6_runtime/backup-db)** — SUPPORTED. Automated PostgreSQL dumps via playbook-based Restic (recommended) or systemd timer S3 pipes (schedule-only). See §2.1 for mechanisms.
-- **Stack config backup (L6_runtime/backup)** — SUPPORTED. Caddy, Portainer, and monitoring stack state backed up via Restic binary (stack-restic prefix).
-- **App data backup (L6_runtime/backup, app-data mode)** — EXPERIMENTAL. Database dumps and app file data via ephemeral Restic container. Not 100% tested in all scenarios.
+- **Database backup (L6_runtime/backup-db)** - SUPPORTED. Automated PostgreSQL dumps via playbook-based Restic (recommended) or systemd timer S3 pipes (schedule-only). See §2.1 for mechanisms.
+- **Stack config backup (L6_runtime/backup)** - SUPPORTED. Caddy, Portainer, and monitoring stack state backed up via Restic binary (stack-restic prefix).
+- **App data backup (L6_runtime/backup, app-data mode)** - EXPERIMENTAL. Database dumps and app file data via ephemeral Restic container. Not 100% tested in all scenarios.
 
 > **Application data backup is the operator's responsibility.** The stack provides database backup and stack config backup as supported features. Per-app backup scope (uploads, file volumes, custom data directories) must be configured by the operator. The [INCIDENT_RESPONSE_DR.md](INCIDENT_RESPONSE_DR.md) document provides restore procedures for reference.
 
@@ -170,36 +172,44 @@ This prevents running `restic check` or `restic forget --prune` against an empty
 
 ## 4. Scheduling Reference
 
-### L5 - Per-App Schedule
+### L5 - Per-App Schedule (DR-Tier SSOT)
 
-L5 backup timers are deployed by `roles/L6_runtime/backup/` using a fileglob scan of `apps/*/profile.yml`. Each profile's `backup.schedule` generates a systemd timer unit:
+L5 backup timers are deployed by `roles/L6_runtime/backup/` from `apps/*/profile.yml`. Each dump-able profile generates a `backup-db-<app>.timer` + `backup-db-<app>.service` pair:
 
 ```bash
 # List all L5 backup timers
 systemctl list-timers "backup-db-*"
 ```
 
-**Critical apps** (nocodb, n8n, metabase, chatwoot, twenty-crm): `*/4 * * * *` - every 4 minutes.
+| Tier      | Apps                                                    | Schedule (systemd OnCalendar)           | Retention (daily/weekly/monthly) | Verification           |
+| --------- | ------------------------------------------------------- | --------------------------------------- | -------------------------------- | ---------------------- |
+| **tier1** | chatwoot, n8n, twenty-crm, metabase, nocodb             | every 4h (`*-*-* 00/4:00:00`)           | 7 / 4 / 12                       | monthly restore test   |
+| **tier2** | openwebui, postgresql, clickhouse, mariadb, uptime-kuma | daily 02:30 (`*-*-* 02:30:00`)          | 14 / 8 / 12                      | quarterly restore test |
+| **tier3** | openlit                                                 | weekly Sun 03:00 (`Sun *-*-* 03:00:00`) | 4 / 6                            | none                   |
 
-**Standard apps** (openwebui, fastapi): `0 2 * * *` - daily at 02:00.
+Backup method per app type: **pg_dump** (chatwoot, n8n, twenty-crm, metabase, nocodb, openwebui, postgresql), **mysqldump** (mariadb), **clickhouse-backup** (clickhouse), **file-volume** (uptime-kuma, openlit).
+
+> **Schedule syntax**: `backup.schedule` values are **systemd OnCalendar expressions** - the role renders the value directly into `OnCalendar=`. Cron syntax (`*/4 * * * *`) is NOT valid there.
+>
+> **Retention note**: retention values above are the declared tier policy in `apps/*/profile.yml` (themes). The current role execution applies the global restic retention (7/4/12, §5) - per-profile retention wiring is future work.
 
 ### L6 - Global Schedule
 
 L6 backup uses a global schedule per host, managed independently from app profiles:
 
-| Setting              | Value                                  | Source                                 |
-| -------------------- | -------------------------------------- | -------------------------------------- |
+| Setting              | Value                                                                  | Source                                      |
+| -------------------- | ---------------------------------------------------------------------- | ------------------------------------------- |
 | Schedule variable    | `restic_backup_time_by_group` (brain=02:00, muscle=03:00, local=04:00) | `roles/L6_runtime/backup/defaults/main.yml` |
-| Per-group staggering | brain=02:00, muscle=03:00, local=04:00 | `restic_backup_time_by_group`          |
-| Check timer          | Weekly (Sunday) per group              | `restic_check_time_by_group`           |
-| Prune timer          | Weekly (Saturday) per group            | `restic_prune_time_by_group`           |
+| Per-group staggering | brain=02:00, muscle=03:00, local=04:00                                 | `restic_backup_time_by_group`               |
+| Check timer          | Weekly (Sunday) per group                                              | `restic_check_time_by_group`                |
+| Prune timer          | Weekly (Saturday) per group                                            | `restic_prune_time_by_group`                |
 
 ### Timer Deployment Summary
 
-| Role                   | Timer Format                  | Deploys                               | Source of Schedule                     |
-| ---------------------- | ----------------------------- | ------------------------------------- | -------------------------------------- |
-| `roles/L6_runtime/backup/` | `backup-db-<appname>.timer`   | Systemd timers from profile schedules | `apps/*/profile.yml → backup.schedule` |
-| `roles/L6_runtime/backup/` | `restic-backup-all.timer`     | Single global systemd timer per host  | `stack_backup_schedule` default        |
+| Role                       | Timer Format                | Deploys                               | Source of Schedule                     |
+| -------------------------- | --------------------------- | ------------------------------------- | -------------------------------------- |
+| `roles/L6_runtime/backup/` | `backup-db-<appname>.timer` | Systemd timers from profile schedules | `apps/*/profile.yml → backup.schedule` |
+| `roles/L6_runtime/backup/` | `restic-backup-all.timer`   | Single global systemd timer per host  | `stack_backup_schedule` default        |
 
 > **Note**: Both rows reference the same consolidated `roles/L6_runtime/backup/` role. L5 vs L6 behavior is selected via the `backup_role_source` variable at the playbook level.
 
@@ -221,7 +231,7 @@ Enforced by `roles/L6_runtime/backup/` → `retention.yml` via ephemeral Restic 
 
 Source: `roles/L6_runtime/backup/defaults/main.yml` → `backup_keep_daily`, `backup_keep_weekly`, `backup_keep_monthly`.
 
-> **Per-profile retention values**: The `retention_daily`, `retention_weekly`, and `retention_monthly` fields in `apps/*/profile.yml` are **reserved for future use** and are NOT consumed by the current backup implementation. To change L5 retention, override `backup_keep_daily`, `backup_keep_weekly`, or `backup_keep_monthly` in `inventory/group_vars/all/vars.yml`. The Ansible defaults in `roles/L6_runtime/backup/defaults/main.yml` are the sole source of truth.
+> **Per-profile retention values**: The `retention_daily`, `retention_weekly`, and `retention_monthly` fields in `apps/*/profile.yml` are **reserved for future use** and are NOT consumed by the current backup implementation. To change L5 retention, override `backup_keep_daily`, `backup_keep_weekly`, or `backup_keep_monthly` in `inventory/group_vars/all/main.yml`. The Ansible defaults in `roles/L6_runtime/backup/defaults/main.yml` are the sole source of truth.
 
 ### L6 Retention
 
@@ -235,13 +245,13 @@ L6 retention uses a **two-phase** process, implemented by the `restic-backup-all
 - Non-critical failure (`|| true`) - a failed forget does not block the backup.
 - Runs every backup cycle (daily for most hosts).
 
-| Parameter        | Value                                     |
-| ---------------- | ----------------------------------------- |
-| `--keep-daily`   | 7                                         |
-| `--keep-weekly`  | 4                                         |
-| `--keep-monthly` | 3                                         |
+| Parameter        | Value                                           |
+| ---------------- | ----------------------------------------------- |
+| `--keep-daily`   | 7                                               |
+| `--keep-weekly`  | 4                                               |
+| `--keep-monthly` | 3                                               |
 | Mechanism        | `restic forget` (no `--prune`) in backup script |
-| Failure mode     | Non-critical - does not block backup      |
+| Failure mode     | Non-critical - does not block backup            |
 
 #### Phase 2 - Separate Prune Timer
 
@@ -379,11 +389,11 @@ If the Ansible Vault password is lost, follow the procedures in [`docs/operation
 
 ## 8. Related Documents
 
-| Document                                                                    | Relationship                                               |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [ADR-09 - Consolidated Backup Role (superseded)](../architecture/adr/ADR-09.md) | Rationale for the two-layer backup architecture (now consolidated into `roles/L6_runtime/backup/`)            |
-| [INCIDENT_RESPONSE_DR.md](../operations/INCIDENT_RESPONSE_DR.md)            | Incident response, disaster recovery, and secrets recovery |
-| [VERSION_PINS.md](../operations/VERSION_PINS.md)                            | Restic 0.19.0 version pin and rationale                    |
-| [ARCHITECTURE.md](../architecture/ARCHITECTURE.md)                          | 7-layer model - L5/L6 layer boundaries                     |
-| [apps/\*/profile.yml](../../apps/)                                          | Canonical source of truth for per-app backup configuration |
-| [playbooks/l6/backup-appdata.yml](../../playbooks/l6/backup-appdata.yml)                    | L5 backup playbook entry point                             |
+| Document                                                                        | Relationship                                                                                       |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| [ADR-09 - Consolidated Backup Role (superseded)](../architecture/adr/ADR-09.md) | Rationale for the two-layer backup architecture (now consolidated into `roles/L6_runtime/backup/`) |
+| [INCIDENT_RESPONSE_DR.md](../operations/INCIDENT_RESPONSE_DR.md)                | Incident response, disaster recovery, and secrets recovery                                         |
+| [VERSION_PINS.md](../operations/VERSION_PINS.md)                                | Restic 0.19.0 version pin and rationale                                                            |
+| [ARCHITECTURE.md](../architecture/ARCHITECTURE.md)                              | 7-layer model - L5/L6 layer boundaries                                                             |
+| [apps/\*/profile.yml](../../apps/)                                              | Canonical source of truth for per-app backup configuration                                         |
+| [playbooks/l6/backup-appdata.yml](../../playbooks/l6/backup-appdata.yml)        | L5 backup playbook entry point                                                                     |
