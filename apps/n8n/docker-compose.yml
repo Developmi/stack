@@ -56,6 +56,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - /home/node/.cache:uid=1000,gid=1000,mode=0700
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,7 +93,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-      - /home/node/.n8n
+      - /home/node/.n8n:uid=1000,gid=1000,mode=0700
     command: worker
     depends_on:
       postgres:
@@ -151,6 +152,7 @@ services:
     image: ${N8N_DB_IMAGE:-postgres:17.10-alpine}
     container_name: n8n-db
     restart: always
+    user: "999:999"
     init: true
     security_opt:
       - no-new-privileges:true
@@ -188,6 +190,7 @@ services:
     image: ${N8N_VALKEY_IMAGE:-valkey/valkey:9.1.1}
     container_name: n8n-valkey
     restart: always
+    user: "999:999"
     init: true
     security_opt:
       - no-new-privileges:true

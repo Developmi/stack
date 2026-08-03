@@ -7,6 +7,7 @@ services:
     image: ${MARIADB_IMAGE:-mariadb:11.4.12}
     container_name: mariadb
     restart: always
+    user: "999:999"
     init: true
     security_opt:
       - no-new-privileges:true
@@ -33,7 +34,7 @@ services:
       - mariadb_net
       - expose_network
     healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u$${MARIADB_USER} -p$${MARIADB_PASSWORD} --silent"]
       interval: 10s
       timeout: 5s
       retries: 5

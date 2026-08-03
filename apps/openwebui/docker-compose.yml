@@ -22,6 +22,7 @@ services:
     image: ${OPENWEBUI_DB_IMAGE:-postgres:17.10-alpine}
     container_name: openwebui-db
     restart: always
+    user: "999:999"
     init: true
     security_opt:
       - no-new-privileges:true

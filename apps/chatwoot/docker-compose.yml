@@ -24,6 +24,7 @@ services:
     image: ${CHATWOOT_DB_IMAGE:-pgvector/pgvector:0.8.6-pg17}
     restart: always
     container_name: chatwoot-db
+    user: "999:999"
     init: true
     security_opt:
       - no-new-privileges:true

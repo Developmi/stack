@@ -26,7 +26,6 @@ services:
       - CHOWN
       - SETGID
       - SETUID
-    read_only: true
     tmpfs:
       - /tmp
     environment: *uptime_kuma_env

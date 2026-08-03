@@ -20,6 +20,7 @@ services:
     image: ${METABASE_DB_IMAGE:-postgres:17.10-alpine}
     restart: always
     container_name: metabase-db
+    user: "999:999"
     init: true
     security_opt:
       - no-new-privileges:true
@@ -63,7 +64,9 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    read_only: true
+    cap_add:
+      - SETGID
+      - SETUID
     tmpfs:
       - /tmp
     depends_on:
