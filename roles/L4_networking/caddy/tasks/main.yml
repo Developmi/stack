@@ -24,6 +24,7 @@
     path: "{{ role_path }}/tasks/{{ reverse_proxy_backend }}.yml"
   register: _backend_task_file
   delegate_to: localhost
+  become: false
   tags: [l4-networking]
 
 - name: Preflight | Fail if backend is not implemented

@@ -12,7 +12,7 @@ services:
       - "443:443/tcp"
       - "443:443/udp"
     networks:
-      - public_net
+      - {{ shared_network_name }}
     volumes:
       - {{ app_base_dir }}/ingress/caddy-data:/data
       - {{ app_base_dir }}/ingress/caddy-config:/config
@@ -41,5 +41,5 @@ services:
       start_period: 10s
 
 networks:
-  public_net:
+  {{ shared_network_name }}:
     external: true
