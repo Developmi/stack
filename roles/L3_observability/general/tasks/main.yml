@@ -4,6 +4,14 @@
 # Do NOT expose, override, or parametrize these values in group_vars/all. Only manage via inventory, secrets, or vault with compliance review.
 # ---
 ---
+- name: Preflight | Ensure observability base directory exists
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/observability"
+    state: directory
+    mode: "0755"
+  when: app_base_dir is defined
+  tags: [l3-observability, observability, monitoring]
+
 - name: Preflight | Remove directory artifacts from failed Docker mounts
   ansible.builtin.file:
     path: "{{ app_base_dir }}/observability/{{ item }}"

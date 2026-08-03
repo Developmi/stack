@@ -1,11 +1,14 @@
 apiVersion: 1
 
 groups:
-  - name: nist_hardening_alerts
+  - orgId: 1
+    name: nist_hardening_alerts
+    interval: 1m
+    folder: nist_hardening_alerts
     rules:
       # --- ServiceDown: health probe fails for > N minutes ---
-      - alert: ServiceDown
-        expr: probe_success{job="blackbox-http"} == 0
+      - uid: l3-servicedown
+        title: ServiceDown
         for: {{ observability_alert_service_down_minutes }}m
         labels:
           severity: critical
@@ -13,11 +16,53 @@ groups:
         annotations:
           summary: "Service {{ '{{ $labels.instance }}' }} is DOWN"
           description: "Blackbox probe to {{ '{{ $labels.instance }}' }} has been failing for more than {{ observability_alert_service_down_minutes }} minutes."
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: victoriametrics
+            model:
+              expr: 'probe_success{job="blackbox-http"}'
+              instant: true
+              range: false
+              refId: A
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              intervalMs: 1000
+              maxDataPoints: 43200
+            relativeTimeRange:
+              from: 300
+              to: 0
+          - refId: C
+            datasourceUid: __expr__
+            type: threshold
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params:
+                      - 1
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
 
       # --- HighCPU: CPU utilization > threshold for 5 min ---
-      - alert: HighCPU
-        expr: |
-          100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > {{ observability_alert_cpu_threshold }}
+      - uid: l3-highcpu
+        title: HighCPU
         for: 5m
         labels:
           severity: warning
@@ -25,11 +70,53 @@ groups:
         annotations:
           summary: "High CPU on {{ '{{ $labels.instance }}' }}"
           description: "CPU usage has exceeded {{ observability_alert_cpu_threshold }}% for more than 5 minutes (current: {{ '{{ $value }}' }}%)."
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: victoriametrics
+            model:
+              expr: '100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'
+              instant: true
+              range: false
+              refId: A
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              intervalMs: 1000
+              maxDataPoints: 43200
+            relativeTimeRange:
+              from: 300
+              to: 0
+          - refId: C
+            datasourceUid: __expr__
+            type: threshold
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - {{ observability_alert_cpu_threshold }}
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
 
       # --- HighMemory: memory utilization > threshold for 5 min ---
-      - alert: HighMemory
-        expr: |
-          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > {{ observability_alert_memory_threshold }}
+      - uid: l3-highmem
+        title: HighMemory
         for: 5m
         labels:
           severity: warning
@@ -37,12 +124,53 @@ groups:
         annotations:
           summary: "High memory usage on {{ '{{ $labels.instance }}' }}"
           description: "Memory usage has exceeded {{ observability_alert_memory_threshold }}% for more than 5 minutes (current: {{ '{{ $value }}' }}%)."
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: victoriametrics
+            model:
+              expr: '(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100'
+              instant: true
+              range: false
+              refId: A
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              intervalMs: 1000
+              maxDataPoints: 43200
+            relativeTimeRange:
+              from: 300
+              to: 0
+          - refId: C
+            datasourceUid: __expr__
+            type: threshold
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - {{ observability_alert_memory_threshold }}
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
 
       # --- DiskPressure: disk usage > threshold ---
-      - alert: DiskPressure
-        expr: |
-          (node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"} - node_filesystem_free_bytes{fstype!~"tmpfs|overlay|squashfs"})
-          / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"} * 100 > {{ observability_alert_disk_threshold }}
+      - uid: l3-diskpressure
+        title: DiskPressure
         for: 2m
         labels:
           severity: critical
@@ -50,10 +178,53 @@ groups:
         annotations:
           summary: "Disk pressure on {{ '{{ $labels.instance }}' }} ({{ '{{ $labels.mountpoint }}' }})"
           description: "Filesystem {{ '{{ $labels.mountpoint }}' }} on {{ '{{ $labels.instance }}' }} has exceeded {{ observability_alert_disk_threshold }}% usage (current: {{ '{{ $value }}' }}%)."
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: victoriametrics
+            model:
+              expr: '(node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"} - node_filesystem_free_bytes{fstype!~"tmpfs|overlay|squashfs"}) / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"} * 100'
+              instant: true
+              range: false
+              refId: A
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              intervalMs: 1000
+              maxDataPoints: 43200
+            relativeTimeRange:
+              from: 300
+              to: 0
+          - refId: C
+            datasourceUid: __expr__
+            type: threshold
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - {{ observability_alert_disk_threshold }}
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
 
       # --- CertExpiry: TLS certificate expiring soon ---
-      - alert: CertExpiry
-        expr: probe_ssl_earliest_cert_expiry - time() < {{ observability_alert_cert_expiry_days }} * 86400
+      - uid: l3-certexpiry
+        title: CertExpiry
         for: 1m
         labels:
           severity: warning
@@ -61,3 +232,46 @@ groups:
         annotations:
           summary: "TLS certificate expiring soon on {{ '{{ $labels.instance }}' }}"
           description: "TLS certificate for {{ '{{ $labels.instance }}' }} expires in less than {{ observability_alert_cert_expiry_days }} days."
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: victoriametrics
+            model:
+              expr: 'probe_ssl_earliest_cert_expiry - time()'
+              instant: true
+              range: false
+              refId: A
+              datasource:
+                type: prometheus
+                uid: victoriametrics
+              intervalMs: 1000
+              maxDataPoints: 43200
+            relativeTimeRange:
+              from: 300
+              to: 0
+          - refId: C
+            datasourceUid: __expr__
+            type: threshold
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params:
+                      - {{ observability_alert_cert_expiry_days | int * 86400 }}
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0

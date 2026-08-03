@@ -1,5 +1,6 @@
 apiVersion: 1
 
+{% if observability_telegram_bot_token | default('') | length > 0 %}
 contactPoints:
   - orgId: 1
     name: telegram
@@ -7,7 +8,7 @@ contactPoints:
       - uid: telegram-notifier
         type: telegram
         settings:
-          bottoken: "{{ observability_telegram_bot_token | default('') }}"
+          bottoken: "{{ observability_telegram_bot_token }}"
           chatid: "{{ observability_telegram_chat_id | default('') }}"
         disableResolveMessage: false
 
@@ -22,3 +23,10 @@ policies:
     matchers: []
 
 templates: []
+{% else %}
+# Telegram notifier disabled: observability_telegram_bot_token is not set.
+# Empty provisioning keeps Grafana alerting valid when no token is configured.
+contactPoints: []
+policies: []
+templates: []
+{% endif %}

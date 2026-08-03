@@ -101,6 +101,44 @@
     - grafana
 
 
+- name: Preflight | Prompt if external stack network is missing
+  ansible.builtin.pause:
+    prompt: >-
+      You need to run first the l4 stack to create {{ observability_stack_network_name }}
+      for this layer. Continue anyway? [y/N]
+    timeout: 30
+  register: _network_gate_response
+  when:
+    - observability_stack_network_external | bool
+    - (observability_docker_host_info.networks | default([])
+       | selectattr('Name', 'equalto', observability_stack_network_name)
+       | list | length) == 0
+  tags: [l3-observability, observability, monitoring]
+
+- name: Preflight | Stop gracefully when L4 prerequisite is declined
+  ansible.builtin.debug:
+    msg: >-
+      Skipping observability stack: run the L4 stack first
+      (make deploy-edge EDGE=caddy HOST=<host>) to create
+      {{ observability_stack_network_name }} for this layer.
+  when:
+    - observability_stack_network_external | bool
+    - (observability_docker_host_info.networks | default([])
+       | selectattr('Name', 'equalto', observability_stack_network_name)
+       | list | length) == 0
+    - _network_gate_response.user_input | default('') | lower not in ['y', 'yes']
+  tags: [l3-observability, observability, monitoring]
+
+- name: Preflight | End play when L4 prerequisite is declined
+  ansible.builtin.meta: end_play
+  when:
+    - observability_stack_network_external | bool
+    - (observability_docker_host_info.networks | default([])
+       | selectattr('Name', 'equalto', observability_stack_network_name)
+       | list | length) == 0
+    - _network_gate_response.user_input | default('') | lower not in ['y', 'yes']
+  tags: [l3-observability, observability, monitoring]
+
 - name: Assert external observability stack network exists
   ansible.builtin.assert:
     that:
@@ -203,6 +241,7 @@
       apiVersion: 1
       datasources:
         - name: VictoriaMetrics
+          uid: victoriametrics
           type: prometheus
           url: http://victoria-metrics:8428
           access: proxy
