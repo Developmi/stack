@@ -10,7 +10,7 @@
 
 - name: "L2 | Include user hardening"
   ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/user_hardening/main.yml"
-  when: l2_user_hardening_enabled | default(true)
+  when: (l2_user_hardening_enabled | default(true)) and (ansible_user | default('')) != 'automation'
   tags: [l2-compliance, user_hardening]
 
 - name: "L2 | Include Tailscale client"
@@ -19,11 +19,11 @@
   tags: [l2-compliance, tailscale]
 
 - name: "L2 | Include CrowdSec IPS (NIST SI-4)"
-  ansible.builtin.include_tasks: "{{ role_path }}/../nist_800_53/si-4/tasks/main.yml"
+  ansible.builtin.include_tasks: "{{ role_path }}/nist_800_53/si-4/tasks/main.yml"
   when: l2_crowdsec_enabled | default(false)
   tags: [l2-compliance, nist, si-4]
 
 - name: "L2 | Include NIST 800-53 evidence collection"
-  ansible.builtin.include_tasks: "{{ role_path }}/../nist_800_53/tasks/main.yml"
+  ansible.builtin.include_tasks: "{{ role_path }}/nist_800_53/tasks/main.yml"
   when: l2_compliance_enabled | default(false)
   tags: [l2-compliance, nist, compliance]

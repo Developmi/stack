@@ -9,25 +9,25 @@
 # ==============================================================================
 
 - name: "Collect AC-2 evidence (Account Management)"
-  ansible.builtin.include_tasks: "{{ role_path }}/nist_800_53/tasks/evidence_ac2.yml"
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/evidence_ac2.yml"
   tags: [compliance, l2-compliance, nist, ac-2]
 
 - name: "Collect CM-7 evidence (Least Functionality)"
-  ansible.builtin.include_tasks: "{{ role_path }}/nist_800_53/tasks/evidence_cm7.yml"
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/evidence_cm7.yml"
   tags: [compliance, l2-compliance, nist, cm-7]
 
 - name: "Collect SC-7 evidence (Boundary Protection)"
-  ansible.builtin.include_tasks: "{{ role_path }}/nist_800_53/tasks/evidence_sc7.yml"
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/evidence_sc7.yml"
   tags: [compliance, l2-compliance, nist, sc-7]
 
 - name: "Collect SI-4 evidence (System Monitoring)"
-  ansible.builtin.include_tasks: "{{ role_path }}/nist_800_53/tasks/evidence_si4.yml"
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/evidence_si4.yml"
   tags: [compliance, l2-compliance, nist, si-4]
 
 - name: "Collect AU-12 evidence (Audit Generation)"
-  ansible.builtin.include_tasks: "{{ role_path }}/nist_800_53/tasks/evidence_au12.yml"
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/evidence_au12.yml"
   tags: [compliance, l2-compliance, nist, au-12]
 
 - name: "Collect SC-28 evidence (Data at Rest - LUKS)"
-  ansible.builtin.include_tasks: "{{ role_path }}/nist_800_53/tasks/evidence_sc28.yml"
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/evidence_sc28.yml"
   tags: [compliance, l2-compliance, nist, sc-28]

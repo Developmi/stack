@@ -12,11 +12,6 @@
     file: "{{ role_path }}/general/defaults/user_hardening.yml"
   tags: [always]
 
-- name: "AC-2 | Skip - already running as automation user"
-  ansible.builtin.meta: end_play
-  when: (ansible_user | default('')) == 'automation'
-  tags: [always]
-
 - name: "AC-2 | Pre-flight: Verify connection user is root or ubuntu"
   ansible.builtin.assert:
     that:
