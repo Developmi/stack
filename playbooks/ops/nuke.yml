@@ -361,7 +361,7 @@
 
     - name: Observability | Remove stack network to avoid stale network reuse
       community.docker.docker_network:
-        name: "{{ observability_stack_network_name | default('public_net') }}"
+        name: "{{ observability_stack_network_name | default(shared_network_name | default('public_net')) }}"
         state: absent
       failed_when: false
       tags: [observability, monitoring, observability_stack, observability_networks]

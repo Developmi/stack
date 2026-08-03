@@ -1,0 +1,67 @@
+---
+# Shared | Detect Docker user namespace remapping
+# ------------------------------------------------------------------------------
+# Computes the host-side UID/GID that owns files bind-mounted into a container
+# when the Docker daemon runs with userns-remap. Called by the L3 observability,
+# L4 caddy, and L6 portainer roles to derive effective ownership facts.
+#
+# Input variables (set by the caller):
+#   userns_container_uid  - UID of the process inside the container
+#   userns_container_gid  - GID of the process inside the container
+#   userns_output_prefix  - fact name prefix (observability | _caddy | portainer)
+#
+# Output facts:
+#   <prefix>_effective_uid     - host-side UID for bind-mount ownership
+#   <prefix>_effective_gid     - host-side GID for bind-mount ownership
+#   <prefix>_userns_enabled    - true when Docker userns-remap is active
+#   <prefix>_userns_gid_offset - subordinate GID range start (0 when disabled)
+# ------------------------------------------------------------------------------
+- name: Detect userns-remap | Read Docker daemon configuration
+  ansible.builtin.slurp:
+    src: /etc/docker/daemon.json
+  register: _userns_daemon
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Detect userns-remap | Parse userns-remap setting
+  ansible.builtin.set_fact:
+    _userns_remap_raw: "{{ ((_userns_daemon.content | b64decode) | from_json).get('userns-remap', '') if _userns_daemon.content is defined else '' }}"
+  changed_when: false
+
+- name: Detect userns-remap | Resolve remap account
+  ansible.builtin.set_fact:
+    _userns_remap_user: >-
+      {{ 'dockremap' if _userns_remap_raw in ['default', 'dockremap']
+         else (_userns_remap_raw.split(':')[0] if _userns_remap_raw else '') }}
+  changed_when: false
+
+- name: Detect userns-remap | Read subordinate UID ranges
+  ansible.builtin.slurp:
+    src: /etc/subuid
+  register: _userns_subuid
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Detect userns-remap | Read subordinate GID ranges
+  ansible.builtin.slurp:
+    src: /etc/subgid
+  register: _userns_subgid
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Detect userns-remap | Extract subordinate range start
+  ansible.builtin.set_fact:
+    _userns_subuid_start: "{{ _userns_subuid.content | b64decode | regex_findall('^' ~ _userns_remap_user ~ ':(\\d+):\\d+', multiline=True) | join('') | int if _userns_remap_user and _userns_subuid.content is defined else 0 }}"
+    _userns_subgid_start: "{{ _userns_subgid.content | b64decode | regex_findall('^' ~ _userns_remap_user ~ ':(\\d+):\\d+', multiline=True) | join('') | int if _userns_remap_user and _userns_subgid.content is defined else 0 }}"
+  changed_when: false
+
+- name: Detect userns-remap | Publish effective ownership facts
+  ansible.builtin.set_fact:
+    "{{ userns_output_prefix }}_userns_enabled": "{{ _userns_remap_user | length > 0 }}"
+    "{{ userns_output_prefix }}_userns_gid_offset": "{{ _userns_subgid_start }}"
+    "{{ userns_output_prefix }}_effective_uid": "{{ (userns_container_uid | int) + _userns_subuid_start if _userns_remap_user else (userns_container_uid | int) }}"
+    "{{ userns_output_prefix }}_effective_gid": "{{ (userns_container_gid | int) + _userns_subgid_start if _userns_remap_user else (userns_container_gid | int) }}"
+  changed_when: false

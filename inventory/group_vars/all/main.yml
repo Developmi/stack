@@ -4,8 +4,11 @@
 # Set this if you use Headscale or another VPN subnet for remote administration.
 tailscale_subnet: "100.64.0.0/10"
 
+# Shared external Docker network (L3 observability stack, L4 caddy, L6 portainer)
+shared_network_name: "public_net"
+
 # Observability stack network (for VictoriaMetrics/Grafana/Loki)
-observability_stack_network_name: "public_net"
+observability_stack_network_name: "{{ shared_network_name }}"
 observability_stack_network_external: true
 
 # Portainer stack environment defaults for observability compose
