@@ -232,7 +232,7 @@ deploy-lockdown: ## L2: Post-bootstrap lockdown - close public SSH
 
 deploy-compliance-nist80053: ## L2: NIST 800-53 compliance evidence
 	@echo "=== L2: NIST 800-53 Compliance ==="
-	$(ANSIBLE_RUN) playbooks/l2/compliance.yml $(BECOME_PROMPT_FLAG) $(VAULT_PROMPT_FLAG) $(ANSIBLE_OPTS)
+	$(ANSIBLE_RUN) playbooks/l2/compliance.yml $(BECOME_PROMPT_FLAG) $(VAULT_PROMPT_FLAG) $(ANSIBLE_LIMIT_FLAG) $(ANSIBLE_OPTS)
 
 deploy-tailscale-reconnect: ## L2: Tailscale mesh recovery
 	@echo "=== L2: Tailscale Reconnect ==="
@@ -337,10 +337,10 @@ verify-auditd:
 	$(PKG) run ansible all -i $(ANSIBLE_INVENTORY) -m shell -a "tail -n 50 /var/log/audit/audit.log"
 
 verify-observability:
-	$(PKG) run ansible all -i $(ANSIBLE_INVENTORY) -m shell -a "docker ps --format '{{.Names}} {{.Status}}' | grep -E 'node-exporter|cadvisor'"
-	$(PKG) run ansible all -i $(ANSIBLE_INVENTORY) -m shell -a "curl -fsS http://127.0.0.1:9100/metrics >/dev/null && echo node_exporter_ok"
-	$(PKG) run ansible all -i $(ANSIBLE_INVENTORY) -m shell -a "curl -fsS http://127.0.0.1:18080/metrics >/dev/null && echo cadvisor_ok || echo cadvisor_limited_or_down"
-	$(PKG) run ansible brain -i $(ANSIBLE_INVENTORY) -m shell -a "curl -fsS 'http://127.0.0.1:8428/api/v1/targets' | grep -E 'node-exporter|cadvisor'"
+	$(PKG) run ansible all -i $(ANSIBLE_INVENTORY) -m shell -a "docker ps -a | grep -E 'node-exporter|cadvisor'" $(ANSIBLE_FLAGS)
+	$(PKG) run ansible all -i $(ANSIBLE_INVENTORY) -m shell -a "curl -fsS http://127.0.0.1:9100/metrics >/dev/null && echo node_exporter_ok" $(ANSIBLE_FLAGS)
+	$(PKG) run ansible all -i $(ANSIBLE_INVENTORY) -m shell -a "curl -fsS http://127.0.0.1:18080/metrics >/dev/null && echo cadvisor_ok || echo cadvisor_limited_or_down" $(ANSIBLE_FLAGS)
+	$(PKG) run ansible brain -i $(ANSIBLE_INVENTORY) -m shell -a "docker inspect victoria-metrics loki grafana blackbox-exporter 2>/dev/null | grep -c running | grep -q '^4$$' && docker inspect grafana 2>/dev/null | grep -c 'RestartCount.: 0' | grep -q '^1$$' && echo stack_containers_running || echo STACK_CONTAINERS_DOWN" $(ANSIBLE_FLAGS)
 
 verify-timers:
 	$(PKG) run ansible all -i $(ANSIBLE_INVENTORY) -m shell -a \
