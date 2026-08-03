@@ -10,9 +10,9 @@
   when: enable_portainer | default(false) | bool
   tags: [l6-runtime, portainer, management]
   block:
-    - name: Ensure public_net Docker network exists
+    - name: Ensure {{ shared_network_name }} Docker network exists
       community.docker.docker_network:
-        name: public_net
+        name: "{{ shared_network_name }}"
         driver: bridge
         state: present
       tags: [l6-runtime, portainer, management]

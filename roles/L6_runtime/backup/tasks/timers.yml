@@ -34,7 +34,7 @@
 
 - name: "Collect app profile files (controller side)"
   ansible.builtin.find:
-    paths: "{{ inventory_dir }}/../../apps"
+    paths: "{{ inventory_dir }}/../apps"
     patterns: "profile.yml"
     recurse: true
     file_type: file

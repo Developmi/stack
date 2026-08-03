@@ -9,14 +9,14 @@
 - name: "Include stack backup tasks"
   ansible.builtin.include_tasks: stack_backup.yml
   tags: [l6-runtime, stack_backup, restic]
-  when: backup_role_source == "stack" or backup_role_source is not defined
+  when: backup_role_source is not defined or backup_role_source == "stack"
 
 - name: "Include app-data backup tasks"
   ansible.builtin.include_tasks: app_data_backup.yml
   tags: [l6-runtime, backup]
-  when: backup_role_source == "app-data"
+  when: backup_role_source is defined and backup_role_source == "app-data"
 
 - name: "Include timer deployment tasks"
   ansible.builtin.include_tasks: timers.yml
   tags: [backup-timers]
-  when: backup_role_source == "timers"
+  when: backup_role_source is defined and backup_role_source == "timers"

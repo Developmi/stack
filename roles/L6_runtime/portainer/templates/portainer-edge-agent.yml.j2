@@ -42,10 +42,10 @@ services:
           cpus: "1.0"
           memory: "512M"
     networks:
-      - public_net
+      - {{ shared_network_name }}
     labels:
       com.docker.stack.namespace: "management"
 
 networks:
-  public_net:
+  {{ shared_network_name }}:
     external: true

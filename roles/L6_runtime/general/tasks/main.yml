@@ -66,6 +66,7 @@
   ansible.builtin.apt:
     name:
       - ca-certificates
+      - cron
       - curl
       - gnupg
       - python3-docker

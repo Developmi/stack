@@ -14,7 +14,7 @@ services:
       - portainer_data:/data
       - {{ app_base_dir }}/portainer_certs:/certs:ro
     networks:
-      - public_net
+      - {{ shared_network_name }}
     ports:
       # SEGURIDAD: Bind SOLO a la IP de Tailscale (VPN)
       # No exponer a 0.0.0.0
@@ -32,7 +32,7 @@ services:
           memory: "1G"
 
 networks:
-  public_net:
+  {{ shared_network_name }}:
     external: true
 
 volumes:
