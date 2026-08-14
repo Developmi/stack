@@ -30,6 +30,8 @@
         patterns: "profile.yml"
         recurse: true
       delegate_to: localhost
+      # controller-side: never escalate on the control node (see ansible.cfg become=True)
+      become: false
       register: fixture_files
 
     - name: "GIVEN: Load backup metadata from each fixture profile"

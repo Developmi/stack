@@ -1,7 +1,7 @@
 ---
 # L6 Runtime Backup - Consolidated defaults
 # Merged from: roles/stack_backup/, roles/backup/, roles/backup-timers/
-# All secrets are in group_vars/all/secrets.yml (vault-encrypted).
+# All secrets are in group_vars/all/secrets.sops.yml (SOPS-encrypted).
 
 # ── stack_backup defaults ──
 restic_version: "0.19.0"
@@ -30,7 +30,7 @@ restic_prune_time_by_group:
 restic_r2_endpoint: "https://{{ restic_r2_account_id }}.r2.cloudflarestorage.com"
 restic_r2_bucket: "nist-backups-prod"
 
-# stack_backup: ADR-03 independent Restic repo prefix (stack-restic/)
+# stack_backup: independent Restic repo prefix (stack-restic/)
 restic_repo_url: "s3:{{ restic_r2_endpoint }}/{{ restic_r2_bucket }}/stack-restic/{{ ansible_hostname }}"
 
 # ── backup/ (app-data backup) defaults ──

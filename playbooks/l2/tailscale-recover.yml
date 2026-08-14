@@ -13,9 +13,9 @@
 #          during PHASE 4 and nodes dropped off the VPN.
 #
 # Usage:
-#   make deploy-tailscale-reconnect
+#   make reconnect-tailscale
 #   OR
-#   ansible-playbook -i inventory/hosts.ini playbooks/l2/tailscale.yml --ask-vault-pass
+#   ansible-playbook -i inventory/hosts.ini playbooks/l2/tailscale-recover.yml --ask-vault-pass
 #
 # IMPORTANT: This playbook connects via public_ip (not Tailscale IPs)
 #            because Tailscale is currently DOWN on the nodes.

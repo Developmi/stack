@@ -9,14 +9,14 @@
   ansible.builtin.include_vars:
     file: "{{ item }}"
     name: _p
-  tags: [l6-runtime, backup_timers]
+  tags: [l6-runtime, backup-timers]
   # ponytail: systemd validates OnCalendar itself, regex assert was too restrictive
 
 - name: "Derive app name from profile path"
   ansible.builtin.set_fact:
     _app_name: "{{ item | dirname | basename }}"
   when: enable_backups | default(false) | bool
-  tags: [l6-runtime, backup_timers]
+  tags: [l6-runtime, backup-timers]
   # SDD backup-profile-integration: the app name comes from the directory
   # holding profile.yml (apps/<app>/profile.yml -> <app>). The `name` field
   # was dropped from the reduced schema; a stale `name` must NOT be used.
@@ -31,7 +31,7 @@
       (systemd unit-name safety).
     quiet: true
   when: enable_backups | default(false) | bool
-  tags: [l6-runtime, backup_timers]
+  tags: [l6-runtime, backup-timers]
   # Threat matrix: shell metacharacters in profile paths are rejected before
   # any template render (ExecStart interpolation), so no unit is written.
 
@@ -46,7 +46,7 @@
     - enable_backups | default(false) | bool
     - _p.backup is defined
     - _p.backup.db_type | default('') not in ['none', 'custom']
-  tags: [l6-runtime, backup_timers]
+  tags: [l6-runtime, backup-timers]
 
 - name: "Deploy backup-db-{{ _app_name }}.service"
   ansible.builtin.template:
@@ -58,7 +58,7 @@
     - enable_backups | default(false) | bool
     - _p.backup is defined
     - _p.backup.db_type | default('') not in ['none', 'custom']
-  tags: [l6-runtime, backup_timers]
+  tags: [l6-runtime, backup-timers]
 
 - name: "Enable and start backup-db-{{ _app_name }}.timer"
   ansible.builtin.systemd:
@@ -70,4 +70,4 @@
     - enable_backups | default(false) | bool
     - _p.backup is defined
     - _p.backup.db_type | default('') not in ['none', 'custom']
-  tags: [l6-runtime, backup_timers]
+  tags: [l6-runtime, backup-timers]

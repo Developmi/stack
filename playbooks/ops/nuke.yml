@@ -49,7 +49,7 @@
         This will remove infrastructure managed by the Developmi Stack,
         including Docker stacks, VPN/security tooling, and app data.
 
-        Type DESTROY_NIST_INFRASTRUCTURE to proceed:
+        Type DESTROY_ALL_INFRASTRUCTURE to proceed:
       private: false
       default: "NO"
 
@@ -96,32 +96,13 @@
 
   pre_tasks:
     - name: Require overlay-network ansible_host for nuke operations
-      ansible.builtin.assert:
-        that:
-          - ansible_host is defined
-          - >-
-            lookup(
-              'ansible.builtin.pipe',
-              "python3 -c 'import ipaddress,sys; "
-              ~ "host=sys.argv[1]; subnet=sys.argv[2]; "
-              ~ "\ntry:\n print(ipaddress.ip_address(host) in ipaddress.ip_network(subnet, strict=False))"
-              ~ "\nexcept ValueError:\n print(False)' "
-              ~ (ansible_host | quote)
-              ~ " "
-              ~ (tailscale_subnet | quote)
-            ) == 'True'
-        fail_msg: >-
-          Zero Trust violation on {{ inventory_hostname }}: nuke.yml only allows
-          connections through the management overlay using ansible_host inside
-          {{ tailscale_subnet }}. Public bootstrap access is only permitted in site.yml.
-        success_msg: >-
-          Overlay transport validated for {{ inventory_hostname }} ({{ ansible_host }} in {{ tailscale_subnet }}).
+      ansible.builtin.include_tasks: ../_shared/overlay_preflight.yml
       tags: [always]
 
     - name: Verify nuke confirmation token
       ansible.builtin.fail:
-        msg: "Nuke aborted. Type DESTROY_NIST_INFRASTRUCTURE to continue."
-      when: confirm_nuke != 'DESTROY_NIST_INFRASTRUCTURE'
+        msg: "Nuke aborted. Type DESTROY_ALL_INFRASTRUCTURE to continue."
+      when: confirm_nuke != 'DESTROY_ALL_INFRASTRUCTURE'
       tags: [always]
 
     - name: Block nuke on production group members

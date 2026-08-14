@@ -1,0 +1,39 @@
+---
+# ==============================================================================
+# OVERLAY PRE-FLIGHT - Zero Trust transport check (SSOT)
+# ==============================================================================
+# Reusable include for l3/l6/ops playbook pre_tasks.
+#
+# WHY THIS FILE EXISTS:
+#   This assert was previously copy-pasted (with drift) across 7 playbooks.
+#   It lives here so every playbook validates the exact same Zero Trust
+#   invariant: ansible_host MUST be a Tailscale overlay IP inside
+#   tailscale_subnet. Public bootstrap access is only permitted in site.yml.
+#
+# Interface:
+#   - tailscale_subnet (group var): overlay CIDR, e.g. 100.64.0.0/10.
+#   - Tags: applied by the including playbook via include_tasks tags, so
+#     each caller keeps its exact tag set (e.g. [always] for nuke).
+# ==============================================================================
+
+- name: "Preflight: Require overlay-network ansible_host for operations"
+  ansible.builtin.assert:
+    that:
+      - ansible_host is defined
+      - >-
+        lookup(
+          'ansible.builtin.pipe',
+          "python3 -c 'import ipaddress,sys; "
+          ~ "host=sys.argv[1]; subnet=sys.argv[2]; "
+          ~ "\ntry:\n print(ipaddress.ip_address(host) in ipaddress.ip_network(subnet, strict=False))"
+          ~ "\nexcept ValueError:\n print(False)' "
+          ~ (ansible_host | quote)
+          ~ " "
+          ~ (tailscale_subnet | quote)
+        ) == 'True'
+    fail_msg: >-
+      Zero Trust violation on {{ inventory_hostname }}: this playbook only allows
+      connections through the management overlay using ansible_host inside
+      {{ tailscale_subnet }}. Public bootstrap access is only permitted in site.yml.
+    success_msg: >-
+      Overlay transport validated for {{ inventory_hostname }} ({{ ansible_host }} in {{ tailscale_subnet }}).

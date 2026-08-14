@@ -72,6 +72,8 @@
         index_var: i
       when: not item.pre_build_image | default(false)
       delegate_to: localhost
+      # controller-side: never escalate on the control node (see ansible.cfg become=True)
+      become: false
 
     - name: Discover local Docker images
       community.docker.docker_image_info:

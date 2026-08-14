@@ -1,6 +1,6 @@
 ---
 # ==============================================================================
-# Developmi Stack | Developmi | Miguel Lozano (SRE & FinOps Architect)
+# Developmi Stack | L6 Runtime Backup - Timers
 # ==============================================================================
 # BACKUP TIMER AUTOMATION - systemd scheduling layer
 # ==============================================================================
@@ -11,7 +11,7 @@
 #          NIST SP 800-53 CP-9 and CM-6.
 # ==============================================================================
 # Usage:
-#   ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-timers.yml --ask-vault-pass
+#   ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-timers.yml
 #   ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-timers.yml --limit brain-1
 # ==============================================================================
 
@@ -23,18 +23,7 @@
     backup_role_source: timers
   pre_tasks:
     - name: "Preflight: Require overlay-network ansible_host"
-      ansible.builtin.assert:
-        that:
-          - ansible_host is defined
-          - >-
-            lookup('ansible.builtin.pipe',
-              "python3 -c 'import ipaddress,sys; host=sys.argv[1]; subnet=sys.argv[2]; "
-              ~ "\ntry:\n print(ipaddress.ip_address(host) in ipaddress.ip_network(subnet, strict=False))"
-              ~ "\nexcept ValueError:\n print(False)' "
-              ~ (ansible_host | quote) ~ " " ~ (tailscale_subnet | quote)
-            ) == 'True'
-        fail_msg: >-
-          Zero Trust violation on {{ inventory_hostname }}: backup-timers requires overlay.
-        success_msg: "Overlay validated for {{ inventory_hostname }}."
+      ansible.builtin.include_tasks: ../_shared/overlay_preflight.yml
+      tags: [l6-runtime, backup-timers]
   roles:
     - role: L6_runtime/backup

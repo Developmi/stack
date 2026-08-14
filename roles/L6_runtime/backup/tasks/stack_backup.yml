@@ -2,8 +2,8 @@
 # COMPLIANCE WARNING:
 # This role manages Restic backup infrastructure including binary installation,
 # encrypted credentials (R2 API keys + repo passwords), backup scripts, systemd
-# timers, and log rotation. Credentials are deployed via Ansible Vault with
-# no_log: true. Do NOT expose or override vault variables in plaintext group_vars.
+# timers, and log rotation. Credentials are deployed via SOPS with
+# no_log: true. Do NOT expose or override SOPS-managed variables in plaintext group_vars.
 # ---
 ---
 - name: "Include Restic binary installation"

@@ -1,6 +1,6 @@
 ---
 # ==============================================================================
-# Developmi Stack | Developmi | Miguel Lozano (SRE & FinOps Architect)
+# Developmi Stack | L6 Runtime Backup - App Data
 # ==============================================================================
 # L6 APP DATA BACKUP - Database dumps + restic to R2
 # ==============================================================================
@@ -9,8 +9,8 @@
 #          Independent from stack_backup per ADR-09.
 # ==============================================================================
 # Usage:
-#   make deploy-backup-l5
-#   ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-appdata.yml --ask-vault-pass
+#   make deploy-backup-appdata
+#   ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-appdata.yml
 #   ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-appdata.yml --tags backup --limit brain
 # ==============================================================================
 

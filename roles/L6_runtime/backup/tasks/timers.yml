@@ -12,42 +12,44 @@
 # and resolves the dir part via the search path, so a wildcard in the
 # directory segment matches nothing. The find module on the controller is
 # used instead - app profiles live on the controller, not on managed hosts.
+# The find module runs via lookup('ansible.builtin.pipe') so the scan stays
+# on the control node WITHOUT delegate_to + task-level become: false (an
+# ansible_become var wins over task keywords, see ansible.cfg
+# [privilege_escalation]). This mirrors the immune pipe-lookup pattern used
+# by the overlay preflight in playbooks/l6/backup-timers.yml.
 # =============================================================================
 
-# NOTE: backup_r2_account_id is stored directly in vault (shared with restic role, no vault_ prefix),
+# NOTE: backup_r2_account_id is stored directly in the SOPS file (shared with restic role, no vault_ prefix),
 #       while access/secret keys use vault_ prefix → defaults-level Jinja indirection.
 #       This split convention is intentional - do not "normalize" the names.
-- name: "Validate R2 vault vars are defined"
+- name: "Validate R2 backup secret vars are defined"
   ansible.builtin.assert:
     that:
       - backup_r2_account_id | default('') | length > 0
       - vault_backup_r2_access_key_id | default('') | length > 0
       - vault_backup_r2_secret_access_key | default('') | length > 0
     fail_msg: |
-      One or more R2 backup vault variables are missing or empty.
-      Run: ansible-vault edit inventory/group_vars/all/secrets.yml
-      Required vars (documented in secrets.yml.example):
+      One or more R2 backup secret variables are missing or empty.
+      Run: make sops-edit
+      Required vars (documented in secrets.sops.yml.example):
         backup_r2_account_id, vault_backup_r2_access_key_id, vault_backup_r2_secret_access_key
     quiet: true
   when: enable_backups | default(false) | bool
-  tags: [l6-runtime, backup_timers]
+  tags: [l6-runtime, backup-timers]
 
 - name: "Collect app profile files (controller side)"
-  ansible.builtin.find:
-    paths: "{{ inventory_dir }}/../apps"
-    patterns: "profile.yml"
-    recurse: true
-    file_type: file
-  delegate_to: localhost
-  become: false
-  register: app_profiles
-  tags: [l6-runtime, backup_timers]
+  ansible.builtin.set_fact:
+    _app_profile_paths: >-
+      {{ lookup('ansible.builtin.pipe',
+           'find ' ~ (inventory_dir + '/../apps') | quote ~ ' -name profile.yml -type f')
+         | split('\n') | select('length') | list | sort }}
+  tags: [l6-runtime, backup-timers]
 
 - name: "Process each app profile for backup timers"
   ansible.builtin.include_tasks: deploy_from_profile.yml
-  loop: "{{ app_profiles.files | map(attribute='path') | list | sort }}"
-  tags: [l6-runtime, backup_timers]
+  loop: "{{ _app_profile_paths }}"
+  tags: [l6-runtime, backup-timers]
 
 - name: "Flush handlers (systemd daemon-reload)"
   ansible.builtin.meta: flush_handlers
-  tags: [l6-runtime, backup_timers]
+  tags: [l6-runtime, backup-timers]

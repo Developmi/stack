@@ -2,7 +2,7 @@
 # COMPLIANCE WARNING:
 # Restic repository initialization creates the S3 repository structure at R2.
 # Idempotent via marker file /etc/restic/.repo-initialized.
-# Restic init uses the repo password from vault - never logged (no_log: true).
+# Restic init uses the repo password from the SOPS file - never logged (no_log: true).
 # If the marker is deleted, re-init will create a NEW repo (old data unreachable).
 # ---
 ---
