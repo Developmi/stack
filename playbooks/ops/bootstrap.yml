@@ -2,20 +2,67 @@
 # ==============================================================================
 # BOOTSTRAP PLAYBOOK - Chicken-and-Egg Solver
 # ==============================================================================
-# Connects as root via dev_admin key (explicit play-level vars).
-# NO role imports, NO dependencies outside core modules + vault.
+# Connects with the SSH identity declared in the inventory (no hardcoded user or key).
+# NO role imports, NO dependencies outside core modules + SOPS.
 # 4 phases: stability → user → SSH hardening → verification.
 # Pre-flight: /etc/bootstrap-complete marker skips everything.
 # Tags per design: bootstrap, phase1-4.
 # ==============================================================================
 
-- name: Bootstrap fresh host as root
+- name: Pre-flight - bootstrap SSH identity (controller side)
+  hosts: all
+  # Runs on the controller: validates the inventory-declared identity BEFORE
+  # any remote connection. connection: local + become: false as PLAY keywords
+  # (not vars) make sudo on the controller impossible.
+  connection: local
+  gather_facts: false
+  become: false
+  tags: [bootstrap]
+
+  tasks:
+    - name: "P0 | Assert bootstrap SSH identity is declared"
+      ansible.builtin.assert:
+        that:
+          - ansible_ssh_private_key_file is defined
+          - ansible_ssh_private_key_file | length > 0
+        fail_msg: >-
+          bootstrap connects with the SSH key declared in the inventory;
+          declare ansible_ssh_private_key_file in the [all:vars] section of
+          inventory/hosts.ini before running this play.
+      tags: [bootstrap]
+
+    - name: "P0 | Pre-flight - verify declared SSH identity can connect"
+      ansible.builtin.shell: |
+        ssh -i {{ ansible_ssh_private_key_file }} \
+            -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+            {{ ansible_user }}@{{ ansible_host }} true
+      register: _conn_check
+      changed_when: false
+      failed_when: false
+      tags: [bootstrap]
+
+    - name: "P0 | Assert declared SSH identity reaches the host"
+      ansible.builtin.assert:
+        that:
+          - _conn_check.rc == 0
+        fail_msg: >-
+          Cannot connect to {{ ansible_host }} with the identity declared in
+          inventory/hosts.ini (ansible_user per host: root on classic VPS,
+          cloud user on cloud images). The key must be authorized for that
+          user; if the user or key is wrong, this fails before touching the
+          host.
+      tags: [bootstrap]
+
+- name: Bootstrap fresh host
   hosts: all
   gather_facts: true
   vars:
-    ansible_user: root
-    ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519"
-    ansible_become: false
+    # Identity comes from the inventory ONLY (no hardcoded user or key):
+    #   ansible_user per host entry, ansible_ssh_private_key_file in [all:vars].
+    # ansible_become is derived: cloud images log in as a non-root user with
+    # NOPASSWD sudo; classic VPS/lab hosts log in as root and need no become.
+    # Precedence: -e ansible_become=... overrides this if ever needed.
+    ansible_become: "{{ ansible_user != 'root' }}"
   tags: [bootstrap]
 
   handlers:
@@ -27,6 +74,7 @@
 
   tasks:
     # ─── Phase 0: Pre-flight ────────────────────────────────────────────────
+    # The controller-side play above already validated the declared identity.
     - name: "P0 | Stat /etc/bootstrap-complete"
       ansible.builtin.stat:
         path: /etc/bootstrap-complete
@@ -96,7 +144,7 @@
         - breakglass
       tags: [bootstrap, phase2]
 
-    - name: "P2 | Deploy SSH keys from vault"
+    - name: "P2 | Deploy SSH keys from SOPS"
       ansible.builtin.copy:
         content: "{{ ssh_public_keys[item] }}\n"
         dest: "/home/{{ item }}/.ssh/authorized_keys"
@@ -142,33 +190,7 @@
       notify: Reload sshd
       tags: [bootstrap, phase3]
 
-    # ─── Phase 4: Verification ───────────────────────────────────────────────
-    - name: "P4 | Test SSH as automation user"
-      ansible.builtin.shell: |
-        ssh -o StrictHostKeyChecking=accept-new \
-            -o BatchMode=yes \
-            -o ConnectTimeout=10 \
-            -i ~/.ssh/id_ansible_ed25519 \
-            automation@{{ hostvars[inventory_hostname]['ansible_host'] }} whoami
-      register: _ssh_check
-      changed_when: false
-      failed_when: "'automation' not in _ssh_check.stdout"
-      delegate_to: localhost
-      tags: [bootstrap, phase4]
-
-    - name: "P4 | Test sudo as automation user"
-      ansible.builtin.shell: |
-        ssh -o StrictHostKeyChecking=accept-new \
-            -o BatchMode=yes \
-            -o ConnectTimeout=10 \
-            -i ~/.ssh/id_ansible_ed25519 \
-            automation@{{ hostvars[inventory_hostname]['ansible_host'] }} sudo -n whoami
-      register: _sudo_check
-      changed_when: false
-      failed_when: "'root' not in _sudo_check.stdout"
-      delegate_to: localhost
-      tags: [bootstrap, phase4]
-
+    # ─── Phase 4: Finalize ───────────────────────────────────────────────────
     - name: "P4 | Mark host as bootstrapped"
       ansible.builtin.copy:
         content: ""
@@ -176,4 +198,40 @@
         owner: root
         group: root
         mode: "0644"
+      tags: [bootstrap, phase4]
+
+- name: Post-bootstrap verification (controller side)
+  hosts: all
+  # Runs on the controller AFTER the remote bootstrap: verifies the automation
+  # user and its NOPASSWD sudo over SSH. Same pattern as the pre-flight play:
+  # connection: local + become: false as PLAY keywords (never vars) so sudo on
+  # the controller is impossible.
+  connection: local
+  gather_facts: false
+  become: false
+  tags: [bootstrap, phase4]
+
+  tasks:
+    - name: "P4 | Test SSH as automation user"
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=accept-new \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -i {{ ansible_ssh_private_key_file }} \
+            automation@{{ hostvars[inventory_hostname]['ansible_host'] }} whoami
+      register: _ssh_check
+      changed_when: false
+      failed_when: "'automation' not in _ssh_check.stdout"
+      tags: [bootstrap, phase4]
+
+    - name: "P4 | Test sudo as automation user"
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=accept-new \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -i {{ ansible_ssh_private_key_file }} \
+            automation@{{ hostvars[inventory_hostname]['ansible_host'] }} sudo -n whoami
+      register: _sudo_check
+      changed_when: false
+      failed_when: "'root' not in _sudo_check.stdout"
       tags: [bootstrap, phase4]

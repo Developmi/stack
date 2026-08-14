@@ -5,33 +5,39 @@
 # Never commit hosts.ini (contains server IPs).
 #
 # Variable ownership:
-#   vault (secrets.yml)  -> secrets, domains, certificates
+#   SOPS (secrets.sops.yml) -> secrets, domains, certificates
 #   inventory            -> host-specific values (ansible_user, caddy_node_id, caddy_coraza_mode)
 #   group_vars           -> group defaults (caddy_type, caddy_admin_enabled)
 #
-# ansible_user is ALWAYS defined per host:
-#   Debian     -> root
-#   Ubuntu OCI -> ubuntu
-#   Custom     -> <your_user>
+# Bootstrap identity convention (bootstrap.yml derives everything from here):
+#   - ansible_user is ALWAYS declared per host: root on classic VPS/lab hosts;
+#     the cloud image user (non-root, NOPASSWD sudo) on OCI/AWS/GCP images.
+#   - ansible_ssh_private_key_file is declared once in [all:vars] below.
+#   - ansible_become is derived from ansible_user (no need to set it).
+# Key paths and user names are intentionally NOT templated in this file:
+# they are sensitive, operator-specific values from the real inventory.
 # ==============================================================================
 
 # ===== MANAGEMENT NODES =====
 [brain]
+# ansible_user is REQUIRED per host entry (see identity convention above) - set it to the real login
 # caddy_coraza_mode: On | DetectionOnly | Off
-brain-1 ansible_host=YOUR_BRAIN_PUBLIC_IP ansible_user=root public_ip=YOUR_BRAIN_PUBLIC_IP node_role=management caddy_node_id=brain-1 caddy_coraza_mode=On
-# brain-2 ansible_host=SECOND_PUBLIC_IP ansible_user=root public_ip=SECOND_PUBLIC_IP node_role=management caddy_node_id=brain-2 caddy_coraza_mode=DetectionOnly
+brain-1 ansible_host=YOUR_BRAIN_PUBLIC_IP public_ip=YOUR_BRAIN_PUBLIC_IP node_role=management caddy_node_id=brain-1 caddy_coraza_mode=On
+# brain-2 ansible_host=SECOND_PUBLIC_IP public_ip=SECOND_PUBLIC_IP node_role=management caddy_node_id=brain-2 caddy_coraza_mode=DetectionOnly
 
 # ===== WORKER NODES =====
 [muscle]
+# ansible_user is REQUIRED per host entry (see identity convention above) - set it to the real login
 # DetectionOnly is recommended before enabling On.
-muscle-1 ansible_host=YOUR_MUSCLE_PUBLIC_IP ansible_user=ubuntu public_ip=YOUR_MUSCLE_PUBLIC_IP node_role=worker caddy_node_id=muscle-1 caddy_coraza_mode=DetectionOnly
-# muscle-2 ansible_host=ANOTHER_PUBLIC_IP ansible_user=ubuntu public_ip=ANOTHER_PUBLIC_IP node_role=worker caddy_node_id=muscle-2 caddy_coraza_mode=DetectionOnly
+muscle-1 ansible_host=YOUR_MUSCLE_PUBLIC_IP public_ip=YOUR_MUSCLE_PUBLIC_IP node_role=worker caddy_node_id=muscle-1 caddy_coraza_mode=DetectionOnly
+# muscle-2 ansible_host=ANOTHER_PUBLIC_IP public_ip=ANOTHER_PUBLIC_IP node_role=worker caddy_node_id=muscle-2 caddy_coraza_mode=DetectionOnly
 
 # ===== LOCAL DEVICES =====
 # Personal machines connected through Tailscale.
 # Only hardening + Docker are installed (no application stack).
+# ansible_user is REQUIRED per host entry (see identity convention above).
 [local]
-# local-pc ansible_host=100.x.x.x ansible_user=user
+# local-pc ansible_host=100.x.x.x
 
 # ===== FUNCTIONAL GROUPS =====
 [observability:children]
@@ -46,11 +52,13 @@ muscle
 
 # ===== GLOBAL VARIABLES =====
 [all:vars]
-ansible_ssh_private_key_file=~/.ssh/id_ed25519
+# ansible_ssh_private_key_file is REQUIRED here: bootstrap.yml and all playbooks
+# connect with this key. Declare the operator's real key path (no template
+# value on purpose - see identity convention above).
 ansible_ssh_common_args='-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3'
 ansible_python_interpreter=/usr/bin/python3
 
-cluster_name=nist_hardened_cluster
+cluster_name=cluster_primary
 app_base_dir=/srv/app
 
 # Optional overrides

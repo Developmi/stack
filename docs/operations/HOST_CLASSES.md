@@ -26,6 +26,8 @@ You need to understand what each class does before assigning one.
 
 **Hardening profile** - the `hardening_profile` dispatcher (in [HARDENING-STATUS.md](../security/HARDENING-STATUS.md#hardening-profile-dispatcher)) routes `brain`/`muscle` → `server`, `local` → `workstation`.
 
+> **Legacy variables (documented, not used):** `node_role` (still present in `inventory/hosts.ini.example`), `server_role` and `server_type` (in `inventory/group_vars/{brain,muscle,local}/main.yml`) are legacy classifiers with no code usage. The real classifiers are `host_class` (inventory group membership) + `hardening_profile`. Do not build new logic on the legacy vars; `server_type` is only consumed as a cosmetic display string in `playbooks/ops/local-devices.yml`. They are kept in the repo for reference only and may be removed in a future major release.
+
 **Brain vs muscle roles** - both run Docker, but with different purposes:
 - **brain** = operations + observability (runs Docker, monitoring stack, edge proxy, backup orchestration)
 - **muscle** = application runtime (runs Docker, application containers, backup-db for databases)
@@ -38,7 +40,8 @@ The suite does NOT deploy applications - it prepares the hardened foundation. Ap
 
 - Ansible inventory file (`hosts.yml` or equivalent) is writable
 - `inventory/group_vars/` directory structure exists: `brain/`, `muscle/`, `local/`
-- Vault password available at `/tmp/.vault_pass` if secrets are vaulted
+- SOPS age private key available at `~/.config/sops/age/keys.txt` to decrypt `secrets.sops.yml` (the Tailscale trio in `secrets.yml` is the only vaulted exception until gate D4, OPERATIONS_RUNBOOK §7.4)
+- Bootstrap identity follows the inventory: SSH as `root` on classic VPS/lab hosts; on cloud images (OCI/AWS/GCP) SSH as the cloud image user (non-root, NOPASSWD sudo). `ansible_become` is derived from `ansible_user`. Declare `ansible_user` per host and `ansible_ssh_private_key_file` in `all:vars`.
 
 ### Step 1 - Create or verify the group_vars file
 
@@ -112,7 +115,7 @@ Migrating a host between classes (e.g., promoting a `local` node to `muscle`, or
 
 2. **Reassign group in inventory** - move the host from the `brain` group to the `muscle` group in `inventory/hosts.yml`. If the host is the *only* brain, you must first designate another node as brain or accept that management services (Portainer, Grafana) will go down.
 
-3. **Review role differences** - `muscle` excludes management-only roles. Verify `site.yml` or your playbook does not assign brain-only roles (e.g., `stack_portainer` as primary server) to this host.
+3. **Review role differences** - `muscle` excludes management-only roles. Verify `site.yml` or your playbook does not assign brain-only roles (e.g., `portainer` as primary server) to this host.
 
 4. **Dry-run the migration**
    ```bash
