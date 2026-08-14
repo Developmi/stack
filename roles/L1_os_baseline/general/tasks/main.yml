@@ -5,6 +5,21 @@
 # Thin-dispatcher: conditionals + include_tasks only. No business logic inline.
 # ==============================================================================
 
+# Universe source normalization MUST run before any apt task with
+# update_cache (e.g. timezone_locale.yml refreshes the cache). A stale
+# /etc/apt/sources.list.d/universe.sources carrying the amd64-only URI from
+# previous buggy runs breaks the cache refresh with a 404, and baseline.yml
+# runs with any_errors_fatal, so a cleanup that only runs later (ubuntu_22.04
+# dispatcher) would never execute. Running first purges the stale file before
+# the first cache refresh.
+# ==============================================================================
+
+- name: "L1 | Normalize Ubuntu apt sources (arm64-safe)"
+  ansible.builtin.include_tasks: general/tasks/apt_sources.yml
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+  tags: [l1-os-baseline, ubuntu]
+
 - name: "L1 | Gather installed packages"
   ansible.builtin.package_facts:
     manager: apt

@@ -10,7 +10,7 @@
 
 ## Key differences from other variants
 
-- **Universe repo enabled**: adds `universe` apt source for additional packages
+- **Universe repo enabled**: adds `universe` apt source for additional packages; normalization runs in `general/tasks/apt_sources.yml` before any apt cache refresh, mirror derived by host architecture (`ports.ubuntu.com` for ARM, `archive.ubuntu.com` for amd64)
 - **security packages**: ufw, apt-listchanges, needrestart, unattended-upgrades, apparmor-profiles, apparmor-utils
 - **UFW**: package installed but service NOT enabled (L2 responsibility)
 - **Kernel**: 6.8 HWE (Hardware Enablement)

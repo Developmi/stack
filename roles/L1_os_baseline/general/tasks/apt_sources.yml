@@ -1,0 +1,40 @@
+---
+# ==============================================================================
+# L1 OS Baseline - Normalize Ubuntu apt sources (arm64-safe)
+# ==============================================================================
+# Included FIRST by the general dispatcher, before any apt task with
+# update_cache, so that a stale /etc/apt/sources.list.d/universe.sources
+# carrying the amd64-only URI from previous buggy runs is purged before the
+# first cache refresh. baseline.yml runs with any_errors_fatal, so a late
+# cleanup would never execute.
+# Ubuntu-only: the caller gates this include on the distribution.
+# ==============================================================================
+
+- name: "L1 | Check if Universe repository is already enabled"
+  ansible.builtin.command: grep -q "^deb.*universe" /etc/apt/sources.list /etc/apt/sources.list.d/*.sources
+  register: _universe_check
+  failed_when: false
+  changed_when: false
+  tags: [l1-os-baseline, ubuntu]
+
+- name: "L1 | Enable Universe repository"
+  ansible.builtin.deb822_repository:
+    name: universe
+    types: deb
+    uris: "{{ l1_universe_uris }}"
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: universe
+    state: present
+  when: _universe_check.rc != 0
+  tags: [l1-os-baseline, ubuntu]
+
+# When universe is already present via the classic sources.list (rc == 0), any
+# leftover /etc/apt/sources.list.d/universe.sources is redundant — and on ARM
+# hosts it may carry the broken amd64 URI from previous runs, so it must be
+# cleaned. state: absent is idempotent (no-op if the file does not exist).
+- name: "L1 | Remove stale deb822 universe source when already covered"
+  ansible.builtin.deb822_repository:
+    name: universe
+    state: absent
+  when: _universe_check.rc == 0
+  tags: [l1-os-baseline, ubuntu]

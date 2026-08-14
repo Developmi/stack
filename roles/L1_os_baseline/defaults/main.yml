@@ -21,3 +21,11 @@ file_mode_default: "{{ l1_file_mode }}"
 # ── apt-mark hold (package pinning) ──────────────────────────────────────────
 # Override in group_vars per target. Empty list = no packages held.
 pinned_packages: []
+
+# ── Universe repository ──────────────────────────────────────────────────────
+# Mirror URI derived from the host architecture: ports.ubuntu.com serves the
+# ARM architectures (aarch64/armhf), archive.ubuntu.com serves amd64. This is
+# only a default and can be overridden per host/group (e.g. a regional mirror)
+# via host_vars/group_vars. Role-level defaults are loaded for the whole role,
+# so both general/ and ubuntu_22.04/ see it.
+l1_universe_uris: "{{ 'http://ports.ubuntu.com/ubuntu-ports' if ansible_facts['architecture'] in ['aarch64', 'arm64', 'armhf', 'armv7l'] else 'http://archive.ubuntu.com/ubuntu' }}"

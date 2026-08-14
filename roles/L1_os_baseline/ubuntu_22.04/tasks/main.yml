@@ -41,22 +41,10 @@
   when: "'python3-debian' not in ansible_facts.packages"
   tags: [l1-os-baseline, ubuntu]
 
-- name: "L1 | Check if Universe repository is already enabled"
-  ansible.builtin.command: grep -q "^deb.*universe" /etc/apt/sources.list /etc/apt/sources.list.d/*.sources
-  register: _universe_check
-  failed_when: false
-  changed_when: false
-  tags: [l1-os-baseline, ubuntu]
-
-- name: "L1 | Enable Universe repository"
-  ansible.builtin.deb822_repository:
-    name: universe
-    types: deb
-    uris: http://archive.ubuntu.com/ubuntu
-    suites: "{{ ansible_facts['distribution_release'] }}"
-    components: universe
-    state: present
-  tags: [l1-os-baseline, ubuntu]
+# Universe repository management (check/enable/cleanup) moved to
+# general/tasks/apt_sources.yml — it must run BEFORE any apt update_cache task
+# (baseline.yml uses any_errors_fatal, so a late cleanup never executes on a
+# host with a stale amd64-URI universe.sources).
 
 - name: "L1 | Install security and monitoring packages (Ubuntu 22.04)"
   ansible.builtin.apt:
