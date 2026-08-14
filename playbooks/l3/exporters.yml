@@ -14,26 +14,8 @@
   tags: [l3-observability, observability, monitoring, exporters, node_exporter, cadvisor]
   pre_tasks:
     - name: "Preflight: Require overlay-network ansible_host for observability operations"
-      ansible.builtin.assert:
-        that:
-          - ansible_host is defined
-          - >-
-            lookup(
-              'ansible.builtin.pipe',
-              "python3 -c 'import ipaddress,sys; "
-              ~ "host=sys.argv[1]; subnet=sys.argv[2]; "
-              ~ "\ntry:\n print(ipaddress.ip_address(host) in ipaddress.ip_network(subnet, strict=False))"
-              ~ "\nexcept ValueError:\n print(False)' "
-              ~ (ansible_host | quote)
-              ~ " "
-              ~ (tailscale_subnet | quote)
-            ) == 'True'
-        fail_msg: >-
-          Zero Trust violation on {{ inventory_hostname }}: monitoring.yml only allows
-          connections through the management overlay using ansible_host inside
-          {{ tailscale_subnet }}. Public bootstrap access is only permitted in site.yml.
-        success_msg: >-
-          Overlay transport validated for {{ inventory_hostname }} ({{ ansible_host }} in {{ tailscale_subnet }}).
+      ansible.builtin.include_tasks: ../_shared/overlay_preflight.yml
+      tags: [l3-observability, observability, monitoring, exporters, node_exporter, cadvisor]
   roles:
     - role: L3_observability
       vars:
