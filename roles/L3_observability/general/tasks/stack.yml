@@ -63,7 +63,7 @@
     fail_msg: >-
       Define observability_grafana_admin_user, observability_grafana_admin_password,
       and observability_grafana_root_url
-      in group_vars/all/secrets.yml before deploying the observability stack.
+      in group_vars/all/secrets.sops.yml before deploying the observability stack.
   tags:
     - l3-observability
     - observability
@@ -193,7 +193,7 @@
 
 - name: Create VictoriaMetrics scrape config (Dynamic Inventory)
   ansible.builtin.template:
-    src: victoriametrics-scrape.yml.j2
+    src: general/templates/victoriametrics-scrape.yml.j2
     dest: "{{ app_base_dir }}/observability/victoriametrics-scrape.yml"
   tags:
     - l3-observability
@@ -255,7 +255,7 @@
 
 - name: Render observability stack compose from template
   ansible.builtin.template:
-    src: observability-stack-docker-compose.yml.j2
+    src: general/templates/observability-stack-docker-compose.yml.j2
     dest: "{{ app_base_dir }}/observability/docker-compose.yml"
   tags:
     - l3-observability
@@ -270,7 +270,7 @@
 
 - name: Render observability live env file
   ansible.builtin.template:
-    src: observability-stack.env.j2
+    src: general/templates/observability-stack.env.j2
     dest: "{{ app_base_dir }}/observability/.env"
     mode: "0600"
   tags:
@@ -286,7 +286,7 @@
 
 - name: Render observability .env example
   ansible.builtin.template:
-    src: observability-stack.env.example.j2
+    src: general/templates/observability-stack.env.example.j2
     dest: "{{ app_base_dir }}/observability/.env.example"
     mode: "0644"
   tags:

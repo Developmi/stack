@@ -10,7 +10,7 @@
 
 - name: Render Blackbox Exporter config
   ansible.builtin.template:
-    src: blackbox-config.yml.j2
+    src: general/templates/blackbox-config.yml.j2
     dest: "{{ app_base_dir }}/observability/blackbox-config.yml"
     mode: "0644"
   tags:

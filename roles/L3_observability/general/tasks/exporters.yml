@@ -31,6 +31,34 @@
     - observability_networks
     - observability_assets
 
+- name: Ensure Docker DOCKER-FORWARD iptables chain exists (idempotent recovery)
+  ansible.builtin.command: iptables -w -t filter -L DOCKER-FORWARD -n
+  register: _docker_forward_chain
+  changed_when: false
+  failed_when: false
+  tags:
+    - l3-observability
+    - observability
+    - monitoring
+    - exporters
+    - observability_networks
+
+# Recovery is scoped to the base chains dockerd creates at startup
+# (DOCKER / DOCKER-FORWARD) that a full `flush ruleset` from the firewall layer
+# can destroy. It NEVER touches custom dev networks, exporter configs, or
+# custom metrics: custom workloads remain exactly as the developer left them.
+- name: Restart Docker daemon to rebuild iptables chains (idempotent recovery)
+  ansible.builtin.systemd:
+    name: docker
+    state: restarted
+  when: _docker_forward_chain.rc != 0
+  tags:
+    - l3-observability
+    - observability
+    - monitoring
+    - exporters
+    - observability_networks
+
 - name: Ensure observability Docker network exists
   community.docker.docker_network:
     name: "{{ observability_network_name }}"
@@ -49,7 +77,7 @@
 
 - name: Render exporters docker compose from unified template
   ansible.builtin.template:
-    src: exporters-docker-compose.yml.j2
+    src: general/templates/exporters-docker-compose.yml.j2
     dest: "{{ app_base_dir }}/observability/exporters/docker-compose.yml"
     mode: "0644"
   tags: [l3-observability, observability, monitoring, exporters, node_exporter, cadvisor, observability_assets]
