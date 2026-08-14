@@ -37,7 +37,8 @@ stack/
 │   │   ├── all/
 │   │   │   ├── main.yml                ← Global safe defaults
 │   │   │   ├── images.yml              ← Container image pins
-│   │   │   └── secrets.yml             ← Global secrets only (Tailscale, GitHub token, Portainer admin, Telegram bot)
+│   │   │   ├── secrets.sops.yml     ← Global secrets (SOPS + age)
+│   │   │   └── secrets.yml          ← Tailscale trio only (Ansible Vault, until gate D4)
 │   │   ├── brain/                      ← Server-grade, backups + observability
 │   │   │   └── main.yml
 │   │   ├── muscle/                     ← Server-grade, backups + observability
@@ -485,7 +486,7 @@ The **FastAPI** application profile is marked **community-provided**. Unlike the
 | 1   | **Dockerfile source**     | User must provide a `Dockerfile` in the `apps/fastapi/` directory. The project ships a `Dockerfile.example` as a reference. The user is responsible for building and pushing the image to a registry (or using a local build).                          |
 | 2   | **Port exposure**         | The FastAPI app MUST expose port `8000` (default). If a different port is needed, update `vars.yml` → `fastapi_port` and the compose template accordingly.                                                                                              |
 | 3   | **Health endpoint**       | The app MUST expose a health check endpoint. Default: `/health` returning HTTP 200. The monitoring layer (L3) uses this for scrape targets. If the endpoint differs, update `monitoring.health_endpoint` in `profile.yml`.                              |
-| 4   | **Environment variables** | All configuration MUST be passed via environment variables (not hardcoded in the Dockerfile). Required vars: `DATABASE_URL`, `SECRET_KEY`, `ENVIRONMENT`. Define them in `apps/fastapi/secrets.yml` (Vault) and reference them in the compose template. |
+| 4   | **Environment variables** | All configuration MUST be passed via environment variables (not hardcoded in the Dockerfile). Required vars: `DATABASE_URL`, `SECRET_KEY`, `ENVIRONMENT`. Define them via SOPS (`inventory/group_vars/all/secrets.sops.yml`) and reference them in the compose template. |
 | 5   | **Multi-arch support**    | The user is responsible for ensuring the Docker image supports their target architecture(s). `supported_arch` in `profile.yml` must match the actual image availability. If only amd64 is available, set `supported_arch: [amd64]`.                     |
 | 6   | **Image registry**        | The compose template references `fastapi_image` from `group_vars/all/images.yml`. The user must set this variable to their image (e.g., `ghcr.io/myorg/myapp:v1.0.0`).                                                                                  |
 
@@ -496,7 +497,7 @@ The **FastAPI** application profile is marked **community-provided**. Unlike the
 | `profile.yml`        | Declares app metadata, backup policy, monitoring, supported_arch | Review and adjust per deployment             |
 | `vars.yml`           | Configurable parameters (port, DB settings, resource limits)     | Adjust for your app                          |
 | `compose.yml.j2`     | Jinja2 compose template referencing variables                    | Replace if your app needs different services |
-| `secrets.yml`        | Secrets manifest (keys required, values from Vault)              | Add your app's secret keys                   |
+| `secrets.yml`        | Secrets manifest (keys required, values from SOPS)            | Add your app's secret keys                   |
 | `Dockerfile.example` | Reference Dockerfile - not used by Ansible                       | Replace with your actual Dockerfile          |
 
 > ⚠️ **The FastAPI profile is a starting point, not a turn-key deploy.** Unlike Chatwoot or n8n (which deploy with a single `make deploy`), deploying FastAPI requires the user to build and publish a Docker image first. This is intentional - the platform provides the infrastructure pattern; the user provides the application.

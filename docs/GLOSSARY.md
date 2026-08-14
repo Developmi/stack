@@ -69,11 +69,12 @@ The stack follows a strict precedence model for variables:
 3. `all/main.yml` _(Global safe defaults)_
 4. `roles/<role>/defaults/main.yml` _(Role-level fallbacks)_
 
-### Ansible Vault & Secrets Management
+### Secrets Management (SOPS + age)
 
-AES256-encrypted secret management mechanism with the password stored locally at `/tmp/.vault_pass`. **Ansible Vault is the strict Single Source of Truth (SSOT) for secrets.**
+SOPS + age (`inventory/group_vars/all/secrets.sops.yml`, `make sops-*`) is the strict Single Source of Truth (SSOT) for secrets. The only Ansible Vault exception is the Tailscale trio (`tailscale_auth_key`, `tailscale_acl_key`, `tailscale_acl_client_id`), which stays vaulted until retirement gate D4 (see [OPERATIONS_RUNBOOK §7.4](operations/OPERATIONS_RUNBOOK.md#74-tailscale-key-rotation)).
 
-- **Global secrets** (`group_vars/all/secrets.yml`): Tailscale, GitHub token, Portainer admin, Telegram bot.
+- **Global secrets** (`group_vars/all/secrets.sops.yml`): GitHub token, Portainer admin, Telegram bot (SOPS-encrypted with age).
+- **Tailscale trio** (`group_vars/all/secrets.yml`): the only remaining Ansible Vault contents, until gate D4 (OPERATIONS_RUNBOOK §7.4).
 - **App secrets**: operator-managed `.env` files derived from `apps/<name>/.env.example` (secrets carry `changeme` placeholders - never commit real values).
 
 > **Note:** Any alerts raised by `detect-secrets` inside `apps/*/profile.yml` are known false positives related to operational parameters (e.g., backup paths).

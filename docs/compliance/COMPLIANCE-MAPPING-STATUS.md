@@ -20,7 +20,7 @@ This master document serves as the Single Source of Truth (SSOT) and consolidate
 
 ### Technical Scope Validated in this Repository
 - Bootstrap and hardening orchestration through root playbooks: `playbooks/site.yml`, `playbooks/l6/engine.yml`, `playbooks/l3/exporters.yml`, `playbooks/ops/nuke.yml`.
-- Security controls implemented across roles: `security`, `crowdsec`, `tailscale_client`, `stack_portainer`, `observability`, `compliance`.
+- Security controls implemented across roles: `security`, `crowdsec`, `tailscale_client`, `portainer`, `observability`, `compliance`.
 - Inventory and role model based on `brain` and `muscle` host groups.
 - Global and per-group behavior configured in `group_vars/all`, `group_vars/brain`, and `group_vars/muscle`.
 - Quality controls defined with `.ansible-lint`, `.yamllint`, and `.pre-commit-config.yaml`.
@@ -28,7 +28,7 @@ This master document serves as the Single Source of Truth (SSOT) and consolidate
 ### Compliance Assurance Boundaries
 - This repository provides technical implementation evidence and mappings - it is not a formal certification.
 - Framework mappings must be validated against your legal, sector, and audit context.
-- NIST SC-28 is partially implemented: secrets-at-rest encryption is automated with Ansible Vault; full disk encryption is audited but not provisioned by this suite.
+- NIST SC-28 is partially implemented: secrets-at-rest encryption is automated with SOPS + age (Ansible Vault only for the Tailscale trio until expiry); full disk encryption is audited but not provisioned by this suite.
 
 ---
 
@@ -77,7 +77,7 @@ The following table traces each NIST SP 800-53 Rev 5 control to the Ansible role
 - **SC-7**: Host boundary controls and segmentation posture.
 - **SI-4**: Intrusion monitoring and detection via CrowdSec.
 - **AU-12**: Audit generation with auditd rules and evidence extraction.
-- **SC-28**: Encrypted secrets management (Ansible Vault); disk encryption verification only (**partial** - not provisioned by this suite).
+- **SC-28**: Encrypted secrets management (SOPS + age); disk encryption verification only (**partial** - not provisioned by this suite).
 
 #### Compliance Playbook Invocation
 ```bash

@@ -56,7 +56,7 @@ It is designed to standardize the security posture of:
 
 - **Brain nodes** for central services, ingress, and observability.
 - **Muscle nodes** for workload execution and optional edge services.
-- **Application stacks** under `apps/` deployed via Portainer (Edge agent).
+- **Application stacks** under `apps/` are operator-managed and deploy first-class via native Docker Compose (`git pull` + `docker compose up` on `public_net`); Portainer (Edge agent) is an optional manager when `enable_portainer: true` (ADR-07).
 
 The project aligns to **NIST 800-53** controls and emphasizes secrets handling, least privilege, hardened networking, and operational repeatability.
 
@@ -190,22 +190,28 @@ muscle-1 ansible_host=YOUR_PUBLIC_IP ansible_user=ubuntu public_ip=YOUR_PUBLIC_I
 
 ### Secrets
 
-Populate the Vault-backed secrets file and encrypt it before deployment:
+Populate the SOPS-encrypted secrets file and encrypt it before deployment
+(SOPS + age replaces the old Ansible Vault workflow; the Tailscale auth/ACL
+keys remain vaulted until expiry):
 
 ```bash
-make vault-init
-make vault-encrypt
+# 1. Generate the age keypair and back it up OFFLINE
+age-keygen -o age/keys.txt
+# 2. Replace the age1<PLACEHOLDER> recipient in .sops.yaml with your public key
+# 3. Create + fill + encrypt the secrets file
+make sops-init
+make sops-encrypt
 ```
 
 ### Deploy
 
 ```bash
-make validate
-make deploy
+make check-toolchain
+make deploy-hardening
 make deploy-engine
-make deploy-edge EDGE=caddy HOST=<brain>
+make deploy-edge BACKEND=caddy TARGET=<brain>
 make deploy-portainer
-make deploy-observability-stack
+make run PLAYBOOK=playbooks/l3/stack.yml TAGS='l3-observability,stack'
 ```
 
 > **Note:** The canonical command surface lives in [docs/operations/OPERATIONS_RUNBOOK.md](docs/operations/OPERATIONS_RUNBOOK.md). Use `make` targets instead of raw playbook calls when possible.
@@ -222,12 +228,12 @@ Make is the official command interface for this project. Day-to-day operations s
 make help
 make sync
 make install-collections
-make validate
-make deploy
+make check-toolchain
+make deploy-hardening
 make deploy-engine
-make deploy-edge EDGE=caddy HOST=<brain>
+make deploy-edge BACKEND=caddy TARGET=<brain>
 make deploy-portainer
-make deploy-observability-stack
+make run PLAYBOOK=playbooks/l3/stack.yml TAGS='l3-observability,stack'
 make verify-tailscale
 make verify-crowdsec
 make verify-observability
@@ -236,9 +242,9 @@ make verify-observability
 ### Advanced and safety workflows
 
 ```bash
-make deploy-tags PLAYBOOK=playbooks/site.yml ANSIBLE_TAGS='nist,sc-7'
-make deploy-skip-tags PLAYBOOK=playbooks/site.yml ANSIBLE_SKIP_TAGS='tailscale,vpn'
-make compliance
+make run PLAYBOOK=playbooks/site.yml TAGS='nist,sc-7'
+make run PLAYBOOK=playbooks/site.yml SKIP_TAGS='tailscale,vpn'
+make deploy-compliance
 make nuke CONFIRM=DESTROY_ALL_INFRASTRUCTURE
 make audit-full
 ```
@@ -278,7 +284,7 @@ Operational reference index:
 flowchart LR
   Operator[Operator] --> Make[Make Targets]
   Make --> Ansible[Ansible Playbooks]
-  Ansible --> Vault[Encrypted Secrets]
+  Ansible --> SOPS[Encrypted Secrets]
   Ansible --> Hosts[Brain and Muscle Hosts]
   Hosts --> Docker[Optional Docker Compose Bundles]
   Hosts --> Security[Hardening, Compliance, and Monitoring]
@@ -294,40 +300,37 @@ Docker is used for application stacks and observability services, not as the pri
 
 ### Deploy Applications
 
-All 8 application profiles (Chatwoot, Metabase, n8n, NocoDB, OpenWebUI, Twenty CRM, Uptime Kuma, FastAPI) are deployed through Portainer Edge agent with structured profiles under `apps/`. The `playbooks/apps.yml` was removed in the L1-L6 restructure - apps now deploy via Portainer's stack management. See [ARCHITECTURE.md §Application Profiles](docs/architecture/ARCHITECTURE.md#application-profiles) for the full schema.
+All 8 application profiles (Chatwoot, Metabase, n8n, NocoDB, OpenWebUI, Twenty CRM, Uptime Kuma, FastAPI) deploy as Docker Compose stacks from structured profiles under `apps/`, rendered by the L6 runtime. Compose does not depend on Portainer (ADR-07): with the optional manager enabled (`enable_portainer: true`), the same stacks can be managed through Portainer's UI (Edge agent); with the default `enable_portainer: false`, a compose-only deploy needs zero `portainer_*` variables. See [ARCHITECTURE.md §Application Profiles](docs/architecture/ARCHITECTURE.md#application-profiles) for the full schema.
 
 ### Security Notes
 
 - Prefer publishing services through the hardened ingress layer instead of exposing broad host ports.
-- Use the provided Vault workflow for sensitive runtime values.
+- Use the provided SOPS workflow for sensitive runtime values.
 - Application stacks are intended to run behind the project's reverse proxy and network segmentation model.
-- App configuration lives in `apps/<name>/vars.yml` (Vault-encrypted secrets).
+- App configuration is operator-managed: each app has a pinned `docker-compose.yml` plus a `.env` (template: `apps/<name>/.env.example`). The old Ansible-managed `apps/<name>/vars.yml` was removed (2026-07-31).
 
 ---
 
 ## Configuration & Secrets
 
-This project does not require a root `.env.example`. Sensitive inputs are handled through Ansible Vault in `group_vars/all/secrets.yml`. Application-specific configuration lives in `apps/<name>/vars.yml` (Vault-encrypted secrets). See [ARCHITECTURE.md §App Profiles](docs/architecture/ARCHITECTURE.md#application-profiles) for the profile schema.
+This project does not require a root `.env.example`. Runtime secrets are encrypted with SOPS + age and loaded transparently by the `community.sops` vars plugin from `group_vars/all/secrets.sops.yml` and `group_vars/all/managers/portainer.sops.yml` (the Tailscale auth/ACL keys remain in the Ansible Vault until expiry). Application-specific configuration is operator-managed via `apps/<name>/.env`, templated from `apps/<name>/.env.example`. See [ARCHITECTURE.md §App Profiles](docs/architecture/ARCHITECTURE.md#application-profiles) for the profile schema.
 
-### Core Vault Template
+### Core Secrets Template
 
 ```yaml
-# group_vars/all/secrets.yml.example
+# group_vars/all/secrets.yml.example (fill into secrets.sops.yml, then: make sops-encrypt)
 vault_github_token: "GITHUB_TOKEN_GOES_HERE"
-tailscale_auth_key: "tskey-client-XXXXXXXXXXXXXXXX"
-portainer_edge_keys_by_node:
-  brain-1: "PORTAINER_EDGE_KEY_FOR_BRAIN_1"
-  muscle-1: "PORTAINER_EDGE_KEY_FOR_MUSCLE_1"
-tailscale_acl_key: "tskey-client-YYYYYYYYYYYYYYYY"
-tailscale_acl_client_id: "YOUR_TAILSCALE_OAUTH_CLIENT_ID"
 caddy_acme_email: "ops@example.com"
+# Portainer edge keys live in group_vars/all/managers/portainer.sops.yml:
+#   portainer_edge_keys_by_node:
+#     brain-1: "PORTAINER_EDGE_KEY_FOR_BRAIN_1"
+#     muscle-1: "PORTAINER_EDGE_KEY_FOR_MUSCLE_1"
 ```
 
 ### Optional Observability Values
 
 These are required only when the observability stack is enabled:
 
-- `observability_network_name`
 - `observability_stack_host_ip`
 - `observability_grafana_admin_user`
 - `observability_grafana_admin_password`
@@ -336,10 +339,10 @@ These are required only when the observability stack is enabled:
 ### App Configuration
 
 Application variables are managed through the Ansible variable hierarchy (5-tier precedence). Each app has:
-- `apps/<name>/vars.yml` - Vault-encrypted secret key declarations
+- `apps/<name>/docker-compose.yml` - pinned compose stack; env via `apps/<name>/.env.example` (operator-managed)
 - `apps/<name>/profile.yml` - metadata (version, DB type, backup schedule, monitoring)
 
-Apps deploy via Portainer (Edge agent). See [OPERATIONS_RUNBOOK.md §3](docs/operations/OPERATIONS_RUNBOOK.md) for the full deployment guide.
+Apps deploy as Compose stacks (optionally managed via Portainer). See [OPERATIONS_RUNBOOK.md §3](docs/operations/OPERATIONS_RUNBOOK.md) for the full deployment guide.
 
 ---
 
@@ -350,7 +353,7 @@ The repository is validated through uv-managed tooling and Ansible-native checks
 ```bash
 make sync
 make install-collections
-make validate
+make check-toolchain
 make lint PLAYBOOK=playbooks/site.yml
 make precommit-run
 ```
@@ -371,7 +374,7 @@ Current quality gates include:
 This project is validated through Make-driven quality gates. For production-grade role testing, use `molecule` or `ansible-test` with a local inventory:
 
 ```bash
-make validate
+make check-toolchain
 make lint PLAYBOOK=playbooks/site.yml
 make precommit-run
 ```

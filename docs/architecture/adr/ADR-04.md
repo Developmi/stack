@@ -28,6 +28,8 @@ The platform must support multiple runtime engines (Compose today, Swarm/K3s tom
 | `backup.db_type` | pg_dump container | pg_dump pod |
 | `monitoring.health_endpoint` | HTTP check | K8s liveness probe |
 
+> **Obsolete note (2026-08-09, decouple-manager-sops):** profile secrets now resolve from SOPS + age (`inventory/group_vars/all/secrets.sops.yml`), not Ansible Vault. Historical record - kept verbatim.
+
 The profile schema contains zero Compose-specific directives. `compose_file` is a path hint, not a runtime switch.
 
 ---

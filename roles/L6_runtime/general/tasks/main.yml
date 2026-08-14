@@ -1,7 +1,7 @@
 # ---
 # COMPLIANCE WARNING:
 # This role references sensitive paths, keys, and user/group settings required for Docker security.
-# Do NOT expose, override, or parametrize these values in group_vars/all. Manage secrets and critical settings in group_vars/all/secrets.yml or vault only.
+# Do NOT expose, override, or parametrize these values in group_vars/all. Manage secrets and critical settings in group_vars/all/secrets.sops.yml (SOPS) only.
 # ---
 ---
 # =============================================================================
@@ -10,7 +10,7 @@
 # Installs Docker Engine with pinned versions for Docker Cluster
 # Arch auto-detected via ansible_facts['architecture'] fact
 # Supports: Debian 11/12, Ubuntu 22.04/24.04, Pop OS (Ubuntu-based)
-# Versions controlled centrally in group_vars/all/secrets.yml
+# Versions controlled centrally in group_vars/all/secrets.sops.yml
 # =============================================================================
 
 - name: Normalize Pop OS distribution to Ubuntu (Pop OS is Ubuntu-based)
@@ -35,7 +35,7 @@
       - docker_version_map[_docker_distro] is defined
       - docker_version_map[_docker_distro][_docker_release] is defined
     fail_msg: |
-      docker_version_map must be defined in group_vars/all/secrets.yml
+      docker_version_map must be defined in group_vars/all/secrets.sops.yml
       Current OS: {{ ansible_facts['distribution'] }} {{ _docker_release }}
       (normalized to {{ _docker_distro }} for Pop OS compatibility)
     success_msg: "Docker version: {{ docker_version_map[_docker_distro][_docker_release] }}"

@@ -59,7 +59,7 @@ Use this procedure when a complete brain host is lost and needs to be rebuilt on
 #### Prerequisites
 
 - New brain host provisioned (L0 - operator responsibility, commercial infra)
-- Ansible control node with repository cloned and vault password available at `/tmp/.vault_pass`
+- Ansible control node with repository cloned and the SOPS age private key available (see §4)
 - Restic repository credentials (R2 endpoint, access key, restic password)
 
 #### Step 1: Provision New Host (L0)
@@ -75,23 +75,19 @@ Run playbooks to set up OS baselines, compliance configurations, monitoring, ing
 ```bash
 # 1. L1 (OS baseline) and L2 (Compliance: SSH, firewall, fail2ban, CrowdSec, kernel hardening)
 ansible-playbook playbooks/site.yml \
-  --limit <new-brain-host> \
-  --vault-password-file /tmp/.vault_pass
+  --limit <new-brain-host>
 
 # 2. L3 (Observability / Exporters)
 ansible-playbook playbooks/l3/exporters.yml \
-  --limit <new-brain-host> \
-  --vault-password-file /tmp/.vault_pass
+  --limit <new-brain-host>
 
 # 3. L4 (Ingress / Caddy)
 ansible-playbook playbooks/l4/edge.yml \
-  --limit <new-brain-host> \
-  --vault-password-file /tmp/.vault_pass
+  --limit <new-brain-host>
 
 # 4. L6 (Runtime / Docker / Portainer Engine)
 ansible-playbook playbooks/l6/engine.yml \
-  --limit <new-brain-host> \
-  --vault-password-file /tmp/.vault_pass
+  --limit <new-brain-host>
 ```
 
 Alternative unified setup commands (if utilizing stack configuration files directly):
@@ -116,8 +112,7 @@ Deploy L5/L6 data restore playbooks:
 
 ```bash
 ansible-playbook playbooks/l6/backup-appdata.yml \
-  --limit <new-brain-host> \
-  --vault-password-file /tmp/.vault_pass
+  --limit <new-brain-host>
 ```
 - App data restored from `/srv/backups/app/<name>/` or restic path.
 - Runtime state restored from `/srv/backups/stack/`.
@@ -175,44 +170,40 @@ All apps can be restored in parallel within this phase. No verified cross-app st
 
 ---
 
-## 4. Secrets Recovery & Vault Management
+## 4. Secrets Recovery & Management
 
-Procedures for recovering the Ansible Vault password, rotating secrets, and verifying Vault integrity.
+Procedures for recovering SOPS-encrypted secrets (age key), rotating secrets, and verifying secrets integrity. The only Ansible Vault contents are the Tailscale trio keys (`tailscale_auth_key`, `tailscale_acl_key`, `tailscale_acl_client_id`) until retirement gate D4 (see [OPERATIONS_RUNBOOK §7.4](OPERATIONS_RUNBOOK.md#74-tailscale-key-rotation)).
 
-### Scenario A: Vault Password Lost
+### Scenario A: SOPS Age Key Lost
 
 #### Recovery Options
 
 | Option | Prerequisite | Procedure |
 |--------|-------------|-----------|
-| **Backup location** | Password stored in a secondary secure location (password manager, hardware token, sealed envelope) | Retrieve from backup location |
-| **Paper recovery** | Password printed and stored in a physical safe | Retrieve from physical safe |
+| **Backup location** | Age private key stored in a secondary secure location (password manager, hardware token, sealed envelope) | Retrieve `~/.config/sops/age/keys.txt` from backup location |
+| **Paper recovery** | Private key printed and stored in a physical safe | Retrieve from physical safe |
 | **Team member** | Another team member has access (shared password manager) | Request from team member |
-| **Regeneration** | All secrets can be re-generated (API keys, tokens can be re-issued) | Re-generate all secrets and re-encrypt |
+| **Regeneration** | All secrets can be re-generated (API keys, tokens can be re-issued) | Re-generate all secrets and re-encrypt with a new age key |
 
 #### Regeneration Procedure (Last Resort)
 
-1. **Create a new vault password**
+1. **Create a new age keypair**
    ```bash
-   echo "new-vault-password-here" > /tmp/.vault_pass_new
+   age-keygen -o ~/.config/sops/age/keys.txt
    ```
-2. **Extract all secrets from existing encrypted files** (if password is recoverable from another source):
+2. **Extract all secrets from existing encrypted files** (if the previous key is recoverable from another source):
    ```bash
-   # If old password is available from backup
-   ansible-vault decrypt inventory/group_vars/all/secrets.yml \
-     --vault-password-file /tmp/.vault_pass_old \
-     --output /tmp/secrets_decrypted.yml
+   # If the previous key is available from backup, decrypt to plaintext
+   make sops-view > /tmp/secrets_decrypted.yml
    ```
-3. **Re-encrypt with new password**
+3. **Re-encrypt with the new key**: update the age recipients in `.sops.yaml`, then
    ```bash
-   ansible-vault encrypt /tmp/secrets_decrypted.yml \
-     --vault-password-file /tmp/.vault_pass_new \
-     --output inventory/group_vars/all/secrets.yml
+   make sops-encrypt
    ```
 ### Secret Rotation
 
 #### When to Rotate
-- After any team member with Vault access leaves.
+- After any team member with secrets access leaves.
 - After a security incident or suspected breach.
 - On a regular schedule (quarterly recommended).
 - After any secret recovery operation.
@@ -224,11 +215,12 @@ Procedures for recovering the Ansible Vault password, rotating secrets, and veri
    - GitHub token: regenerate at github.com/settings/tokens.
    - Portainer admin password: change via Portainer UI or API.
    - Telegram bot token: regenerate via @BotFather.
-2. **Update Vault-encrypted files**
+2. **Update SOPS-encrypted files**
    ```bash
-   # Edit secrets file
-   ansible-vault edit inventory/group_vars/all/secrets.yml \
-     --vault-password-file /tmp/.vault_pass
+   # Edit the SOPS file (decrypts to $EDITOR, re-encrypts on save)
+   make sops-edit
+   # Tailscale trio (Ansible Vault exception until gate D4):
+   uv run ansible-vault edit inventory/group_vars/all/secrets.yml
    ```
 3. **Re-deploy affected components**
    ```bash
@@ -239,19 +231,18 @@ Procedures for recovering the Ansible Vault password, rotating secrets, and veri
    ansible-playbook playbooks/l6/backup-appdata.yml --limit <client-host>
    ```
 
-### Vault Integrity Verification
+### Secrets Integrity Verification
 
-#### Verify vault files are encrypted
+#### Verify SOPS files are encrypted
 
 ```bash
-# Check file is valid Ansible Vault
-ansible-vault view inventory/group_vars/all/secrets.yml \
-  --vault-password-file /tmp/.vault_pass > /dev/null && echo "OK" || echo "CORRUPTED"
+# Check the file is valid SOPS-encrypted YAML
+make sops-view > /dev/null && echo "OK" || echo "CORRUPTED"
 
-# Check all vault files
-for f in $(find inventory/ -name "secrets.yml"); do
+# Check all SOPS files
+for f in $(find inventory/ -name "*.sops.yml"); do
   echo -n "$f: "
-  ansible-vault view "$f" --vault-password-file /tmp/.vault_pass > /dev/null && echo "OK" || echo "FAILED"
+  uv run sops -d "$f" > /dev/null && echo "OK" || echo "FAILED"
 done
 ```
 
@@ -261,7 +252,6 @@ done
 # Dry-run to verify all secrets resolve
 ansible-playbook playbooks/site.yml \
   --check --diff \
-  --vault-password-file /tmp/.vault_pass \
   --limit localhost
 ```
 
@@ -269,10 +259,10 @@ ansible-playbook playbooks/site.yml \
 
 | Measure | Description |
 |---------|-------------|
-| **Password manager** | Store vault password in a team password manager (1Password, Bitwarden) |
-| **Physical backup** | Print vault password and store in a sealed envelope in a secure location |
-| **Access control** | Limit Vault password access to operators who need it (principle of least privilege) |
-| **Rotation schedule** | Rotate vault password quarterly (or after team changes) |
+| **Password manager** | Store the SOPS age private key in a team password manager (1Password, Bitwarden) |
+| **Physical backup** | Print the age private key and store in a sealed envelope in a secure location |
+| **Access control** | Limit age key access to operators who need it (principle of least privilege) |
+| **Rotation schedule** | Review age key custody quarterly (or after team changes) |
 | **Documentation** | This document is the single source of truth for recovery procedures |
 
 ---
@@ -376,4 +366,4 @@ Use this checklist to confirm host readiness and configuration integrity post-re
 - [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md) - L1–L6 layer model, host classes
 - [../architecture/adr/ADR-09.md](../architecture/adr/ADR-09.md) - Backup vs Stack_Backup separation
 - [VERSION_PINS.md](VERSION_PINS.md) - Pinned component versions
-- [../../GLOSSARY.md](../GLOSSARY.md) - Vault definition and evidence paths
+- [../../GLOSSARY.md](../GLOSSARY.md) - Secrets management definition (SOPS + age) and evidence paths

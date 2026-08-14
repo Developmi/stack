@@ -6,7 +6,7 @@
 #   L1 (OS Baseline) → L2 (Hardening · Lockdown)
 #
 # Each layer playbook is independently runnable.
-# Run: uv run ansible-playbook -i inventory/hosts.ini playbooks/site.yml --ask-vault-pass
+# Run: uv run ansible-playbook -i inventory/hosts.ini playbooks/site.yml
 # ==============================================================================
 
 - name: Import L1 OS baseline playbook

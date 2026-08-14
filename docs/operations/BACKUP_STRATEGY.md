@@ -129,7 +129,7 @@ The suite provides backup for:
 The L6 runtime backup is orchestrated by `roles/L6_runtime/backup/` and runs as a set of independent systemd timers:
 
 1. **Binary installation**: Downloads and verifies `restic v0.19.0` binary (SHA256 verified per architecture).
-2. **Credential configuration**: Deploys R2 API keys and Restic repository password via Ansible Vault (`no_log: true`).
+2. **Credential configuration**: Deploys R2 API keys and Restic repository password via SOPS (`no_log: true`).
 3. **Repository initialization**: Initializes the Restic repository at `stack-restic/` prefix if not already initialized.
 4. **Backup script**: Deploys `/usr/local/bin/restic-backup-all.sh` that backs up Docker volumes to R2.
 5. **Systemd timers**: Deploys three systemd timer units:
@@ -308,7 +308,7 @@ journalctl -u restic-backup-all.service --since "1 day ago"
 ```bash
 docker run --rm \
   -e RESTIC_REPOSITORY="s3://<r2-endpoint>/nist-backups-prod/restic/<hostname>" \
-  -e RESTIC_PASSWORD="<vault-password>" \
+     -e RESTIC_PASSWORD="<restic-password>" \
   -e AWS_ACCESS_KEY_ID="<r2-key>" \
   -e AWS_SECRET_ACCESS_KEY="<r2-secret>" \
   -e AWS_DEFAULT_REGION="auto" \
@@ -320,7 +320,7 @@ docker run --rm \
 
 ```bash
 sudo RESTIC_REPOSITORY="s3://<r2-endpoint>/nist-backups-prod/stack-restic/<hostname>" \
-  RESTIC_PASSWORD="<vault-password>" \
+     RESTIC_PASSWORD="<restic-password>" \
   AWS_ACCESS_KEY_ID="<r2-key>" \
   AWS_SECRET_ACCESS_KEY="<r2-secret>" \
   restic snapshots
@@ -333,8 +333,7 @@ sudo RESTIC_REPOSITORY="s3://<r2-endpoint>/nist-backups-prod/stack-restic/<hostn
 make deploy-backups
 
 # Or directly:
-ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-appdata.yml \
-  --vault-password-file /tmp/.vault_pass
+ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-appdata.yml
 ```
 
 ### Telegram Notifications
@@ -355,7 +354,7 @@ Full disaster recovery procedures are documented in [`docs/operations/INCIDENT_R
    docker run --rm \
      -v /srv/backup/dumps:/data \
      -e RESTIC_REPOSITORY="s3://<r2-endpoint>/nist-backups-prod/restic/<hostname>" \
-     -e RESTIC_PASSWORD="<vault-password>" \
+  -e RESTIC_PASSWORD="<restic-password>" \
      -e AWS_ACCESS_KEY_ID="<r2-key>" \
      -e AWS_SECRET_ACCESS_KEY="<r2-secret>" \
      restic/restic:0.19.0 \
@@ -374,16 +373,16 @@ Full disaster recovery procedures are documented in [`docs/operations/INCIDENT_R
 2. **Restore volumes**:
    ```bash
    sudo RESTIC_REPOSITORY="s3://<r2-endpoint>/nist-backups-prod/stack-restic/<hostname>" \
-     RESTIC_PASSWORD="<vault-password>" \
+  RESTIC_PASSWORD="<restic-password>" \
      AWS_ACCESS_KEY_ID="<r2-key>" \
      AWS_SECRET_ACCESS_KEY="<r2-secret>" \
      restic restore <snapshot-id> --target /srv/backups/stack-restic/
    ```
 3. **Re-deploy stacks**: Use Portainer or `ansible-playbook playbooks/l4/edge.yml` to re-deploy affected containers.
 
-### Vault Password Recovery
+### Secrets Recovery
 
-If the Ansible Vault password is lost, follow the procedures in [`docs/operations/INCIDENT_RESPONSE_DR.md`](../operations/INCIDENT_RESPONSE_DR.md). Without the vault password you cannot decrypt backup credentials or Ansible-managed secrets.
+If the SOPS age key is lost, follow the procedures in [`docs/operations/INCIDENT_RESPONSE_DR.md`](../operations/INCIDENT_RESPONSE_DR.md). Without the age key you cannot decrypt backup credentials or Ansible-managed secrets.
 
 ---
 

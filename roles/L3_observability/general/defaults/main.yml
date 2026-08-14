@@ -9,7 +9,7 @@
 # ─── Stack images (fallbacks; images.yml is the canonical source) ─────────────
 blackbox_exporter_image: "prom/blackbox-exporter:v0.25.0"
 
-# ─── Network & Host (safe defaults; production overrides from vault) ───────────
+# ─── Network & Host (safe defaults; production overrides from SOPS) ───────────
 observability_network_name: "observability_net"
 observability_stack_host_ip: "127.0.0.1"
 

@@ -114,10 +114,10 @@ make precommit-run
 make lint PLAYBOOK=playbooks/site.yml
 
 # Validate setup and playbook syntax checks
-make validate
+make check-toolchain
 
 # Compliance evidence-only execution
-make compliance
+make deploy-compliance
 
 # Targeted deployments
 make deploy-tags PLAYBOOK=playbooks/site.yml ANSIBLE_TAGS='nist,sc-7'
@@ -169,7 +169,7 @@ See `.github/workflows/` for workflow definitions.
 ### Documentation
 
 - Update README.md when adding new features.
-- Document new variables in `group_vars/all/secrets.yml.example`.
+- Document new variables in `group_vars/all/secrets.yml.example` (SOPS secrets) or `inventory/group_vars/all/managers/portainer.yml` (manager defaults).
 - Include inline comments for complex logic.
 
 ## Security Considerations
@@ -185,8 +185,9 @@ See `.github/workflows/` for workflow definitions.
 portainer_edge_keys_by_node:
    brain-1: "abcd1234xyz"
 
-# ✅ RIGHT - Use Ansible Vault
-ansible-vault encrypt group_vars/all/secrets.yml
+# ✅ RIGHT - Encrypt with SOPS + age (edge keys live in
+#    inventory/group_vars/all/managers/portainer.sops.yml)
+make sops-encrypt SOPS_FILE=inventory/group_vars/all/managers/portainer.sops.yml
 # Then reference: {{ portainer_edge_keys_by_node[inventory_hostname] }} (decrypted at runtime only)
 ```
 
@@ -201,9 +202,9 @@ This repository uses `detect-secrets` to prevent accidental commits:
 If you see "Potential secrets detected in commit" error:
 
 1. **Remove the secret** from the file immediately
-2. **Use Ansible Vault** to encrypt sensitive data:
+2. **Use SOPS + age** to encrypt sensitive data:
    ```bash
-   make vault-encrypt
+   make sops-encrypt
    ```
 3. **Update baseline** if it's a legitimate false positive:
    ```bash
@@ -213,7 +214,7 @@ If you see "Potential secrets detected in commit" error:
 ### Critical Requirements
 
 - **Never commit secrets or sensitive data** – detect-secrets runs on every commit
-- **Use Ansible Vault** for all encrypted variables (`ansible-vault encrypt`)
+- **Use SOPS + age** for all encrypted variables (`.sops.yaml`; `make sops-encrypt`; the Tailscale auth/ACL keys remain vaulted until expiry)
 - **Validate all inputs** and use secure defaults
 - **Follow principle of least privilege** – no root/privileged default containers
 - **Idempotence is mandatory** – tasks must produce same result on multiple runs
@@ -228,7 +229,7 @@ All code contributions must maintain compliance with implemented NIST controls:
 - **SC-7** (Boundary Protection): Firewall rules, network isolation
 - **SI-4** (System Monitoring): CrowdSec, auditd required
 - **AU-12** (Audit Logging): Comprehensive audit trail
-- **SC-28** (Data at Rest): Vault encryption required
+- **SC-28** (Data at Rest): SOPS/age encryption required
 
 ### Container Security Standards
 

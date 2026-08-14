@@ -24,7 +24,7 @@
   ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/user_hardening/create_users.yml"
   tags: [users, l2-compliance, nist, ac-2]
 
-- name: "AC-2 | Deploy SSH public keys from vault"
+- name: "AC-2 | Deploy SSH public keys from SOPS"
   ansible.builtin.include_tasks: "{{ role_path }}/general/tasks/user_hardening/deploy_keys.yml"
   tags: [users, l2-compliance, nist, ac-2]
 

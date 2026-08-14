@@ -13,9 +13,9 @@ cannot guarantee the profile matches your application's actual requirements.
 - [ ] **Domain**: Confirm `app_fastapi_domain` matches your DNS/Caddy routing.
 - [ ] **Health endpoint**: Ensure your app exposes `GET /health` returning 200.
   If your health endpoint differs, update `monitoring.health_endpoint` in `profile.yml`.
-- [ ] **Secrets**: Add required secrets to Ansible Vault
-  (`inventory/group_vars/all/secrets.yml` or per-client vault). The pre-flight
-  assertion will block deploy if declared keys are missing from Vault.
+- [ ] **Secrets**: Add required secrets to the SOPS file
+  (`inventory/group_vars/all/secrets.sops.yml`). The pre-flight
+  assertion will block deploy if declared keys are missing from SOPS.
 - [ ] **Database**: If your app uses Postgres/MySQL, update `backup.db_type`
   and `backup.db_name` in `profile.yml` to enable automated backups. The
   default is `db_type: custom` (backup role skips).

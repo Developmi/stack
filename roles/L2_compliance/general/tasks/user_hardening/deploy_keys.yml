@@ -1,13 +1,13 @@
 ---
 # ==============================================================================
-# DEPLOY SSH PUBLIC KEYS - From Vault (NIST IA-5)
+# DEPLOY SSH PUBLIC KEYS - From SOPS (NIST IA-5)
 # ==============================================================================
-# Reads public keys from vault-encrypted ssh_public_keys dict.
+# Reads public keys from SOPS-encrypted ssh_public_keys dict (secrets.sops.yml).
 # Creates ~/.ssh directories with 0700, authorized_keys with 0600.
 # Uses exclusive: false to preserve any other manually-added keys.
 # ==============================================================================
 
-- name: "IA-5 | Assert SSH public keys exist in vault"
+- name: "IA-5 | Assert SSH public keys exist in SOPS"
   ansible.builtin.assert:
     that:
       - ssh_public_keys is defined
@@ -18,9 +18,9 @@
       - ssh_public_keys.breakglass is defined
       - ssh_public_keys.breakglass | length > 0
     fail_msg: >
-      ssh_public_keys dict is missing or incomplete in group_vars/all/secrets.yml.
+      ssh_public_keys dict is missing or incomplete in group_vars/all/secrets.sops.yml.
       All three keys (dev_admin, automation, breakglass) are required.
-      Run: ansible-vault edit group_vars/all/secrets.yml
+      Run: make sops-edit
     success_msg: "✅ SSH public keys validated for all 3 users"
 
 - name: "IA-5 | Create ~/.ssh directories"

@@ -32,10 +32,12 @@ make sync
 uv run detect-secrets scan --baseline .secrets.baseline $(git ls-files) > /dev/null
 
 # 3. Ensure encrypted runtime secrets are not tracked
-if git ls-files --error-unmatch group_vars/all/secrets.yml >/dev/null 2>&1; then
-  echo "ERROR: group_vars/all/secrets.yml is tracked in git"
-  exit 1
-fi
+for f in inventory/group_vars/all/secrets.yml inventory/group_vars/all/secrets.sops.yml; do
+  if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+    echo "ERROR: $f is tracked in git"
+    exit 1
+  fi
+done
 
 # 4. Scan for high-risk hardcoded secret signatures
 if rg -n --hidden -g '!.git' -g '!**/.venv/**' \
@@ -62,7 +64,7 @@ uv run detect-secrets scan --baseline .secrets.baseline $(git ls-files)
 make lint
 
 # 4. Syntax validation
-make validate
+make check-toolchain
 uv run ansible-playbook --syntax-check playbooks/ops/nuke.yml
 uv run ansible-inventory -i inventory/hosts.ini --list > /dev/null
 

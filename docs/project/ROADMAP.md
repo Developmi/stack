@@ -25,11 +25,11 @@ This project starts at v6.0.0. Prior development history (v1.0.0 - v5.5.0) is ma
 ### What Is Working Well in Current Working Tree (v6.0.0-dev)
 
 - NIST-focused architecture remains consistent (`AC-2`, `CM-7`, `SC-7`, `SI-4`, `AU-12`, `SC-28` audit scope).
-- Security stack is cohesive: SSH hardening, UFW/fail2ban, CrowdSec, Tailscale, Vault workflow.
+- Security stack is cohesive: SSH hardening, UFW/fail2ban, CrowdSec, Tailscale, SOPS + age secrets workflow.
 - Operational playbooks (`playbooks/l6/engine.yml`, `playbooks/l3/exporters.yml`, `playbooks/ops/nuke.yml`) enforce Tailscale-only transport via `tailscale_subnet` source-of-truth variable.
-- Observability deployment is fully automated end-to-end via Ansible and Vault-backed secrets.
+- Observability deployment is fully automated end-to-end via Ansible and SOPS-encrypted secrets.
 - Recommended app catalog now provides secure, Zero Trust-aligned deployment configurations for Chatwoot, Metabase, n8n, OpenWebUI, Twenty CRM, and Uptime Kuma.
-- **Caddy Node Isolation (v5.4.0)**: Per-node Caddyfile routing via `target_group ∩ group_names`. Three-layer variable model: vault (domains, certs), inventory inline vars (caddy_node_id, caddy_coraza_mode per host), group_vars (caddy_type, caddy_admin_enabled defaults).
+- **Caddy Node Isolation (v5.4.0)**: Per-node Caddyfile routing via `target_group ∩ group_names`. Three-layer variable model: SOPS (domains, certs), inventory inline vars (caddy_node_id, caddy_coraza_mode per host), group_vars (caddy_type, caddy_admin_enabled defaults).
 - **Caddy WAF v3.2.1 Alignment (NEW)**: WAF upgraded from pinned v2 to Coraza v2.5.0 / OWASP CRS v4.28.0. WAF config (coraza.conf, CRS rules) now baked into container image at `/etc/caddy/`. Role no longer deploys host-side WAF config - just renders Caddyfile with correct snippet paths and validates per-service `waf_mode`. Healthcheck aligned to `pgrep caddy`. compose.yml.j2 streamlined (removed dead WAF bind mounts).
 - **APT Lock Detection (v5.3.0)**: Pre-flight lock detection using `fuser`/`pgrep` with auto-kill for stale processes (>15min) and `apt_force_cleanup=true` flag for deadlocked processes. Enhanced in v6.0.0-dev with stale lock file cleanup (empty/abandoned locks) and `changed_when: false` for idempotent runs.
 - **OpenWebUI Recommended Bundle (v5.5.0)**: Self-hosted LLM chat interface with Docker Compose deployment, GPU passthrough support, and Caddy-first exposure model.
@@ -189,17 +189,17 @@ This project starts at v6.0.0. Prior development history (v1.0.0 - v5.5.0) is ma
 - Compliance reporting outputs (JSON/HTML/PDF).
 - Image provenance/signing pipeline.
 - Managed monitoring operation packs.
-- Current approved transitional exception: `ansible-vault` PyPI wrapper remains enabled for operational continuity of current key workflows until migration is complete.
+- **Completed**: secrets lifecycle migrated from the transitional `ansible-vault` wrapper to SOPS + age (`community.sops`, `secrets.sops.yml`, `make sops-*`). The wrapper remains enabled only for the Tailscale trio until expiry gate D4 (OPERATIONS_RUNBOOK §7.4).
 - [ ] **Toolchain migration policy**: prefer official upstream projects with OSI-approved licenses only (MIT/Apache/GPL/BSD) and avoid BSL/non-open-core runtime dependencies in control-plane tooling.
 - [ ] Replace wrapper hook `shellcheck-py/shellcheck-py` (MIT wrapper) with official `koalaman/shellcheck` binary workflow (GPL-3.0) managed in reproducible CI/WSL bootstrap.
 - [ ] Replace `pre-commit/mirrors-prettier` (archived mirror) with official Prettier distribution from `prettier/prettier` (MIT) via pinned `pnpm` execution in hooks (policy: no npm).
-- [ ] Migrate secrets lifecycle from transitional `ansible-vault` wrapper to official and auditable key-management baseline (Ansible-native vault workflows and/or Mozilla SOPS + age/GPG), including key custody, rotation, and recovery controls.
+- **Completed**: secrets lifecycle migrated from the transitional `ansible-vault` wrapper to the official and auditable key-management baseline (Mozilla SOPS + age/GPG), including key custody, rotation, and recovery controls. Remaining `ansible-vault` usage is limited to the Tailscale trio until gate D4 (OPERATIONS_RUNBOOK §7.4).
 - [ ] Support for advanced host metrics (`network_mode: host`) with dedicated segmentation, compensating controls, and NIST/CIS exception documentation.
 - [ ] Improve cAdvisor zero-trust coverage on hardened Docker hosts (`userns-remap`) with explicit metric-tier profiles (strict, balanced, full) and documented tradeoffs per profile.
 - [ ] Add optional per-node cAdvisor enablement in inventory/group vars so hardened nodes can run Node Exporter only while keeping centralized scrape configuration clean.
 - [ ] Rename `tailscale_subnet` to a VPN-agnostic overlay variable (e.g. `management_overlay_subnet`) to support non-Tailscale overlays (Headscale, WireGuard, etc.) without requiring changes across multiple playbooks. `tailscale_subnet` would remain as an alias for backwards compatibility. Relevant controls: NIST `CM-6`, `SC-7`.
 - [ ] **Coraza full activation checklist**: After OWASP CRS tuning period on muscle nodes (DetectionOnly), documented activation procedure with per-service WAF bypass audit, false-positive triage runbook, and gradual rollout plan (muscle-1 → muscle-2 → all workers).
-- [ ] **Dynamic inventory migration**: If Terraform, AWX, or an OCI dynamic inventory plugin is adopted, the per-host `caddy_node_id` and `caddy_coraza_mode` inline vars in `hosts.ini` must be migrated to the new inventory system. The three-layer variable model (vault/inventory/group_vars) must be preserved regardless of the inventory backend.
+- [ ] **Dynamic inventory migration**: If Terraform, AWX, or an OCI dynamic inventory plugin is adopted, the per-host `caddy_node_id` and `caddy_coraza_mode` inline vars in `hosts.ini` must be migrated to the new inventory system. The three-layer variable model (SOPS/inventory/group_vars) must be preserved regardless of the inventory backend.
 - [ ] **Cloudflare Origin CA cert expiry monitoring**: The `cloudflare-origin-pull-ca.pem` CA bundle has a finite validity period. Action items: (1) Check current expiry: `openssl x509 -in roles/L4_networking/caddy/files/cloudflare-origin-pull-ca.pem -noout -enddate`. (2) Add Ansible preflight task: assert cert is not expired and warns at 30-day threshold using `openssl x509 -checkend 2592000`. (3) Document rotation process: download updated CA from Cloudflare's published URL, replace file, re-deploy via `playbooks/l4/edge.yml --tags cloudflare,sc-8`, validate with `curl --cacert cloudflare-origin-pull-ca.pem` against a CF-origin service.
 - [ ] **Caddy multi-node rendering tests (follow-up to v5.4.0)**: While L4 molecule validates the role on a single node, multi-node Caddyfile rendering (brain vs muscle routes), `target_group`/`coraza_mode`/`admin_enabled` preflight assertions, and cert isolation need integration-level testing (separate from molecule's container scope).
 

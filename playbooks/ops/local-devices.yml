@@ -1,6 +1,6 @@
 ---
 # ==============================================================================
-# Developmi Stack | Developmi | Miguel Lozano (SRE & FinOps Architect)
+# Developmi Stack | Ops - Local Device Hardening
 # ==============================================================================
 # LOCAL DEVICE HARDENING - Personal Workstations & Laptops
 # ==============================================================================
@@ -14,7 +14,6 @@
 # Run:
 #   make deploy-local
 #   ansible-playbook -i inventory/hosts.ini playbooks/ops/local-devices.yml --ask-vault-pass
-#
 # Behavior:
 #   - ACL is applied FIRST from localhost (enables SSH before device contact)
 #   - Offline devices are silently skipped (ignore_unreachable: true)
@@ -32,15 +31,15 @@
   become: false
   tags: [always]
   tasks:
-    - name: Validate vault variables
+    - name: Validate SOPS variables
       ansible.builtin.assert:
         that:
           - vault_github_token is defined
           - vault_github_token | length > 0
           - github_username is defined
           - github_username | length > 0
-        fail_msg: "❌ Vault secrets missing. Run: ansible-vault edit group_vars/all/secrets.yml"
-        success_msg: "✅ Vault variables validated"
+        fail_msg: "❌ SOPS secrets missing. Run: make sops-edit"
+        success_msg: "✅ SOPS variables validated"
 
     - name: Validate Tailscale subnet is configured
       ansible.builtin.assert:
@@ -77,13 +76,17 @@
 # ==============================================================================
 - name: "PHASE 0.1: Tailscale ACL Pre-configuration"
   hosts: localhost
+  # Controller-side play: ACL must be applied BEFORE SSH to local devices.
+  # connection: local + become: false as PLAY keywords (never vars) make sudo
+  # on the controller impossible, mirroring playbooks/ops/bootstrap.yml.
+  connection: local
   gather_facts: false
   become: false
   tags: [tailscale, acl, security, always]
   tasks:
     - name: Render ACL policy with local device rules
       ansible.builtin.set_fact:
-        tailscale_acl_policy: "{{ lookup('template', playbook_dir + '/roles/L2_compliance/general/templates/tailscale/tailscale-acls.json.j2') | from_json }}"
+        tailscale_acl_policy: "{{ lookup('template', playbook_dir + '/../../roles/L2_compliance/general/templates/tailscale/tailscale-acls.json.j2') | from_json }}"
 
     - name: Exchange ACL OAuth client for short-lived API token
       ansible.builtin.uri:

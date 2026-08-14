@@ -276,7 +276,7 @@ L3 entirely.
 - MUST NOT touch application data or databases. That is L5.
 - MUST NOT configure Docker or Portainer. That is L6.
 - MUST NOT expose metrics endpoints to the public internet (L4 routes them internally).
-- MUST NOT store secrets or credentials in dashboards (use Grafana environment variables from Vault).
+- MUST NOT store secrets or credentials in dashboards (use Grafana environment variables from SOPS).
 
 ### Depends On
 
@@ -373,7 +373,7 @@ Caddy is exposed on ports 80/443. A compromised L4 means:
 
 - TLS certificates can be stolen or replaced (MITM attacks)
 - WAF can be bypassed (SQLi, XSS reach applications)
-- Request routing can be hijacked (tenant A traffic sent to tenant B)
+- Request routing can be hijacked (traffic sent to the wrong backend or domain)
 - Logs can be suppressed or falsified (cover tracks)
 
 L4 is the highest-risk OpenSource layer because it is publicly reachable.
@@ -495,7 +495,7 @@ role with `backup_role_source` dispatch per ADR-09.
 
 1. **Docker Engine is running** - installed from `docker.com` apt repo, configured with daemon options from group vars, Docker Compose plugin available.
 2. **Compose stacks are deployed** - L5 profiles are rendered via `roles/L6_runtime/compose/deploy.yml.j2` into `docker-compose.yml` + `.env` files at `/srv/app/<name>/`. Containers are running and healthy.
-3. **Portainer is optional and independent** - if `stack_portainer_enabled: true`, Portainer BE is deployed as a Compose stack. Portainer manages stacks via the Docker socket but removing Portainer does NOT stop or remove any Compose stack.
+3. **Portainer is optional and independent** - if `enable_portainer: true`, Portainer BE is deployed as a Compose stack. Portainer manages stacks via the Docker socket but removing Portainer does NOT stop or remove any Compose stack.
 4. **Runtime state is backed up** - `roles/L6_runtime/backup/` protects Portainer configs, compose project state, and Docker runtime metadata via `backup_role_source` dispatch.
 5. **Future runtimes are abstracted** - the `roles/L6_runtime/` directory structure defines adapter slots for Swarm and K3s. Same L5 profile schema, different rendering logic.
 6. **Docker socket is protected** - access restricted to the `docker` group. No unauthenticated access to the Docker API.
@@ -547,7 +547,7 @@ monitoring (by stopping monitoring containers).
 | Portainer removed and stacks break       | Violation of ADR-07. Compose stacks are coupled to Portainer.                                         | Integration test: remove Portainer container, verify `docker compose ls` shows all stacks still active.                       |
 | `backup` not running                     | Runtime state not backed up. Portainer configs lost on disk failure.                                  | L3 alert: `backup` job exit code ≠ 0. Backup age exceeds schedule interval.                                                   |
 | `backup` touches app data                | Boundary violation: L6 accessing L5 data. Backups are incomplete (runtime state mixed with app data). | Audit: `roles/L6_runtime/backup/` tasks must not reference `/srv/app/<name>/` or app database paths.                          |
-| Compose depends on Portainer for deploy  | Portainer becomes required. Engine-Manager decoupling violated. Can't deploy without Portainer.       | CI test: deploy an app profile with `stack_portainer_enabled: false`. Must succeed.                                           |
+| Compose depends on Portainer for deploy  | Portainer becomes required. Engine-Manager decoupling violated. Can't deploy without Portainer.       | CI test: deploy an app profile with `enable_portainer: false`. Must succeed.                                           |
 | Adapter uses per-app conditionals        | `deploy.yml.j2` contains `if app == "chatwoot"`. Runtime adapter is not agnostic.                     | Code review: `roles/L6_runtime/compose/deploy.yml.j2` must contain zero app names.                                            |
 
 ---

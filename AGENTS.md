@@ -8,7 +8,7 @@
 - **Testing** - Molecule (Docker driver v29.3.0+, Compose v5.3.1+)
 - **Roles**: backup, backup-timers, security, L4_networking/caddy, user_hardening, and more
 - **Target**: Debian 12, Ubuntu 22.04
-- **Vault**: Ansible Vault, prompted via `--ask-vault-pass` during deploy
+- **Secrets**: SOPS + age (`inventory/group_vars/all/secrets.sops.yml`, `make sops-*`); the Tailscale trio stays vaulted until gate D4 (OPERATIONS_RUNBOOK §7.4)
 
 ## Commands
 
@@ -70,7 +70,7 @@ All new documentation PRs must follow this rule. Existing docs grandfathered - r
 
 ## L3 Observability Stack Gate (MUST)
 
-- When the L3 observability stack requires an external network that is missing, the role MUST present an interactive y/N prompt (message: "You need to run first the l4 stack to create ... for this layer. Continue anyway? [y/N]", 30s timeout). If declined, the play MUST stop gracefully with a message pointing to `make deploy-edge EDGE=caddy HOST=<host>`; it MUST NOT fail blindly.
+- When the L3 observability stack requires an external network that is missing, the role MUST present an interactive y/N prompt (message: "You need to run first the l4 stack to create ... for this layer. Continue anyway? [y/N]", 30s timeout). If declined, the play MUST stop gracefully with a message pointing to `make deploy-edge BACKEND=caddy TARGET=<host>`; it MUST NOT fail blindly.
 - The assert "Assert external observability stack network exists" remains and only fires when the operator confirmed continuation.
 
 ## Phase Order Note (MUST)

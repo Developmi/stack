@@ -3,7 +3,7 @@
 # Developmi Stack - L1 OS Baseline
 # ==============================================================================
 # L1 (OS Baseline) - extracted from site.yml Play 1.
-# Independently runnable: ansible-playbook -i inventory/hosts.ini playbooks/l1/baseline.yml --ask-vault-pass
+# Independently runnable: ansible-playbook -i inventory/hosts.ini playbooks/l1/baseline.yml
 # Tag-filterable: --tags l1-os-baseline
 # ==============================================================================
 

@@ -53,18 +53,18 @@ make install-collections
 
 ---
 
-## Step 3: Set Up Ansible Vault Password
+## Step 3: Set Up Secrets (SOPS + age)
 
 ```bash
-# Create vault password file (do NOT commit this file)
-echo "your-vault-password" > /tmp/.vault_pass
+# Copy the SOPS sample and encrypt it with your age key
+cp inventory/group_vars/all/secrets.sops.yml.example inventory/group_vars/all/secrets.sops.yml
+make sops-encrypt
 
-# Verify vault is readable
-ansible-vault view inventory/group_vars/all/secrets.yml \
-  --vault-password-file /tmp/.vault_pass
+# Verify secrets are readable
+make sops-view
 ```
 
-> ⚠️ The `.gitignore` excludes `/tmp/.vault_pass`. Never store the vault password in the repository.
+> ⚠️ The `.gitignore` excludes `*.sops.yml`. Never commit plaintext secrets. The only vaulted exception is the Tailscale trio (`inventory/group_vars/all/secrets.yml`), retired at gate D4 (OPERATIONS_RUNBOOK §7.4).
 
 ---
 
@@ -74,8 +74,7 @@ ansible-vault view inventory/group_vars/all/secrets.yml \
 # Full deploy (OS baseline + compliance hardening)
 make deploy
 # OR
-ansible-playbook playbooks/site.yml \
-  --vault-password-file /tmp/.vault_pass
+ansible-playbook playbooks/site.yml
 ```
 
 For a minimal test on a single host:
@@ -83,7 +82,6 @@ For a minimal test on a single host:
 ```bash
 ansible-playbook playbooks/site.yml \
   --limit <target-host> \
-  --vault-password-file /tmp/.vault_pass \
   --check --diff
 ```
 
@@ -120,7 +118,7 @@ ssh <target-host> "sysctl kernel.kptr_restrict"
 | Issue | Resolution |
 |-------|-----------|
 | `ansible-core` version mismatch | `uv pip install ansible-core==2.21.1 --force-reinstall` |
-| Vault password not found | Ensure `/tmp/.vault_pass` exists and is readable |
+| SOPS age key not found | Ensure `~/.config/sops/age/keys.txt` exists (see Step 3) |
 | SSH connection refused | Target host must have SSH enabled. Verify with `ssh <host> echo ok` |
 | `uv sync` fails on ARM64 | ARM64 is fully supported. Ensure Python 3.14+ is installed for ARM64 |
 

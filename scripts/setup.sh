@@ -78,7 +78,7 @@ check_prerequisites() {
     fi
 
     if ! uv run ansible-vault --version > /dev/null 2>&1; then
-        print_warning "ansible-vault is not ready yet"
+        print_warning "ansible-vault (Tailscale trio wrapper) is not ready yet"
         print_info "Run: uv sync"
         return 1
     fi
@@ -133,26 +133,28 @@ validate_inventory() {
 setup_secrets() {
     print_header "Setting Up Encrypted Secrets"
 
-    if [[ -f "inventory/group_vars/all/secrets.yml" ]]; then
-        print_success "secrets.yml already exists"
-        print_info "To edit: uv run ansible-vault edit inventory/group_vars/all/secrets.yml"
+    if [[ -f "inventory/group_vars/all/secrets.sops.yml" ]]; then
+        print_success "secrets.sops.yml already exists"
+        print_info "To edit: make sops-edit"
         return 0
     fi
 
-    if [[ -f "inventory/group_vars/all/secrets.yml.example" ]]; then
+    if [[ -f "inventory/group_vars/all/secrets.sops.yml.example" ]]; then
         print_info "Copying example secrets file..."
-        cp inventory/group_vars/all/secrets.yml.example inventory/group_vars/all/secrets.yml
-        chmod 600 inventory/group_vars/all/secrets.yml
+        cp inventory/group_vars/all/secrets.sops.yml.example inventory/group_vars/all/secrets.sops.yml
+        chmod 600 inventory/group_vars/all/secrets.sops.yml
 
         print_warning "Secrets file created but NOT encrypted"
-        print_info "To encrypt: make vault-encrypt"
-        print_info "Required secrets:"
+        print_info "To encrypt: make sops-encrypt (age key required)"
+        print_info "Required secrets (edit with make sops-edit):"
         echo "  - vault_github_token (GitHub Personal Access Token)"
-        echo "  - tailscale_auth_key (Tailscale OAuth client secret for node join)"
-        echo "  - tailscale_acl_key (Tailscale OAuth client secret for ACL API)"
-        echo "  - tailscale_acl_client_id (Tailscale OAuth client ID for ACL API)"
+        echo "  - vault_image_namespace / vault_github_username (registry)"
+        echo "  - restic_r2_* and restic_password_* (backups)"
+        echo "  - The Tailscale trio (tailscale_auth_key, tailscale_acl_key,"
+        echo "    tailscale_acl_client_id) stays in the Ansible vault"
+        echo "    (secrets.yml) until expiry (OPERATIONS_RUNBOOK §7.4)."
     else
-        print_error "secrets.yml.example not found"
+        print_error "secrets.sops.yml.example not found"
         return 1
     fi
 }
@@ -200,18 +202,18 @@ validate_playbooks() {
 validate_secrets() {
     print_header "Validating Secrets"
 
-    if [[ -f "inventory/group_vars/all/secrets.yml" ]]; then
-        print_success "secrets.yml exists"
+    if [[ -f "inventory/group_vars/all/secrets.sops.yml" ]]; then
+        print_success "secrets.sops.yml exists"
         local secret_mode
-        secret_mode=$(stat -c "%a" inventory/group_vars/all/secrets.yml 2>/dev/null || echo "600")
+        secret_mode=$(stat -c "%a" inventory/group_vars/all/secrets.sops.yml 2>/dev/null || echo "600")
         if [[ "$secret_mode" != "600" ]]; then
-            print_warning "secrets.yml permissions are not 600"
-            print_info "Fix: chmod 600 inventory/group_vars/all/secrets.yml"
+            print_warning "secrets.sops.yml permissions are not 600"
+            print_info "Fix: chmod 600 inventory/group_vars/all/secrets.sops.yml"
         fi
     else
-        print_warning "secrets.yml not found"
-        print_info "Copy the example: cp inventory/group_vars/all/secrets.yml.example inventory/group_vars/all/secrets.yml"
-        print_info "Then encrypt it: make vault-encrypt"
+        print_warning "secrets.sops.yml not found"
+        print_info "Copy the example: cp inventory/group_vars/all/secrets.sops.yml.example inventory/group_vars/all/secrets.sops.yml"
+        print_info "Then encrypt it: make sops-encrypt"
     fi
 }
 
@@ -219,8 +221,9 @@ show_next_steps() {
     print_header "Next Steps"
 
     echo -e "${GREEN}1.${NC} Edit inventory/hosts.ini with your server IPs"
-    echo -e "${GREEN}2.${NC} Configure secrets:"
-    echo -e "   ${BLUE}make vault-edit${NC}"
+    echo -e "${GREEN}2.${NC} Configure secrets (SOPS + age):"
+    echo -e "   ${BLUE}make sops-encrypt${NC}"
+    echo -e "   ${BLUE}make sops-edit${NC} (edit later)"
     echo -e "${GREEN}3.${NC} Run full hardening:"
     echo -e "   ${BLUE}make deploy${NC}"
 
