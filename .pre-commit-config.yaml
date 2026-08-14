@@ -13,6 +13,13 @@ repos:
             .secrets.baseline
           )$
 
+  # Secret leak scanning (gitleaks) - D10 human-error safety net
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.3
+    hooks:
+      - id: gitleaks
+        args: [--verbose, --redact, --staged]
+
   # Pre-commit standard file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

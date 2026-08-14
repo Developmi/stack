@@ -14,10 +14,6 @@ cloud_provider: oci
 # L1-L2 hardening profile - server-grade (strict fail2ban, CrowdSec enforcement)
 hardening_profile: server
 
-# Portainer Edge-only routing:
-# muscles default to the first brain.
-portainer_edge_target_brain: "{{ groups['brain'][0] }}"
-
 # Worker-specific settings
 worker_enable_autoscaling: false # For future use
 worker_max_containers: 50 # For future monitoring

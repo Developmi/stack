@@ -145,7 +145,7 @@ Follow this validation sequence when introducing support for a new Linux distrib
 5.  **Validate Facts:** Ensure Ansible can detect the `distribution_release`. If not, install `python3-distro` and ensure `gather_facts: true`.
 6.  **Run Validation Sequence:**
     ```bash
-    make validate
+    make check-toolchain
     make lint
     make dry-run PLAYBOOK=playbooks/site.yml
     make deploy-tags PLAYBOOK=playbooks/site.yml ANSIBLE_TAGS='base,system,packages'

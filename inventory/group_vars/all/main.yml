@@ -86,8 +86,8 @@ systemd_nproc_hard: 65536
 # =============================================================================
 # L1-L2 HARDENING
 # =============================================================================
-# 5-layer variable hierarchy (ADR-03): clients > app >
-#   {brain,muscle,local} > all > role defaults.
+# Single-tenant stack. Variable precedence (ADR-03):
+# {brain,muscle,local} > all > role defaults.
 # Every tunable below has a default - override at the appropriate layer.
 
 # ─── OS Detection & Normalization ────────────────────────────────────────────
@@ -146,22 +146,27 @@ net_ipv6_conf_all_use_tempaddr: 2
 net_ipv6_conf_default_use_tempaddr: 2
 
 # ─── Bootstrap gate (remove-tailscale-ssh) ────────────────────────────────────
-# nist_bootstrap controls whether public SSH is temporarily allowed
-# during first deployment. Set to true ONLY via --extra-vars during
-# initial make deploy. Default false (locked down).
-#   true  → firewall allows SSH from controller_ip on all interfaces
-#   false → SSH DROPped on all non-tailscale0 interfaces (steady-state)
+# bootstrap_mode is a FIRST-DEPLOY switch ("bootstrap gate"), NOT a NIST
+# control. When true, the firewall and sshd_config render a temporary
+# exception that ACCEPTs SSH from controller_ip on all interfaces so the
+# first deploy can complete before Tailscale is established. The lockdown
+# play (playbooks/l2/lockdown.yml) ALWAYS closes public SSH at the end of its
+# run, so this switch only controls pre-flight gating and the rendering of
+# the exception - it never leaves SSH open.
+# Set it ONLY via --extra-vars during the first deploy:
+#   make deploy-first                (passes -e bootstrap_mode=true)
+# Default false (steady-state: SSH only via Tailscale).
 # WARNING: Do NOT set this true in a vars file. Always pass as -e.
-nist_bootstrap: false
+bootstrap_mode: false
 
 # controller_ip is the Ansible controller's source IP, used during
-# bootstrap when nist_bootstrap=true. Detected from SSH_CLIENT
+# bootstrap when bootstrap_mode=true. Detected from SSH_CLIENT
 # environment variable (set by SSH daemon on the target node).
 # Falls back to the explicitly passed -e controller_ip=<ip> if
 # SSH_CLIENT is unavailable (e.g., local connection via CLI).
 # NOTE: ansible_host is the TARGET node's IP, NOT the controller's -
 # do NOT use it as the controller_ip.
-controller_ip: "{{ (ansible_env.SSH_CLIENT | default('')).split(' ')[0] | default('undefined') }}"
+controller_ip: "{{ (ansible_facts['ansible_env']['SSH_CLIENT'] | default('')).split(' ')[0] | default('undefined') }}"
 
 # l2_tailscale_subnet_router enables IP forwarding for nodes that
 # act as Tailscale subnet routers. Default false (no subnet routing).
@@ -174,9 +179,9 @@ l2_tailscale_subnet_router: false
 # Future backends (traefik, nginx) share the same ingress_services schema.
 reverse_proxy_backend: caddy
 
-# Multi-tenant ingress routing catalog. Each entry maps a client's domain
+# Ingress routing catalog (single-tenant). Each entry maps a domain
 # to an upstream backend with WAF and cert isolation.
-# Override in inventory/group_vars/clients/*/vars.yml.
+# Defined in the SOPS file: inventory/group_vars/all/secrets.sops.yml.
 ingress_services: []
 
 # Default WAF mode for services without an explicit waf_mode.
@@ -186,7 +191,7 @@ waf_mode_default: detection_only
 
 # =====================
 # BACKUP DEFAULTS (Phase 04)
-# Non-secret defaults - secrets are in secrets.yml (vault-encrypted)
+# Non-secret defaults - secrets are in secrets.sops.yml (SOPS + age encrypted)
 backup_dump_dir: "/srv/backup/dumps"
 backup_keep_daily: 7
 backup_keep_weekly: 4
@@ -202,9 +207,9 @@ enable_portainer: false
 # ==============================================================================
 # Tailscale Mesh VPN - Installation Variables
 # ==============================================================================
-# Version: v1.98.9 (latest verified)
+# Version: v1.102.2 (latest verified)
 # Docs: https://tailscale.com/changelog
-tailscale_version: "1.98.9"
+tailscale_version: "1.102.2"
 tailscale_gpg_key_url_debian: "https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg"
 tailscale_gpg_key_url_ubuntu: "https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg"
 tailscale_keyring_path: "/usr/share/keyrings/tailscale-archive-keyring.gpg"

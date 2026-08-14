@@ -1,0 +1,21 @@
+---
+# =============================================================================
+# PORTAINER MANAGER DEFAULTS (non-secret)
+# =============================================================================
+# Manager variables are confined to this file (N4): no `portainer_*` variable
+# may be defined outside `inventory/group_vars/all/managers/`. Edge keys live
+# in portainer.sops.yml (SOPS+age). `enable_portainer` stays in
+# inventory/group_vars/all/main.yml (not a portainer_* variable).
+
+# Portainer images - server and Edge agent MUST stay at the same version.
+portainer_server_image: "portainer/portainer-ee:2.39.5"
+portainer_edge_agent_image: "portainer/agent:2.39.5"
+
+# Edge agents poll the server (pull-based, zero open ports). Insecure TLS poll
+# is required because the server uses a self-signed certificate.
+portainer_edge_insecure_poll: true
+
+# Explicit per-cluster target brain (F5): the host whose Portainer server the
+# Edge agents associate with. MUST be a member of groups['brain'] (asserted by
+# the role). This value is NOT templated from groups['brain'][0] anywhere.
+portainer_edge_target_brain: "brain-1"

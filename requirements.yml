@@ -8,8 +8,10 @@ collections:
     version: "2.2.0"
   - name: community.docker
     version: "5.2.1"
+  - name: community.sops
+    version: "2.4.0"
 
   # To install with make:
   #   make install collection
   # Or use ansible-galaxy directly:
-  #   ansible-galaxy collection install community.general ansible.posix community.docker
+  #   ansible-galaxy collection install community.general ansible.posix community.docker community.sops

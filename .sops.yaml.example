@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# SOPS CONFIGURATION EXAMPLE - Developmi Stack (public template twin, D10)
+# =============================================================================
+# This is the PUBLIC example twin of the private .sops.yaml. To use it:
+#   1. Copy to .sops.yaml:              cp .sops.yaml.example .sops.yaml
+#   2. Replace age1<PLACEHOLDER> below (BOTH rules) with YOUR age public key:
+#        age-keygen -o age/keys.txt
+#   3. NEVER commit .sops.yaml - it is gitignored (2.7). It carries your real
+#      recipient identity; only this .example is versioned.
+#
+# Key custody (REQUIRED before first encryption):
+#   1. Generate the operator keypair:   age-keygen -o age/keys.txt
+#   2. Back the key up OFFLINE. Loss of the key = loss of all secrets.
+#   3. Store it on the controller (default: ~/.config/sops/age/keys.txt or
+#      SOPS_AGE_KEY_FILE=age/keys.txt).
+#   4. Additional recipients: `sops updatekeys <file>` - the recipient list
+#      MUST contain exactly one key outside update operations.
+#
+# The encrypted_regex is the design's interface (decouple-manager-sops D2).
+# It is written on a single line because YAML folded scalars insert spaces at
+# line breaks, which would corrupt the regex alternation. The operator may
+# extend it while migrating (see design verification step: grep each live
+# vault key against this pattern before the first encryption). The
+# `_password(_[a-zA-Z0-9_]+)?` branch covers per-host keys like
+# restic_password_node_1.
+# =============================================================================
+creation_rules:
+  - path_regex: inventory/group_vars/all/secrets\.sops\.yml$
+    encrypted_regex: "(ssh_public_keys|cloudflare_origin_certs|ingress_services|ingress_security_profiles|observability_stack_host_ip|observability_grafana_admin_user|observability_grafana_root_url|caddy_acme_email|vault_image_namespace|vault_github_username)$|(_password(_[a-zA-Z0-9_]+)?|_secret_access_key|_access_key_id|_account_id|_bot_token|_chat_id|_client_id|_token|_key|_keys|_email)$"  # yamllint disable-line rule:line-length
+    age: age1<PLACEHOLDER>
+  - path_regex: inventory/group_vars/all/managers/portainer\.sops\.yml$
+    encrypted_regex: ^(portainer_edge_keys_by_node)$
+    age: age1<PLACEHOLDER>

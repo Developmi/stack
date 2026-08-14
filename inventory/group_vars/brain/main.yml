@@ -14,10 +14,6 @@ cloud_provider: hetzner
 # L1-L2 hardening profile - server-grade (strict fail2ban, CrowdSec enforcement)
 hardening_profile: server
 
-# Portainer Edge-only routing:
-# brains associate their own Edge Agent to themselves by default.
-portainer_edge_target_brain: "{{ inventory_hostname }}"
-
 # Observability
 # Brain hosts the monitoring stack UI/services and may also export local metrics.
 enable_observability_stack: true

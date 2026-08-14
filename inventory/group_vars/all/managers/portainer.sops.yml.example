@@ -1,0 +1,25 @@
+---
+# =============================================================================
+# PORTAINER EDGE KEYS - SOPS EXAMPLE (public template twin, D10)
+# =============================================================================
+# Ansible does NOT read this file. It is the template for the real,
+# SOPS-encrypted file inventory/group_vars/all/managers/portainer.sops.yml:
+#
+#   cp inventory/group_vars/all/managers/portainer.sops.yml.example \
+#      inventory/group_vars/all/managers/portainer.sops.yml
+#   make sops-encrypt SOPS_FILE=inventory/group_vars/all/managers/portainer.sops.yml
+#
+# Usage: the Portainer UI generates the Edge key per environment
+# (Environments -> your environment -> Setup -> Edge key). Paste it here for
+# the matching inventory hostname and encrypt. The real file is gitignored
+# (2.7): it must NEVER be committed, encrypted or not (D10).
+#
+# The map keys MUST equal inventory hostnames (e.g. brain-1, muscle-1 in
+# hosts.ini.example). The portainer role asserts
+# portainer_edge_keys_by_node[inventory_hostname] and fails loudly when the
+# key is missing (F4). Replace the generic slugs below with your own host
+# naming before encrypting in your private clone.
+# =============================================================================
+portainer_edge_keys_by_node:
+  node_control: "REPLACE_WITH_EDGE_KEY"
+  node_worker_1: "REPLACE_WITH_EDGE_KEY"

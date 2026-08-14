@@ -49,9 +49,10 @@ Portainer BE is the first optional manager. It deploys as a standalone stack via
 
 > **Compose NUNCA depende de Portainer. Un deploy sin Portainer es 100% válido.**
 
-- `roles/docker/` has zero references to `roles/stack_portainer/`
+- `roles/L6_runtime/general/` has zero references to `roles/L6_runtime/portainer/`
 - `playbooks/l6/engine.yml` deploys engine alone; `playbooks/l6/portainer.yml` adds manager
 - App deploy (`apps.yml`) resolves via engine alone - manager is never in the hot path
+- The manager toggle is `enable_portainer` (default `false` in `inventory/group_vars/all/main.yml`); manager variables are confined to `inventory/group_vars/all/managers/`
 
 ---
 
@@ -80,5 +81,6 @@ Portainer BE is the first optional manager. It deploys as a standalone stack via
 ## Related Documents
 
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) - L6 runtime adapters section
+- [LAYER_BOUNDARIES.md §L6](../architecture/LAYER_BOUNDARIES.md#layer-l6---runtime-adapters) - decoupling contract: Compose MUST NOT depend on Portainer; removing Portainer MUST NOT stop Compose stacks; a deploy with the manager disabled (`enable_portainer: false`) MUST succeed
 - [ADR-01.md](ADR-01.md) - Docker Compose - Engine y Manager separados (origin of this decision)
 - [ADR-09.md](ADR-09.md) - AMD64/ARM64 Mandatory Compatibility (complements architecture portability)

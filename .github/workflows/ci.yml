@@ -77,6 +77,21 @@ jobs:
             exit 1
           fi
 
+  gitleaks:
+    name: Secret Leak Scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   validate-roles:
     name: Validate Role Structure
     runs-on: ubuntu-latest

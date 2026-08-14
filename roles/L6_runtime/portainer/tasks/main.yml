@@ -1,7 +1,7 @@
 # ---
 # COMPLIANCE WARNING:
 # This role manages Portainer network, keys, and association logic. These are security-critical.
-# Do NOT expose, override, or parametrize these values in group_vars/all. Only manage via inventory, secrets, or vault with compliance review.
+# Do NOT expose, override, or parametrize these values in group_vars/all. Only manage via inventory, secrets, or SOPS with compliance review.
 # ---
 ---
 # ADR-02: Double-gated - playbook skips role when enable_portainer is false,
@@ -45,15 +45,11 @@
 
     - name: Resolve target Portainer brain for Edge Agent association
       ansible.builtin.set_fact:
+        # Explicit per-cluster target (F5): defined in
+        # inventory/group_vars/all/managers/portainer.yml. NO groups['brain'][0]
+        # fallback anywhere - a missing value fails the membership assert below.
         portainer_edge_target_brain_resolved: >-
-          {{
-            (
-              portainer_edge_target_brain
-              | default((inventory_hostname if ('brain' in group_names) else groups['brain'][0]), true)
-            )
-            | string
-            | trim
-          }}
+          {{ (portainer_edge_target_brain | default('', true)) | string | trim }}
       when: "'brain' in group_names or 'muscle' in group_names"
       tags: [l6-runtime, portainer, management]
 
@@ -80,17 +76,13 @@
       when: "'brain' in group_names or 'muscle' in group_names"
       tags: [l6-runtime, portainer, management]
 
-    - name: Resolve Portainer Edge ID (prefer explicit, fallback to machine identity)
+    - name: "Resolve Portainer Edge ID (deterministic: inventory hostname)"
+      # F3: portainer_edge_id_resolved MUST always equal inventory_hostname.
+      # The portainer_edge_id / machine_id chain is removed - a reinstalled
+      # node keeps the same inventory hostname, so the Portainer endpoint
+      # identity stays stable.
       ansible.builtin.set_fact:
-        portainer_edge_id_resolved: >-
-          {{
-            (
-              portainer_edge_id
-              | default(ansible_facts["machine_id"] | default(inventory_hostname), true)
-            )
-            | string
-            | trim
-          }}
+        portainer_edge_id_resolved: "{{ inventory_hostname }}"
       when: "'brain' in group_names or 'muscle' in group_names"
       tags: [l6-runtime, portainer, management]
 
@@ -99,21 +91,24 @@
         that:
           - portainer_edge_id_resolved is defined
           - portainer_edge_id_resolved | length > 0
-        fail_msg: "Portainer Edge ID is required and could not be resolved. Define portainer_edge_id in vaulted vars (or rely
-          on machine_id fallback)."
+        fail_msg: "Portainer Edge ID could not be resolved (expected inventory_hostname)."
       when:
         - "'brain' in group_names or 'muscle' in group_names"
         - portainer_edge_key_resolved | length > 0
       tags: [l6-runtime, portainer, management]
 
-    - name: Inform skip when Edge key is missing
-      ansible.builtin.debug:
-        msg: >-
-          Skipping Portainer Edge Agent deployment on {{ inventory_hostname }}.
-          Add portainer_edge_keys_by_node.{{ inventory_hostname }} to Vault.
-      when:
-        - "'brain' in group_names or 'muscle' in group_names"
-        - portainer_edge_key_resolved | length == 0
+    - name: Assert Portainer Edge key exists (fail loudly, no silent skip)
+      # F4: a missing edge key aborts the run with an actionable message.
+      # The old debug skip is removed - no partial agent deployment happens.
+      ansible.builtin.assert:
+        that:
+          - portainer_edge_key_resolved | length > 0
+        fail_msg: >-
+          No Portainer Edge key found for host '{{ inventory_hostname }}'.
+          Add portainer_edge_keys_by_node.{{ inventory_hostname }} to
+          inventory/group_vars/all/managers/portainer.sops.yml and re-encrypt:
+          make sops-edit SOPS_FILE=inventory/group_vars/all/managers/portainer.sops.yml
+      when: "'brain' in group_names or 'muscle' in group_names"
       tags: [l6-runtime, portainer, management]
 
     # ------------------------------------------------------------------------------

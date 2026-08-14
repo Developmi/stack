@@ -113,11 +113,21 @@ inventory/group_vars/*/vault.yml
 inventory/*.generated
 inventory/hosts.ini.generated
 inventory/hosts.ini
-roles/clients/
 
-# Multi-tenancy client variable isolation
-inventory/group_vars/clients/*
-!inventory/group_vars/clients/client_example/
+# SOPS / age (secrets management)
+# Operator age private key - backed up offline; NEVER commit
+age/keys.txt
+# Plaintext staging copies - never commit; encrypt in place with make sops-encrypt
+inventory/group_vars/all/secrets.sops.yml.plaintext
+inventory/group_vars/all/managers/portainer.sops.yml.plaintext
+*.sops.yml.plaintext
+
+# D10 public-zone hermeticity: identity files stay local / private clone only
+# (exact paths on purpose - *.sops.yml would also ignore the committed .example twins)
+.sops.yaml
+inventory/group_vars/all/secrets.sops.yml
+inventory/group_vars/all/managers/portainer.sops.yml
+inventory/hosts.mapping.yml
 
 # =================================================
 # Operating Systems

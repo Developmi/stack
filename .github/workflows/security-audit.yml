@@ -37,12 +37,35 @@ jobs:
         run: |
           uv run detect-secrets scan --baseline .secrets.baseline > /dev/null
 
-      - name: Ensure encrypted secrets file is not tracked
+      - name: Ensure vault secrets file is not tracked
         run: |
-          if git ls-files --error-unmatch group_vars/all/secrets.yml >/dev/null 2>&1; then
-            echo "ERROR: group_vars/all/secrets.yml is tracked in git. Remove it from history and index."
+          # D10 public-zone hermeticity: the retired Ansible vault file must
+          # never be tracked in the public template (task 2.11). The operator
+          # keeps it locally ONLY for the tailscale trio until key expiry
+          # (OPERATIONS_RUNBOOK §7.4); removal from git is an operator step
+          # (git ls-files + git rm) - this gate prevents future re-adds.
+          if git ls-files --error-unmatch inventory/group_vars/all/secrets.yml >/dev/null 2>&1; then
+            echo "ERROR: inventory/group_vars/all/secrets.yml is tracked in git. Remove it from history and index."
             exit 1
           fi
+
+      - name: Ensure SOPS files contain no plaintext secret values
+        run: |
+          set -euo pipefail
+          # D10: the .sops.yml files are gitignored in the public template
+          # (task 2.7); in the operator's PRIVATE clone (Model A) committed ENC
+          # is the norm, so this check guards the VALUES instead of tracking:
+          # any top-level key whose value is not ENC[...] and not an explicit
+          # placeholder (PLACEHOLDER / REPLACE_WITH / example.invalid / your-)
+          # or structural ([{>|, empty) is a leak candidate.
+          for f in inventory/group_vars/all/secrets.sops.yml \
+                   inventory/group_vars/all/managers/portainer.sops.yml; do
+            [ -f "$f" ] || continue
+            if grep -E '^[a-z_][a-z0-9_]*:' "$f" | grep -vE 'ENC\[|PLACEHOLDER|REPLACE_WITH|example\.invalid|your-|\.ts\.net|: *$|: *[|>\[{]' >/dev/null; then
+              echo "ERROR: $f contains plaintext values. Encrypt with make sops-encrypt before committing."
+              exit 1
+            fi
+          done
 
       - name: Scan repository for high-risk credential patterns
         run: |

@@ -3,13 +3,13 @@
 # NON-SECRET IMAGE PINNING & DEPLOYMENT DEFAULTS
 # -----------------------------------------------------------------------------
 # Keep image tags, package pins, and other non-sensitive defaults here.
-# Keep tokens, API keys, and privacy-sensitive tenant data in secrets.yml.
+# Keep tokens, API keys, and privacy-sensitive registry data in secrets.sops.yml.
 
 # -----------------------------------------------------------------------------
 # REVERSE PROXY & INGRESS
 # -----------------------------------------------------------------------------
 # Custom image namespace
-image_namespace: "{{ vault_image_namespace }}"  # AC-3: value from secrets.yml only
+image_namespace: "{{ vault_image_namespace }}"  # AC-3: value from secrets.sops.yml only
 # Caddy image
 caddy_image: "ghcr.io/developmi/caddy-waf:v3.2.1"
 
@@ -19,20 +19,20 @@ caddy_image: "ghcr.io/developmi/caddy-waf:v3.2.1"
 # -----------------------------------------------------------------------------
 # GITHUB CONTAINER REGISTRY
 # -----------------------------------------------------------------------------
-github_username: "{{ vault_github_username }}"  # AC-3: value from secrets.yml only
+github_username: "{{ vault_github_username }}"  # AC-3: value from secrets.sops.yml only
 
 # -----------------------------------------------------------------------------
-# PORTAINER MANAGEMENT STACK
+# PORTAINER MANAGER DEFAULTS
 # -----------------------------------------------------------------------------
-portainer_server_image: "portainer/portainer-ee:2.39.3"
-portainer_edge_agent_image: "portainer/agent:2.39.3"
-portainer_server_url: "https://{{ groups['brain'][0] }}:9443"
-portainer_edge_insecure_poll: true
+# Moved to inventory/group_vars/all/managers/portainer.yml (N4 confinement):
+# the server/Edge agent images, the insecure-poll toggle and the target brain.
+# The dead `server_url` key was REMOVED (zero consumers - design D3). Edge
+# keys live in managers/portainer.sops.yml.
 
 # -----------------------------------------------------------------------------
-# GLOBAL CONFIGURATION - Archipelago Architecture
+# GLOBAL CONFIGURATION - Cluster Identity
 # -----------------------------------------------------------------------------
-cluster_name: "Archipelago"
+cluster_name: "cluster_primary"
 timezone: "UTC"
 
 # -----------------------------------------------------------------------------
