@@ -304,7 +304,7 @@
     - name: "L2 | Set SSH public reachability result"
       ansible.builtin.set_fact:
         _l2_ssh_public: >-
-          {{ 'SKIP' if nist_bootstrap | default(false)
+          {{ 'SKIP' if bootstrap_mode | default(false)
              else 'SKIP' if _tailscale_check.rc != 0
              else 'PASS' if os_firewall_backend == 'nftables' and 'iifname "tailscale0" tcp dport 22 accept' in (_nft_ssh_rules.stdout | default(''))
              else 'PASS' if os_firewall_backend == 'ufw' and ('DROP' in (_ufw_ssh_check.stdout | default('')) and ('22' in (_ufw_ssh_check.stdout | default(''))))
@@ -347,8 +347,8 @@
       ansible.builtin.set_fact:
         _l2_bootstrap_gate: >-
           {{ 'SKIP' if _tailscale_check.rc != 0
-             else 'PASS' if (nist_bootstrap | default(false)) and _l2_ssh_public == 'SKIP'
-             else 'PASS' if not (nist_bootstrap | default(false)) and _l2_ssh_public in ['PASS', 'WARN']
+             else 'PASS' if (bootstrap_mode | default(false)) and _l2_ssh_public == 'SKIP'
+             else 'PASS' if not (bootstrap_mode | default(false)) and _l2_ssh_public in ['PASS', 'WARN']
              else 'FAIL'
           }}
       tags: [validate, l2-hardening]

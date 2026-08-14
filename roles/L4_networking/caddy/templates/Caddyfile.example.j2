@@ -1,16 +1,16 @@
 # Caddyfile.example - L4_networking/caddy role (Single Source of Truth)
-# Rendered from vault (secrets.yml), filtered per-node via target_group ∩ group_names.
+# Rendered from SOPS (secrets.sops.yml), filtered per-node via target_group ∩ group_names.
 #
 # VARIABLE OWNERSHIP (three layers - NEVER mix):
-#   Layer 1 | vault (secrets.yml)         → domains, certs, routes, API keys
+#   Layer 1 | SOPS (secrets.sops.yml)      → domains, certs, routes, API keys
 #   Layer 2 | inventory (hosts.ini)       → caddy_node_id, waf_mode_default (per host)
 #   Layer 3 | group_vars (brain|muscle)   → caddy_type, caddy_admin_enabled (group defaults)
 #
 # L4-NETWORKING / EDGE (SDD l4-networking-edge):
-#   ADR-03 - Per-client cert path: /etc/caddy/certs/<client>/fullchain.pem
+#   Per-client cert path: /etc/caddy/certs/<client>/fullchain.pem
 #   ADR-04 - Hot-reload via docker exec caddy reload (no connection drops)
 #   ADR-05 - Per-service WAF mode via waf_mode (enforcement | detection_only)
-#   SC-28  | All domains and upstreams live exclusively in the encrypted vault.
+#   SC-28  | All domains and upstreams live exclusively in the encrypted SOPS file.
 #   SC-7   | Per-service security headers in site blocks.
 #   SC-8   | TLS 1.2/1.3 enforced; HTTP→HTTPS redirect; Cloudflare Origin Pull supported.
 #   AU-12  | JSON access log + Coraza audit log to /data/logs for CrowdSec ingestion.
@@ -112,16 +112,16 @@
     abort @denied_vpn
 }
 
-# ── Dynamic application routes (ADR-03: client-scoped cert paths) ─────
+# ── Dynamic application routes (client-scoped cert paths) ─────
 #
-# Example ingress_services entry in group_vars/all/secrets.yml (vault):
+# Example ingress_services entry in group_vars/all/secrets.sops.yml (SOPS):
 #
 #   - name: my-app
 #     domain: app.example.com
 #     upstream: my-app-container:8080
 #     target_group: muscle
 #     security_profile: public_waf
-#     client: "client_example"           # tenant slug (required, drives cert path + routing)
+#     client: "client_example"           # required: drives cert path + routing (see secrets.yml.example)
 #     tls_client_auth: cloudflare        # optional, enables Origin Pull
 #     waf_mode: enforcement              # optional, overrides waf_mode_default
 #     proxy_headers:
@@ -167,9 +167,6 @@
             coraza_waf {
                 directives `
                     SecRuleEngine {{ 'On' if _waf_mode == 'enforcement' else 'DetectionOnly' }}
-                    {% if _waf_mode == 'detection_only' %}
-                    SecRuleUpdateActionById 900000 "deny,status:403,log,auditlog"
-                    {% endif %}
                 `
             }
         }
@@ -190,9 +187,6 @@
         coraza_waf {
             directives `
                 SecRuleEngine {{ 'On' if _waf_mode == 'enforcement' else 'DetectionOnly' }}
-                {% if _waf_mode == 'detection_only' %}
-                SecRuleUpdateActionById 900000 "deny,status:403,log,auditlog"
-                {% endif %}
             `
         }
     }
@@ -207,7 +201,7 @@
     }
     {% endif %}
 
-    {# ADR-03 (v6.0.0): Per-client cert path - client field is mandatory. #}
+    {# Per-client cert path - client field is mandatory. #}
     # SC-8 / SC-13 | Cloudflare Origin Certificate (static, no ACME)
     tls /etc/caddy/certs/{{ svc.client }}/fullchain.pem /etc/caddy/certs/{{ svc.client }}/privkey.pem {
         protocols tls1.2 tls1.3

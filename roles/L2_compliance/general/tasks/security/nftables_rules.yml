@@ -40,7 +40,11 @@
     content: |
       #!/usr/sbin/nft -f
       # NIST SC-7 - nftables ruleset (stack)
-      flush ruleset
+      # Flush ONLY the table managed by this stack. A global `flush ruleset`
+      # also destroys Docker's iptables-nft chains (DOCKER/DOCKER-FORWARD) and
+      # breaks container network creation until the Docker daemon restarts.
+      table inet filter { }
+      flush table inet filter
 
       table inet filter {
           chain input {
@@ -59,12 +63,11 @@
               {% if l2_tailscale_enabled | default(true) %}
               # ponytail: CGNAT range 100.64.0.0/10 is standard for Tailscale - always present
               ip saddr 100.64.0.0/10 tcp dport 22 accept
-              {% if nist_bootstrap | default(false) %}
+              # Steady-state: SSH via Tailscale interface (defense-in-depth) - always rendered
+              iifname "tailscale0" tcp dport 22 accept
+              {% if bootstrap_mode | default(false) %}
               # Bootstrap: allow SSH from controller IP on all interfaces
               ip saddr {{ controller_ip | default('127.0.0.1') }} tcp dport 22 accept
-              {% else %}
-              # Steady-state: SSH via Tailscale interface (defense-in-depth)
-              iifname "tailscale0" tcp dport 22 accept
               {% endif %}
               # Tailscale WireGuard direct connections
               udp dport 41641 accept
@@ -115,8 +118,9 @@
   notify: Restart nftables
   tags: [firewall, l2-compliance, nist, sc-7]
 
-# Validate syntax BEFORE flushing - nft -c checks without modifying the running ruleset.
-# This prevents a fail-open scenario where flush ruleset + invalid syntax = zero firewall.
+# Validate syntax BEFORE applying - nft -c checks without modifying the running ruleset.
+# The flush is scoped to the managed table (inet filter) only, so a failed apply
+# cannot zero other tables (e.g. Docker's ip filter/nat).
 - name: "L2 | Validate nftables ruleset syntax before applying"
   ansible.builtin.command: nft -c -f /etc/nftables.conf
   changed_when: false

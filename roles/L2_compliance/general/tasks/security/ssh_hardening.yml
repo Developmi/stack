@@ -250,10 +250,9 @@
     path: /etc/ssh/sshd_config
     marker: "# {mark} ANSIBLE MANAGED - AllowUsers bootstrap-aware"
     block: |
-      {% if nist_bootstrap | default(false) %}
-      AllowUsers automation@{{ controller_ip }} dev_admin@{{ controller_ip }} breakglass@{{ controller_ip }}
-      {% else %}
       AllowUsers automation@100.64.0.0/10 dev_admin@100.64.0.0/10 breakglass@100.64.0.0/10
+      {% if bootstrap_mode | default(false) %}
+      AllowUsers automation@{{ controller_ip }} dev_admin@{{ controller_ip }} breakglass@{{ controller_ip }}
       {% endif %}
     state: present
     create: true

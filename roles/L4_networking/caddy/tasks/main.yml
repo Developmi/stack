@@ -19,24 +19,6 @@
     success_msg: "reverse_proxy_backend = {{ reverse_proxy_backend }}."
   tags: [l4-networking]
 
-- name: Preflight | Assert backend task file exists
-  ansible.builtin.stat:
-    path: "{{ role_path }}/tasks/{{ reverse_proxy_backend }}.yml"
-  register: _backend_task_file
-  delegate_to: localhost
-  become: false
-  tags: [l4-networking]
-
-- name: Preflight | Fail if backend is not implemented
-  ansible.builtin.fail:
-    msg: >-
-      Backend '{{ reverse_proxy_backend }}' not implemented.
-      Available: caddy.
-      Create roles/L4_networking/caddy/tasks/{{ reverse_proxy_backend }}.yml
-      to add support.
-  when: not _backend_task_file.stat.exists
-  tags: [l4-networking]
-
 - name: Preflight | Assert ingress routing catalog is defined
   ansible.builtin.assert:
     that:
@@ -45,9 +27,9 @@
       - ingress_security_profiles is defined
     fail_msg: >-
       ingress_services is empty or undefined.
-      Vault may not be decrypted or secrets.yml is malformed.
+      SOPS secrets may not be decryptable or secrets.sops.yml is malformed.
       Aborting to prevent deploying an empty Caddyfile.
-      Verify: ansible-vault view inventory/group_vars/all/secrets.yml
+      Verify: make sops-view
     success_msg: "Ingress routing catalog is present - {{ ingress_services | length }} service(s) defined."
   tags: [l4-networking]
 
@@ -83,10 +65,12 @@
     success_msg: "caddy_type is valid: {{ caddy_type }}."
   tags: [l4-networking]
 
-# --- cert_name backward compatibility (multi-tenancy-implementation) ---
-# ADR-03: cert_name is REMOVED in favor of client-based cert derivation.
+# --- cert_name backward compatibility ---
+# cert_name is REMOVED in favor of client-based cert derivation.
 # Services still using cert_name will get a deprecation warning but deployment
 # continues. The cert_name field is ignored - certs are resolved via svc.client.
+# SOPS key format: cloudflare_origin_certs.client_<name> (see
+# inventory/group_vars/all/secrets.sops.yml.example).
 - name: Preflight | DEPRECATION - warn on cert_name presence (migrate to client)
   ansible.builtin.debug:
     msg: >-
@@ -94,7 +78,6 @@
       still defines cert_name='{{ item.cert_name }}'.
       cert_name is obsolete - migrate to client: field.
       The cert_name value is IGNORED. Cert path derived from client instead.
-      See docs/operations/MULTI_TENANCY.md §4 for migration guide.
   loop: "{{ ingress_services | selectattr('cert_name', 'defined') | list }}"
   loop_control:
     label: "{{ item.name | default('unnamed') }}"

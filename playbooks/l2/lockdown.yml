@@ -2,8 +2,16 @@
 # ==============================================================================
 # L2 POST-BOOTSTRAP LOCKDOWN - close public SSH after Tailscale is established
 # ==============================================================================
-# This playbook transitions from bootstrap (nist_bootstrap=true) to steady-state
-# (nist_bootstrap=false) by dropping public SSH and recording the lockdown.
+# This play ALWAYS closes public SSH at the end of the run: root login is
+# disabled, AllowUsers is pinned to the Tailscale CGNAT range, the firewall
+# DROPs SSH on non-Tailscale interfaces and the lockdown marker is recorded.
+# Closing is safe on every run: pre-flights verify Tailscale is online and the
+# verification tasks fail closed if the DROP did not take effect.
+#
+# bootstrap_mode is NOT a NIST control - it is a first-deploy ("bootstrap
+# gate") switch. It only controls pre-flight gating and the rendering of the
+# bootstrap exception (ACCEPT SSH from controller_ip on all interfaces).
+# Set it ONLY via -e during the first deploy: make deploy-first.
 #
 # Recovery (Tailscale down):
 #   Use tailscale-recover.yml FIRST via cloud console, then re-run lockdown.
@@ -18,18 +26,31 @@
   max_fail_percentage: 0
   tags: [lockdown, post-bootstrap, security]
 
+  # ========================================================================
+  # HANDLERS - the task files included below (ufw_rules.yml / nftables_rules.yml)
+  # notify role handlers ("Reload UFW", "Restart nftables"). Because this play
+  # includes role task files directly (outside the role), those handlers are
+  # not auto-loaded; import them explicitly or Ansible fails with
+  # "The requested handler was not found".
+  # ========================================================================
+
+  handlers:
+    - name: Import L2 compliance role handlers
+      ansible.builtin.import_tasks: "{{ playbook_dir }}/../../roles/L2_compliance/handlers/main.yml"
+
   tasks:
     # ========================================================================
-    # PRE-FLIGHT - always runs, NOT gated by nist_bootstrap
+    # PRE-FLIGHT - always runs, NOT gated by bootstrap_mode
     # ========================================================================
 
-    - name: "L2 | PRE-FLIGHT - Assert nist_bootstrap is defined"
+    - name: "L2 | PRE-FLIGHT - Assert bootstrap_mode is defined"
       ansible.builtin.assert:
         that:
-          - nist_bootstrap is defined
+          - bootstrap_mode is defined
         fail_msg: >
-          nist_bootstrap must be defined.
-          For first deploy use: make deploy -e nist_bootstrap=true
+          bootstrap_mode must be defined (default false in
+          inventory/group_vars/all/main.yml). For a first deploy use:
+          make deploy-first
       tags: [always]
 
     - name: "L2 | PRE-FLIGHT - Check if lockdown marker exists"
@@ -38,16 +59,16 @@
       register: _lockdown_marker
       tags: [always]
 
-    - name: "L2 | PRE-FLIGHT - Assert not missing marker when nist_bootstrap is false"
+    - name: "L2 | PRE-FLIGHT - Assert not missing marker when bootstrap_mode is false"
       ansible.builtin.assert:
         that:
           - _lockdown_marker.stat.exists
         fail_msg: >
-          nist_bootstrap is false but no lockdown marker found.
-          This looks like a first deploy. Set -e nist_bootstrap=true
+          bootstrap_mode is false but no lockdown marker found.
+          This looks like a first deploy. Use: make deploy-first
           or verify Tailscale is already connected.
       when:
-        - not (nist_bootstrap | bool)
+        - not (bootstrap_mode | bool)
       tags: [always]
 
     - name: "L2 | PRE-FLIGHT - Verify Tailscale is connected"
@@ -86,17 +107,7 @@
           controller_ip is '{{ controller_ip | default('UNDEFINED') }}'.
           Must be a valid IPv4 address during bootstrap.
           Set via -e controller_ip=X.X.X.X or ensure SSH_CLIENT is available.
-      when: nist_bootstrap | bool
-      tags: [always]
-
-    # ========================================================================
-    # BOOTSTRAP TRANSITION - set nist_bootstrap=false for this node
-    # ========================================================================
-
-    - name: "L2 | BOOTSTRAP - Transition nist_bootstrap from true to false"
-      ansible.builtin.set_fact:
-        nist_bootstrap: false
-      when: nist_bootstrap | bool
+      when: bootstrap_mode | bool
       tags: [always]
 
     - name: "L2 | LOCKDOWN - Disable root SSH (PermitRootLogin no)"
@@ -106,7 +117,6 @@
         line: "PermitRootLogin no"
         state: present
         validate: "sshd -t -f %s"
-      when: not (nist_bootstrap | bool)
       tags: [lockdown, ssh]
 
     - name: "L2 | LOCKDOWN - Switch AllowUsers to Tailscale CGNAT"
@@ -118,52 +128,70 @@
         state: present
         insertbefore: BOF
         validate: "sshd -t -f %s"
-      when: not (nist_bootstrap | bool)
       tags: [lockdown, ssh]
 
     - name: "L2 | LOCKDOWN - Restart SSH to apply PermitRootLogin + AllowUsers"
       ansible.builtin.systemd:
         name: sshd
         state: restarted
-      when: not (nist_bootstrap | bool)
       tags: [lockdown, ssh]
 
     # ========================================================================
-    # LOCKDOWN - apply public SSH DROP (only when nist_bootstrap is false)
+    # LOCKDOWN - apply public SSH DROP (always; the bootstrap ACCEPT exception
+    # rendered during a first deploy is removed below)
     # ========================================================================
 
     - name: "L2 | LOCKDOWN - Apply UFW SSH DROP rules"
-      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/L2_compliance/general/tasks/security/ufw_rules.yml"
-      when:
-        - not (nist_bootstrap | bool)
-        - os_firewall_backend == 'ufw'
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../roles/L2_compliance/general/tasks/security/ufw_rules.yml"
+      when: os_firewall_backend == 'ufw'
       tags: [lockdown, firewall]
 
     - name: "L2 | LOCKDOWN - Apply nftables SSH DROP rules"
-      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/L2_compliance/general/tasks/security/nftables_rules.yml"
-      when:
-        - not (nist_bootstrap | bool)
-        - os_firewall_backend == 'nftables'
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../roles/L2_compliance/general/tasks/security/nftables_rules.yml"
+      when: os_firewall_backend == 'nftables'
       tags: [lockdown, firewall]
 
-    - name: "L2 | LOCKDOWN - Remove bootstrap ACCEPT rule after transition"
+    - name: "L2 | LOCKDOWN - Remove bootstrap ACCEPT rule (ufw)"
       ansible.builtin.blockinfile:
         path: /etc/ufw/before.rules
         marker: "# {mark} ANSIBLE MANAGED - SSH bootstrap gate"
         block: ""
         state: absent
-      when:
-        - not (nist_bootstrap | bool)
-        - os_firewall_backend == 'ufw'
+      when: os_firewall_backend == 'ufw'
       # (notify removed - reloaded explicitly below)
       tags: [lockdown, firewall]
 
     - name: "L2 | LOCKDOWN - Reload UFW after bootstrap rule removal"
       ansible.builtin.command: ufw reload
       changed_when: true
+      when: os_firewall_backend == 'ufw'
+      tags: [lockdown, firewall]
+
+    # nftables counterpart of the UFW bootstrap rule removal. During a first
+    # deploy (bootstrap_mode=true via -e) the nftables_rules include above
+    # re-renders /etc/nftables.conf WITH the bootstrap ACCEPT line
+    # `ip saddr <controller_ip> tcp dport 22 accept`. This task removes that
+    # exact line deterministically (the regex is anchored to the resolved
+    # controller_ip literal, so the CGNAT `ip saddr 100.64.0.0/10` line can
+    # never match) and re-applies the ruleset with the same mechanism the
+    # role uses (nft -f). In steady-state (bootstrap_mode=false) the line was
+    # never rendered, the replace is a no-op and the apply is skipped (guarded
+    # on .changed).
+    - name: "L2 | LOCKDOWN - Remove bootstrap ACCEPT rule from nftables.conf"
+      ansible.builtin.replace:
+        path: /etc/nftables.conf
+        regexp: '^ip saddr {{ controller_ip | default("127.0.0.1") }} tcp dport 22 accept$'
+        replace: ""
+      register: _nft_bootstrap_cleanup
+      when: os_firewall_backend == 'nftables'
+      tags: [lockdown, firewall]
+
+    - name: "L2 | LOCKDOWN - Re-apply nftables ruleset after bootstrap rule removal"
+      ansible.builtin.command: nft -f /etc/nftables.conf
+      changed_when: false
       when:
-        - not (nist_bootstrap | bool)
-        - os_firewall_backend == 'ufw'
+        - os_firewall_backend == 'nftables'
+        - _nft_bootstrap_cleanup.changed
       tags: [lockdown, firewall]
 
 
@@ -210,7 +238,6 @@
         path: /etc/tailscale-recover.lock
         state: touch
         mode: "0644"
-      when: not (nist_bootstrap | bool)
       tags: [lockdown]
 
     # ========================================================================

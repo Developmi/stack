@@ -8,7 +8,16 @@
 #
 # serial: 1 prevents SSH lockout during deployment.
 # Tag-filterable: --tags l2-compliance
-# Independently runnable: ansible-playbook -i inventory/hosts.ini playbooks/l2/hardening.yml --tags l2-compliance --ask-vault-pass
+# Independently runnable: ansible-playbook -i inventory/hosts.ini playbooks/l2/hardening.yml --tags l2-compliance
+#
+# The Tailscale ACL chain (render policy, OAuth exchange, validate, apply)
+# runs as a CONTROLLER-side play AFTER the remote play: it is pure API work
+# against api.tailscale.com and needs the tailscale_ip fact (set by the
+# remote play) for the ACL policy hosts map. connection: local + become: false
+# as PLAY keywords (never vars) make sudo on the controller impossible,
+# mirroring playbooks/ops/bootstrap.yml. Tasks delegated to localhost with
+# task-level become: false are fragile because an ansible_become var wins
+# over task keywords (see ansible.cfg [privilege_escalation]).
 # ==============================================================================
 
 - name: "L2 | Compliance - Security Hardening"
@@ -64,3 +73,94 @@
 
         - name: "L2 | Re-raise original failure"
           ansible.builtin.fail:  # yamllint disable-line rule:empty-values
+
+- name: "L2 | Tailscale ACL pre-configuration (controller side)"
+  hosts: all
+  # Runs on the controller AFTER the remote play so the tailscale_ip fact
+  # (set by the remote play) exists for the ACL policy hosts map.
+  # run_once: the chain must execute exactly once; connection: local keeps
+  # every task on the control node regardless of which host is iterated.
+  connection: local
+  gather_facts: false
+  become: false
+  tags: [tailscale, l2-compliance, acl, security]
+
+  tasks:
+    - name: "Configure Tailscale ACLs (Zero Trust Network Policies)"
+      when:
+        - groups['brain'] is defined
+        - groups['brain'] | length > 0
+      run_once: true
+      tags: [tailscale, l2-compliance, acl, security]
+      block:
+        - name: Render and validate ACL policy JSON
+          ansible.builtin.set_fact:
+            tailscale_acl_policy: "{{ lookup('template', playbook_dir + '/../../roles/L2_compliance/general/templates/tailscale/tailscale-acls.json.j2') | from_json }}"
+
+        - name: Determine tailnet selector for ACL API
+          ansible.builtin.set_fact:
+            tailscale_acl_tailnet_selector: >-
+              {{ tailscale_tailnet | trim if (tailscale_tailnet is defined and tailscale_tailnet | trim | length > 0) else '-'
+              }}
+
+        - name: Assert tailscale_tailnet is defined before ACL API calls
+          ansible.builtin.assert:
+            that:
+              - tailscale_acl_tailnet_selector != '-'
+            fail_msg: |
+              tailscale_tailnet is not defined for the brain controller.
+              This variable is required for Tailscale ACL API calls.
+              Set 'tailscale_tailnet' in group_vars/all/vars.yml (e.g., your-tailscale-domain.ts.net).
+          any_errors_fatal: true
+
+        - name: Exchange ACL OAuth client for short-lived API token
+          ansible.builtin.uri:
+            url: https://api.tailscale.com/api/v2/oauth/token
+            method: POST
+            body_format: form-urlencoded
+            body:
+              client_id: "{{ tailscale_acl_client_id | trim }}"
+              client_secret: "{{ tailscale_acl_key | trim }}"
+              grant_type: client_credentials
+            status_code: 200
+            return_content: true
+          register: tailscale_acl_oauth_token
+          no_log: true
+
+        - name: Store short-lived ACL API token
+          ansible.builtin.set_fact:
+            tailscale_acl_bearer_token: "{{ tailscale_acl_oauth_token.json.access_token }}"
+          no_log: true
+
+        - name: Validate ACL API bearer token
+          ansible.builtin.assert:
+            that:
+              - tailscale_acl_bearer_token is defined
+              - tailscale_acl_bearer_token | trim | length > 20
+              - tailscale_acl_bearer_token | trim is match('^tskey-')
+            fail_msg: "Unable to obtain a valid Tailscale API bearer token for ACL management."
+          no_log: true
+
+        - name: Validate Tailscale ACL policy with API
+          ansible.builtin.uri:
+            url: "https://api.tailscale.com/api/v2/tailnet/{{ tailscale_acl_tailnet_selector }}/acl/validate"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ tailscale_acl_bearer_token }}"
+              Content-Type: "application/json"
+            body_format: json
+            body: "{{ tailscale_acl_policy }}"
+            status_code: 200
+          no_log: true
+
+        - name: Apply Tailscale ACLs via API
+          ansible.builtin.uri:
+            url: "https://api.tailscale.com/api/v2/tailnet/{{ tailscale_acl_tailnet_selector }}/acl"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ tailscale_acl_bearer_token }}"
+              Content-Type: "application/json"
+            body_format: json
+            body: "{{ tailscale_acl_policy }}"
+            status_code: [200, 201]
+          no_log: true

@@ -24,25 +24,6 @@
   changed_when: false
   tags: [l4-networking, ingress]
 
-- name: Validate Caddyfile.j2 presence
-  ansible.builtin.stat:
-    path: "{{ role_path }}/templates/Caddyfile.j2"
-  delegate_to: localhost
-  run_once: true
-  become: false
-  register: caddyfile_j2_stat
-  tags: [l4-networking, ingress]
-
-- name: Fail if Caddyfile.j2 is missing
-  ansible.builtin.fail:
-    msg: |
-      Caddyfile.j2 is missing!
-      Copy roles/L4_networking/caddy/templates/Caddyfile.example.j2 to Caddyfile.j2
-      and adjust it for your deployment.
-  run_once: true
-  when: not caddyfile_j2_stat.stat.exists
-  tags: [l4-networking, ingress]
-
 # ------------------------------------------------------------------------------
 # RENDER Caddyfile
 # ------------------------------------------------------------------------------

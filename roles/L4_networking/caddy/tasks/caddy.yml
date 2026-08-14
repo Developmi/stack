@@ -399,6 +399,8 @@
         services:
           - caddy
         state: absent
+        dependencies: false
+      register: _caddy_remove
       failed_when: false
       changed_when: false
       tags: [l4-networking, caddy]

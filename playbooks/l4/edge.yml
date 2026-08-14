@@ -4,11 +4,71 @@
 # ==============================================================================
 # Purpose: Deploy reverse proxy + WAF via L4_networking adapter.
 # Extracted from stacks.yml Play 2.
+#
+# Controller-side preflight plays run BEFORE the remote play: they validate
+# controller-local files (backend task file, Caddyfile.j2) using
+# connection: local + become: false as PLAY keywords (never vars), mirroring
+# playbooks/ops/bootstrap.yml. Tasks delegated to localhost with task-level
+# become: false are fragile because an ansible_become var wins over task
+# keywords (see ansible.cfg [privilege_escalation]).
 # ==============================================================================
+
+- name: "L4 | Preflight - assert backend task file exists (controller side)"
+  hosts: all
+  # Runs on the controller BEFORE the remote play: validates that the
+  # reverse_proxy_backend task file exists on the control node.
+  connection: local
+  gather_facts: false
+  become: false
+  tags: [l4-networking]
+
+  tasks:
+    - name: "Preflight | Assert backend task file exists"
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../roles/L4_networking/caddy/tasks/{{ reverse_proxy_backend }}.yml"
+      register: _backend_task_file
+      tags: [l4-networking]
+
+    - name: "Preflight | Fail if backend is not implemented"
+      ansible.builtin.fail:
+        msg: >-
+          Backend '{{ reverse_proxy_backend }}' not implemented.
+          Available: caddy.
+          Create roles/L4_networking/caddy/tasks/{{ reverse_proxy_backend }}.yml
+          to add support.
+      when: not _backend_task_file.stat.exists
+      tags: [l4-networking]
+
+- name: "L4 | Preflight - assert Caddyfile.j2 exists (controller side)"
+  hosts: all
+  connection: local
+  gather_facts: false
+  become: false
+  tags: [l4-networking, ingress]
+
+  tasks:
+    - name: "Validate Caddyfile.j2 presence"
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../roles/L4_networking/caddy/templates/Caddyfile.j2"
+      run_once: true
+      register: caddyfile_j2_stat
+      tags: [l4-networking, ingress]
+
+    - name: "Fail if Caddyfile.j2 is missing"
+      ansible.builtin.fail:
+        msg: |
+          Caddyfile.j2 is missing!
+          Copy roles/L4_networking/caddy/templates/Caddyfile.example.j2 to Caddyfile.j2
+          and adjust it for your deployment.
+      run_once: true
+      when: not caddyfile_j2_stat.stat.exists
+      tags: [l4-networking, ingress]
 
 - name: "L4 | Networking & Edge - Reverse Proxy + WAF"
   hosts: "{{ target_group | default('muscle') }}"
-  gather_facts: false
+  # gather_facts is required: the L4_networking role's cert-expiry validation
+  # (certs.yml) relies on ansible_date_time for the 14-day/24-hour gates.
+  gather_facts: true
   tags: [l4-networking, caddy, ingress, waf]
   tasks:
     - name: "L4 | Dispatch to L4_networking adapter"

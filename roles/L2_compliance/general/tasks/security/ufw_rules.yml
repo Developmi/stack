@@ -30,8 +30,11 @@
   tags: [firewall, l2-compliance, nist, sc-7]
 
 # ─── SSH lockout prevention - dual defense-in-depth ────────────────────
-# CGNAT source-IP ACCEPT always present. Bootstrap: ACCEPT from controller_ip
-# Steady-state: DROP scoped to non-tailscale0 interfaces only.
+# CGNAT source-IP ACCEPT always present. Bootstrap: ACCEPT from controller_ip.
+# Steady-state: DROP scoped to non-tailscale0 interfaces only - always
+# rendered (fail-closed). During a first deploy the bootstrap ACCEPT is
+# inserted BEFORE this DROP in before.rules (insertion order), so controller
+# SSH still works until lockdown removes the bootstrap exception.
 - name: "SC-7 | Bootstrap - Allow SSH from controller IP in before.rules"
   ansible.builtin.blockinfile:
     path: /etc/ufw/before.rules
@@ -41,9 +44,7 @@
       # Bootstrap: allow SSH from controller IP on all interfaces
       -A ufw-before-input -p tcp --dport 22 -s {{ controller_ip | default('127.0.0.1') }} -j ACCEPT
     mode: "0640"
-  when:
-    - l2_tailscale_enabled | default(true)
-    - nist_bootstrap | default(false)
+  when: bootstrap_mode | default(false)
   notify: Reload UFW
   tags: [firewall, l2-compliance, nist, sc-7]
 
@@ -69,9 +70,6 @@
       # Steady-state: DROP SSH on all interfaces except tailscale0
       -A ufw-before-input -p tcp --dport 22 ! -i tailscale0 -j DROP
     mode: "0640"
-  when:
-    - l2_tailscale_enabled | default(true)
-    - not (nist_bootstrap | default(false))
   notify: Reload UFW
   tags: [firewall, l2-compliance, nist, sc-7]
 

@@ -23,7 +23,7 @@ admin_cidr: "100.64.0.0/10"
 ssh_allowed_sources: "100.64.0.0/10"
 allowed_ports: []
 ufw_enable_ipv6: true
-nist_bootstrap: false
+bootstrap_mode: false
 controller_ip: undefined
 
 # ─── Kernel / sysctl hardening (NIST CM-7) ────────────────────────────────────

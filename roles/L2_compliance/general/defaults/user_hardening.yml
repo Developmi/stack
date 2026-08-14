@@ -3,8 +3,8 @@
 # USER HARDENING ROLE - 3-Tier SSH User Model
 # ==============================================================================
 # Defaults (non-secret).
-# SSH public keys are in group_vars/all/secrets.yml (vault-encrypted).
-# Do NOT add credentials or keys here - use the vault.
+# SSH public keys are in group_vars/all/secrets.sops.yml (SOPS-encrypted).
+# Do NOT add credentials or keys here - use the SOPS file.
 # ==============================================================================
 
 # 3-Tier user segmentation: admin, automation, breakglass

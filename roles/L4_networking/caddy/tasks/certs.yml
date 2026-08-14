@@ -4,8 +4,8 @@
 # ==============================================================================
 # Tags: l4-networking, certs
 #
-# Cert path convention (ADR-03):
-#   Vault key: cloudflare_origin_certs.client_<name>
+# Cert path convention (per-client):
+#   SOPS key: cloudflare_origin_certs.client_<name>
 #   Host path: /srv/caddy/certs/<client>/fullchain.pem + privkey.pem
 #   Container path (via mount): /etc/caddy/certs/<client>/fullchain.pem + privkey.pem
 # ==============================================================================
@@ -51,8 +51,8 @@
         ('client_' ~ item) in cloudflare_origin_certs
     fail_msg: >-
       Client '{{ item }}' has no matching cloudflare_origin_certs.client_{{ item }} entry.
-      Add the certificate to vault before deploying.
-      Valid keys in vault: {{ cloudflare_origin_certs.keys() | select('match', '^client_') | list | join(', ') }}
+      Add the certificate to the SOPS file before deploying.
+      Valid keys in the SOPS file: {{ cloudflare_origin_certs.keys() | select('match', '^client_') | list | join(', ') }}
     success_msg: "client_{{ item }} cert found in cloudflare_origin_certs."
   loop: "{{ _caddy_needed_clients | default([]) }}"
   loop_control:
@@ -77,7 +77,7 @@
 # ------------------------------------------------------------------------------
 # DEPLOY CERTIFICATES - Per-Client Directory Structure
 # ------------------------------------------------------------------------------
-# ADR-03: /srv/caddy/certs/<client>/fullchain.pem + privkey.pem
+# /srv/caddy/certs/<client>/fullchain.pem + privkey.pem
 - name: SC-28 | Create per-client cert directories
   ansible.builtin.file:
     path: "/srv/caddy/certs/{{ item }}"
@@ -163,7 +163,7 @@
         dict(
           _cert_expiry_raw.results
           | selectattr('stdout', 'defined')
-          | map('extract', 'item')
+          | map(attribute='item')
           | zip(
             _cert_expiry_raw.results
             | selectattr('stdout', 'defined')
@@ -187,7 +187,7 @@
     - _cert_expiry_map is defined
     - >-
       ((item.value | to_datetime('%b %d %H:%M:%S %Y %Z')) -
-       (ansible_date_time.iso8601 | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).days < 14
+       (ansible_facts['date_time']['iso8601'] | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).days < 14
   tags: [l4-networking, certs]
 
 - name: Block deployment on certs expiring within 24 hours
@@ -202,5 +202,5 @@
     - _cert_expiry_map is defined
     - >-
       ((item.value | to_datetime('%b %d %H:%M:%S %Y %Z')) -
-       (ansible_date_time.iso8601 | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).days < 1
+       (ansible_facts['date_time']['iso8601'] | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).days < 1
   tags: [l4-networking, certs]
