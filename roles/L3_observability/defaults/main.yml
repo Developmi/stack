@@ -7,7 +7,7 @@
 # =============================================================================
 
 # ─── Stack images (fallbacks; images.yml is the canonical source) ─────────────
-blackbox_exporter_image: "prom/blackbox-exporter:v0.25.0"
+blackbox_exporter_image: "prom/blackbox-exporter:v0.27.0"
 
 # ─── Network & Host (safe defaults; production overrides from SOPS) ───────────
 observability_network_name: "observability_net"
@@ -25,6 +25,10 @@ observability_alert_memory_threshold: 85    # percent - HighMemory warning
 observability_alert_disk_threshold: 80      # percent - DiskPressure critical
 observability_alert_service_down_minutes: 2 # minutes before ServiceDown fires
 observability_alert_cert_expiry_days: 14    # days before CertExpiry warning
+# Caddy WAF detection alert (M5, contract §7): any Coraza audit event in the
+# window fires caddy-audit-detections (works in DetectionOnly and On modes).
+observability_alert_caddy_waf_window: "5m"         # LogQL lookback window
+observability_alert_caddy_waf_threshold: 0         # events in window to fire
 
 # ─── Health Check Defaults ────────────────────────────────────────────────────
 observability_blackbox_port: 9115
