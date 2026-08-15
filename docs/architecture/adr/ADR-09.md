@@ -25,7 +25,7 @@ We needed a mechanism to declare, validate, and enforce architecture compatibili
 
 ```yaml
 # apps/chatwoot/profile.yml
-supported_arch: [amd64, arm64]  # MUST field
+supported_arch: [amd64, arm64] # MUST field
 ```
 
 ### Pre-flight validation
@@ -43,26 +43,28 @@ supported_arch: [amd64, arm64]  # MUST field
 
 ### AMD64/ARM64 Compatibility Table (mandatory)
 
-| Component | AMD64 | ARM64 (Ampere) | Notes |
-|-----------|-------|----------------|-------|
-| Debian 12 / Ubuntu 22.04 | ✅ | ✅ | ARM64 on Oracle Ampere |
-| Docker Engine | ✅ | ✅ | Same version on both |
-| Caddy | ✅ | ✅ | Official multi-arch binary |
-| Portainer BE | ✅ | ✅ | Multi-arch image |
-| App images (chatwoot, n8n, etc.) | ✅ | ✅ | Verify per-app in `supported_arch` |
-| CrowdSec | ✅ | ✅ | apt repo multi-arch |
-| Tailscale | ✅ | ✅ | Official multi-arch binary |
+| Component                        | AMD64 | ARM64 (Ampere) | Notes                              |
+| -------------------------------- | ----- | -------------- | ---------------------------------- |
+| Debian 12 / Ubuntu 22.04         | ✅    | ✅             | ARM64 on Oracle Ampere             |
+| Docker Engine                    | ✅    | ✅             | Same version on both               |
+| Caddy                            | ✅    | ✅             | Official multi-arch binary         |
+| Portainer BE                     | ✅    | ✅             | Multi-arch image                   |
+| App images (chatwoot, n8n, etc.) | ✅    | ✅             | Verify per-app in `supported_arch` |
+| CrowdSec                         | ✅    | ✅             | apt repo multi-arch                |
+| Tailscale                        | ✅    | ✅             | Official multi-arch binary         |
 
 ---
 
 ## 3. Consequences
 
 ### Positive
+
 - **Pre-deployment validation**: architecture mismatch caught before containers start
 - **Declarative compatibility**: `supported_arch` is self-documenting - no guessing which apps run where
 - **Principle 4 (Sovereignty)**: The operator chooses the hardware; the platform adapts
 
 ### Negative
+
 - Every app profile must declare `supported_arch` - this is a MUST field, no default assumed
 - Compatibility table must be maintained as new components are added
 

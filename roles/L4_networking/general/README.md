@@ -3,6 +3,6 @@
 Network validation tasks and common ingress patterns.
 Currently a structural stub - concrete tasks added as needed.
 
-| Field | Value |
-|-------|-------|
+| Field  | Value  |
+| ------ | ------ |
 | Status | `stub` |

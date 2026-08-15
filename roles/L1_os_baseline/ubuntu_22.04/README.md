@@ -1,12 +1,12 @@
 # L1 OS Baseline - Ubuntu 22.04
 
-| Field | Value |
-|-------|-------|
-| Status | `supported` |
-| Last validated | 2026-07-07 |
-| Ansible version | 2.20.4 |
-| Distribution | Ubuntu 22.04 (Jammy) |
-| Package manager | apt |
+| Field           | Value                |
+| --------------- | -------------------- |
+| Status          | `supported`          |
+| Last validated  | 2026-07-07           |
+| Ansible version | 2.20.4               |
+| Distribution    | Ubuntu 22.04 (Jammy) |
+| Package manager | apt                  |
 
 ## Key differences from other variants
 

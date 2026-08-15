@@ -167,7 +167,7 @@
         validate: visudo -cf %s
       loop:
         - name: automation
-          rule: "automation ALL=(ALL:ALL) NOPASSWD:ALL"
+          rule: "automation ALL=(ALL:ALL) NOPASSWD:ALL" # pragma: allowlist secret
         - name: dev_admin
           rule: "dev_admin ALL=(ALL:ALL) ALL"
         - name: breakglass

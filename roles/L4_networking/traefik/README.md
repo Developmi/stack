@@ -2,11 +2,11 @@
 
 Traefik reverse proxy adapter.
 
-| Field | Value |
-|-------|-------|
-| Status | `stub` |
-| Last validated | _not yet validated_ |
-| Ansible version | - |
+| Field           | Value               |
+| --------------- | ------------------- |
+| Status          | `stub`              |
+| Last validated  | _not yet validated_ |
+| Ansible version | -                   |
 
 ## Notes
 

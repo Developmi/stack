@@ -87,12 +87,12 @@ Acceptance gates that must pass before the platform is considered production-rea
 
 **Description**: `apps/` directory exists with tested application profiles.
 
-| Criteria              | Pass                                                  | Fail                          |
-| --------------------- | ----------------------------------------------------- | ----------------------------- |
-| **Directory exists**  | `apps/` directory present with profile directories    | Directory missing             |
-| **Profile count**     | At least one profile with `profile.yml`               | No profiles found             |
-| **Schema compliance** | Each profile has all 6 MUST fields + `supported_arch` | Any MUST field missing        |
-| **Variables declared**| `vars.yml` exists for declared profiles               | Vars file missing or empty    |
+| Criteria               | Pass                                                  | Fail                       |
+| ---------------------- | ----------------------------------------------------- | -------------------------- |
+| **Directory exists**   | `apps/` directory present with profile directories    | Directory missing          |
+| **Profile count**      | At least one profile with `profile.yml`               | No profiles found          |
+| **Schema compliance**  | Each profile has all 6 MUST fields + `supported_arch` | Any MUST field missing     |
+| **Variables declared** | `vars.yml` exists for declared profiles               | Vars file missing or empty |
 
 **Verification method**: `ls apps/`, `find apps/ -name profile.yml`
 
@@ -115,8 +115,6 @@ Acceptance gates that must pass before the platform is considered production-rea
 
 **Responsible**: Platform operator
 
-
-
 ## Gate Summary
 
 | Gate                     | Layer | Status (pre-acceptance) |
@@ -127,7 +125,6 @@ Acceptance gates that must pass before the platform is considered production-rea
 | 4 - Networking/Edge      | L4    | Pending verification    |
 | 5 - Application Profiles | L5    | Pending verification    |
 | 6 - Runtime              | L6    | Pending verification    |
-
 
 ---
 

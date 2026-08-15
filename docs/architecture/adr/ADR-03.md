@@ -35,11 +35,13 @@ Application profiles under `apps/` provide tested configuration references. The 
 ## 3. Consequences
 
 ### Positive
+
 - **Discoverable by path alone**: an operator at 03:00 knows exactly where to look - the file path IS the precedence
 - **No config duplication**: per-group overrides sit in one directory per host class
 - **Backward compatible**: existing `group_vars` and `role defaults` still work
 
 ### Negative
+
 - Four layers can feel like "too many knobs" - mitigated by documented defaults at every level
 - Operators must understand the hierarchy to avoid unintended overrides - mitigated by `ansible-playbook --check --diff`
 

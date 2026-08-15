@@ -41,11 +41,13 @@ Each role dispatches to the correct backend:
 ## 3. Consequences
 
 ### Positive
+
 - **Single source of truth**: all OS detection logic lives in `all/main.yml`
 - **Testable**: changing `os_firewall_backend` is a single variable change, not scattered `when:` audits
 - **Extensible**: adding a new OS means adding one new variable definition + one new backend task file
 
 ### Negative
+
 - Variable names must be stable and well-documented - if `os_firewall_backend` changes name, all dispatchers break
 - Dispatcher pattern requires all backends to follow the same naming convention (`<backend>_rules.yml`)
 

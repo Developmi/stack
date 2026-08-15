@@ -62,7 +62,7 @@ override.tf.json
 # Shell environment overrides
 .envrc
 
-# Caddyfile 
+# Caddyfile
 Caddyfile
 Caddyfile.j2
 # =================================================

@@ -35,13 +35,14 @@ This project starts at v6.0.0. Prior development history (v1.0.0 - v5.5.0) is ma
 - **OpenWebUI Recommended Bundle (v5.5.0)**: Self-hosted LLM chat interface with Docker Compose deployment, GPU passthrough support, and Caddy-first exposure model.
 - **Molecule Test Suite (NEW v6.0.0-dev)**: Full molecule converge + idempotence + verify coverage for 3 layers:
 
-  | Layer | Converge | Idempotence | Verify | Known Docker Limitations |
-  |---|---|---|---|---|
-  | **L1_os_baseline** | ✅ 0 failures | ✅ changed=0 | ✅ 5 assertions | Hostname module can't persist `/etc/hostname` in containers (EBUSY) - uses `nodename` fact instead |
-  | **L2_compliance** | ✅ 0 failures | ✅ changed=0 | ✅ stub | auditd can't start (kernel audit not namespaced), sysctl kernel.*/net.* read-only in containers, ubuntu2204 sysctl false positive on `kptr_restrict` |
-  | **L4_networking** | ✅ 0 failures | ✅ changed=0 | ✅ 17 assertions | sysctl UDP buffers read-only on Debian12; GHCR auth unavailable for compose deploy; `python3-requests` missing in geerlingguy images |
+  | Layer              | Converge      | Idempotence  | Verify           | Known Docker Limitations                                                                                                                             |
+  | ------------------ | ------------- | ------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | **L1_os_baseline** | ✅ 0 failures | ✅ changed=0 | ✅ 5 assertions  | Hostname module can't persist `/etc/hostname` in containers (EBUSY) - uses `nodename` fact instead                                                   |
+  | **L2_compliance**  | ✅ 0 failures | ✅ changed=0 | ✅ stub          | auditd can't start (kernel audit not namespaced), sysctl kernel._/net._ read-only in containers, ubuntu2204 sysctl false positive on `kptr_restrict` |
+  | **L4_networking**  | ✅ 0 failures | ✅ changed=0 | ✅ 17 assertions | sysctl UDP buffers read-only on Debian12; GHCR auth unavailable for compose deploy; `python3-requests` missing in geerlingguy images                 |
 
   All tests run on both Debian 12 and Ubuntu 22.04 in Docker containers, with container kernel limitations documented via `ignore_errors` / `changed_when: false`.
+
 - **Idempotence Fixes (NEW v6.0.0-dev)**:
   - **Hostname**: Changed `ansible_facts['hostname']` → `ansible_facts['nodename']` so kernel hostname change is detected correctly inside Docker.
   - **Container names**: Molecules container names use hyphens instead of underscores - `hostnamectl` rejects underscores (RFC violation), causing `nodename` mismatch.
@@ -54,14 +55,14 @@ This project starts at v6.0.0. Prior development history (v1.0.0 - v5.5.0) is ma
 
 ### Testing Coverage by Layer
 
-| Layer | Molecule Scenario | Converge | Idempotence | Verify | Notes |
-|---|---|---|---|---|---|
-| **L1_os_baseline** | ✅ `L1_os_baseline` | ✅ | ✅ | ✅ 5 assertions | Full coverage |
-| **L2_compliance** | ✅ `L2_compliance` | ✅ | ✅ | ⏳ stub | Verify needs real assertions |
-| **L3_observability** | ❌ Not created | - | - | - | Pending |
-| **L4_networking** | ✅ `L4_networking` | ✅ | ✅ | ✅ 17 assertions | Full coverage |
-| **L5_apps** | ❌ Not created | - | - | - | Go-to-market first |
-| **L6_runtime** | ❌ Not created | - | - | - | Pending (backup engine) |
+| Layer                | Molecule Scenario   | Converge | Idempotence | Verify           | Notes                        |
+| -------------------- | ------------------- | -------- | ----------- | ---------------- | ---------------------------- |
+| **L1_os_baseline**   | ✅ `L1_os_baseline` | ✅       | ✅          | ✅ 5 assertions  | Full coverage                |
+| **L2_compliance**    | ✅ `L2_compliance`  | ✅       | ✅          | ⏳ stub          | Verify needs real assertions |
+| **L3_observability** | ❌ Not created      | -        | -           | -                | Pending                      |
+| **L4_networking**    | ✅ `L4_networking`  | ✅       | ✅          | ✅ 17 assertions | Full coverage                |
+| **L5_apps**          | ❌ Not created      | -        | -           | -                | Go-to-market first           |
+| **L6_runtime**       | ❌ Not created      | -        | -           | -                | Pending (backup engine)      |
 
 ### Improvement Focus (Without Overstating Risk)
 

@@ -20,12 +20,12 @@ Welcome to the Developmi Stack documentation. This guide helps you find the righ
 
 If you don't identify with any of the personas below, here's a quick-reference table to help you find your starting point:
 
-| I want to...                        | Start with                                                             |
-| ----------------------------------- | ---------------------------------------------------------------------- |
-| Understand what this project is     | [README.md](../../README.md) (root)                                    |
-| See all available documentation     | [docs/README.md](../README.md)                                         |
-| Understand the terminology          | [GLOSSARY.md](../GLOSSARY.md)                                          |
-| Understand the v2 migration plan    | (archived - see ARCHITECTURE.md)                                       |
+| I want to...                     | Start with                          |
+| -------------------------------- | ----------------------------------- |
+| Understand what this project is  | [README.md](../../README.md) (root) |
+| See all available documentation  | [docs/README.md](../README.md)      |
+| Understand the terminology       | [GLOSSARY.md](../GLOSSARY.md)       |
+| Understand the v2 migration plan | (archived - see ARCHITECTURE.md)    |
 
 When in doubt, start with the [root README](../../README.md) - it explains what the project is for all audiences.
 
@@ -115,7 +115,6 @@ Below are three reading paths tailored to the most common reader personas. Pick 
 5. **[OPERATIONS_RUNBOOK.md §2](../operations/OPERATIONS_RUNBOOK.md)** - Production audit checklist (§2). Run through this before and after deployments to validate command execution paths.
 
 6. **[EMERGENCY_ACCESS.md](../operations/EMERGENCY_ACCESS.md)** - Console/rescue recovery procedures. Critical for Phase 07 (Disable Root SSH). Know how to recover if SSH is misconfigured.
-
 
 ### What You'll Know After
 

@@ -21,12 +21,12 @@ The platform must support multiple runtime engines (Compose today, Swarm/K3s tom
 
 **Abstraction by convention, not framework.** The profile schema decouples "what" (application intent) from "how" (runtime-specific rendering). No runtime framework needed.
 
-| Profile Field | Compose (today) | Swarm (future) |
-|---|---|---|
-| `compose_file` | Render + `docker compose up` | Ignored |
-| `secrets` | Vault → .env | Vault → Docker secrets |
-| `backup.db_type` | pg_dump container | pg_dump pod |
-| `monitoring.health_endpoint` | HTTP check | K8s liveness probe |
+| Profile Field                | Compose (today)              | Swarm (future)         |
+| ---------------------------- | ---------------------------- | ---------------------- |
+| `compose_file`               | Render + `docker compose up` | Ignored                |
+| `secrets`                    | Vault → .env                 | Vault → Docker secrets |
+| `backup.db_type`             | pg_dump container            | pg_dump pod            |
+| `monitoring.health_endpoint` | HTTP check                   | K8s liveness probe     |
 
 > **Obsolete note (2026-08-09, decouple-manager-sops):** profile secrets now resolve from SOPS + age (`inventory/group_vars/all/secrets.sops.yml`), not Ansible Vault. Historical record - kept verbatim.
 
@@ -37,11 +37,13 @@ The profile schema contains zero Compose-specific directives. `compose_file` is 
 ## 3. Consequences
 
 ### Positive
+
 - **No framework lock-in**: adding a new runtime means writing one adapter file, not rewriting profiles
 - **KISS**: conventions are Ansible-native (file paths, variable names, Jinja2 templates)
 - **Reversible**: removing a runtime means deleting its adapter directory - zero profile changes
 
 ### Negative
+
 - Convention-based abstraction requires discipline - profile fields must stay generic
 - Adapter writers must understand both the profile schema AND the target runtime - documented in `roles/L6_runtime/` READMEs
 

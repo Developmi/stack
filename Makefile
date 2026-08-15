@@ -29,7 +29,7 @@ fi)
 # tailscale trio consumers below keep referencing $(VAULT_PROMPT_FLAG); an
 # operator/private-clone override (make deploy-hardening VAULT_PROMPT_FLAG=--ask-vault-pass)
 # restores the prompt until the trio expires (OPERATIONS_RUNBOOK §7.4).
-VAULT_PROMPT_FLAG ?= 
+VAULT_PROMPT_FLAG ?=
 APT_FORCE ?= false
 APT_FORCE_FLAG := $(if $(filter true,$(APT_FORCE)),--extra-vars "apt_force_cleanup=true",)
 

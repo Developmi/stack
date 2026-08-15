@@ -25,15 +25,15 @@ Recovery Time Objective (RTO) and Recovery Point Objective (RPO) per application
 
 ### 1.1 Per-Application Table
 
-| Application | DB Type  | DR Tier  | RTO Target | RPO Target | Status    | Notes                          |
-| ----------- | -------- | -------- | ---------- | ---------- | --------- | ------------------------------ |
-| Chatwoot    | postgres | critical | 5 min      | 4 h        | Measured  | Verified 64s restore |
-| n8n         | postgres | critical | 15 min     | 4 h        | Estimated | -                              |
-| Twenty CRM  | postgres | critical | 30 min     | 4 h        | Estimated | Larger DB volume               |
-| Metabase    | postgres | critical | 15 min     | 4 h        | Estimated | -                              |
-| NocoDB      | postgres | critical | 15 min     | 4 h        | Estimated | -                              |
-| OpenWebUI   | none     | standard | 30 min     | 24 h       | Estimated | SQLite file restore            |
-| FastAPI     | custom   | standard | 30 min     | 24 h       | Estimated | Stateless; community-provided  |
+| Application | DB Type  | DR Tier  | RTO Target | RPO Target | Status    | Notes                         |
+| ----------- | -------- | -------- | ---------- | ---------- | --------- | ----------------------------- |
+| Chatwoot    | postgres | critical | 5 min      | 4 h        | Measured  | Verified 64s restore          |
+| n8n         | postgres | critical | 15 min     | 4 h        | Estimated | -                             |
+| Twenty CRM  | postgres | critical | 30 min     | 4 h        | Estimated | Larger DB volume              |
+| Metabase    | postgres | critical | 15 min     | 4 h        | Estimated | -                             |
+| NocoDB      | postgres | critical | 15 min     | 4 h        | Estimated | -                             |
+| OpenWebUI   | none     | standard | 30 min     | 24 h       | Estimated | SQLite file restore           |
+| FastAPI     | custom   | standard | 30 min     | 24 h       | Estimated | Stateless; community-provided |
 
 ### 1.2 Tier Definitions
 
@@ -91,6 +91,7 @@ ansible-playbook playbooks/l6/engine.yml \
 ```
 
 Alternative unified setup commands (if utilizing stack configuration files directly):
+
 - Ingress: `ansible-playbook playbooks/l4/edge.yml`
 - Runtime: `ansible-playbook playbooks/l6/engine.yml` then `ansible-playbook playbooks/l6/portainer.yml`
 
@@ -114,6 +115,7 @@ Deploy L5/L6 data restore playbooks:
 ansible-playbook playbooks/l6/backup-appdata.yml \
   --limit <new-brain-host>
 ```
+
 - App data restored from `/srv/backups/app/<name>/` or restic path.
 - Runtime state restored from `/srv/backups/stack/`.
 
@@ -129,23 +131,23 @@ Restore must follow this dependency chain. Apps without known cross-dependencies
 
 Provision the host layers before any app data restore.
 
-| Layer | Purpose                                                | Provisioning                                          |
-| ----- | ------------------------------------------------------ | ----------------------------------------------------- |
-| L1    | OS baseline                                            | `ansible-playbook site.yml`                           |
-| L2    | Compliance (SSH, firewall, fail2ban, CrowdSec, kernel) | `ansible-playbook site.yml`                           |
-| L3    | Observability                                          | `ansible-playbook playbooks/l3/stack.yml`, `playbooks/l3/exporters.yml`                     |
-| L4    | Ingress (Caddy)                                        | `ansible-playbook playbooks/l4/edge.yml`          |
+| Layer | Purpose                                                | Provisioning                                                             |
+| ----- | ------------------------------------------------------ | ------------------------------------------------------------------------ |
+| L1    | OS baseline                                            | `ansible-playbook site.yml`                                              |
+| L2    | Compliance (SSH, firewall, fail2ban, CrowdSec, kernel) | `ansible-playbook site.yml`                                              |
+| L3    | Observability                                          | `ansible-playbook playbooks/l3/stack.yml`, `playbooks/l3/exporters.yml`  |
+| L4    | Ingress (Caddy)                                        | `ansible-playbook playbooks/l4/edge.yml`                                 |
 | L6    | Runtime (Docker, Portainer)                            | `ansible-playbook playbooks/l6/engine.yml`, `playbooks/l6/portainer.yml` |
 
 ### Phase 2: Data Layer
 
 Restore shared data services before any app that depends on them.
 
-| Service    | Depended on by                              | Restore Method |
-| ---------- | ------------------------------------------- | -------------- |
-| PostgreSQL | Chatwoot, n8n, Twenty CRM, Metabase, NocoDB | `pg_restore` from Restic dump |
-| Valkey     | Chatwoot                                    | `dump.rdb` from Restic snapshot |
-| Valkey (n8n) | n8n (Bull queue, execution state)        | `dump.rdb` from Restic snapshot |
+| Service      | Depended on by                              | Restore Method                  |
+| ------------ | ------------------------------------------- | ------------------------------- |
+| PostgreSQL   | Chatwoot, n8n, Twenty CRM, Metabase, NocoDB | `pg_restore` from Restic dump   |
+| Valkey       | Chatwoot                                    | `dump.rdb` from Restic snapshot |
+| Valkey (n8n) | n8n (Bull queue, execution state)           | `dump.rdb` from Restic snapshot |
 
 > [!NOTE]
 > If PostgreSQL runs as a separate container (not embedded per-app), restore it once in Phase 2. Per-app sections assume embedded postgres containers - adjust `pg_container` name if using a shared instance.
@@ -154,17 +156,18 @@ Restore shared data services before any app that depends on them.
 
 All apps can be restored in parallel within this phase. No verified cross-app startup dependencies exist.
 
-| App        | Data Layer Dependency              | Restore Method |
-| ---------- | ---------------------------------- | -------------- |
+| App        | Data Layer Dependency              | Restore Method                        |
+| ---------- | ---------------------------------- | ------------------------------------- |
 | Chatwoot   | PostgreSQL + Valkey                | `pg_restore` + `dump.rdb` from Restic |
-| n8n        | PostgreSQL + Valkey                         | `pg_restore` + `dump.rdb` from Restic |
-| Twenty CRM | PostgreSQL                         | `pg_restore` from Restic |
-| Metabase   | PostgreSQL                         | `pg_restore` from Restic |
-| NocoDB     | PostgreSQL                         | `pg_restore` from Restic |
-| OpenWebUI  | (none)                             | SQLite file restore from Restic |
-| FastAPI    | (custom - operator responsibility) | Container redeploy |
+| n8n        | PostgreSQL + Valkey                | `pg_restore` + `dump.rdb` from Restic |
+| Twenty CRM | PostgreSQL                         | `pg_restore` from Restic              |
+| Metabase   | PostgreSQL                         | `pg_restore` from Restic              |
+| NocoDB     | PostgreSQL                         | `pg_restore` from Restic              |
+| OpenWebUI  | (none)                             | SQLite file restore from Restic       |
+| FastAPI    | (custom - operator responsibility) | Container redeploy                    |
 
 **Suspected dependencies** (unverified; validate during Tier 2 or Tier 3 drill):
+
 - If FastAPI or n8n workflows call Chatwoot API → runtime dependency, does NOT block restore order. Each app restores independently; validate cross-app functionality post-restore.
 - If Twenty CRM connects to n8n webhooks → same as above.
 
@@ -178,12 +181,12 @@ Procedures for recovering SOPS-encrypted secrets (age key), rotating secrets, an
 
 #### Recovery Options
 
-| Option | Prerequisite | Procedure |
-|--------|-------------|-----------|
+| Option              | Prerequisite                                                                                              | Procedure                                                   |
+| ------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | **Backup location** | Age private key stored in a secondary secure location (password manager, hardware token, sealed envelope) | Retrieve `~/.config/sops/age/keys.txt` from backup location |
-| **Paper recovery** | Private key printed and stored in a physical safe | Retrieve from physical safe |
-| **Team member** | Another team member has access (shared password manager) | Request from team member |
-| **Regeneration** | All secrets can be re-generated (API keys, tokens can be re-issued) | Re-generate all secrets and re-encrypt with a new age key |
+| **Paper recovery**  | Private key printed and stored in a physical safe                                                         | Retrieve from physical safe                                 |
+| **Team member**     | Another team member has access (shared password manager)                                                  | Request from team member                                    |
+| **Regeneration**    | All secrets can be re-generated (API keys, tokens can be re-issued)                                       | Re-generate all secrets and re-encrypt with a new age key   |
 
 #### Regeneration Procedure (Last Resort)
 
@@ -200,9 +203,11 @@ Procedures for recovering SOPS-encrypted secrets (age key), rotating secrets, an
    ```bash
    make sops-encrypt
    ```
+
 ### Secret Rotation
 
 #### When to Rotate
+
 - After any team member with secrets access leaves.
 - After a security incident or suspected breach.
 - On a regular schedule (quarterly recommended).
@@ -223,6 +228,7 @@ Procedures for recovering SOPS-encrypted secrets (age key), rotating secrets, an
    uv run ansible-vault edit inventory/group_vars/all/secrets.yml
    ```
 3. **Re-deploy affected components**
+
    ```bash
    # For Tailscale rotation
    ansible-playbook playbooks/site.yml --tags tailscale
@@ -257,13 +263,13 @@ ansible-playbook playbooks/site.yml \
 
 ### Prevention
 
-| Measure | Description |
-|---------|-------------|
-| **Password manager** | Store the SOPS age private key in a team password manager (1Password, Bitwarden) |
-| **Physical backup** | Print the age private key and store in a sealed envelope in a secure location |
-| **Access control** | Limit age key access to operators who need it (principle of least privilege) |
-| **Rotation schedule** | Review age key custody quarterly (or after team changes) |
-| **Documentation** | This document is the single source of truth for recovery procedures |
+| Measure               | Description                                                                      |
+| --------------------- | -------------------------------------------------------------------------------- |
+| **Password manager**  | Store the SOPS age private key in a team password manager (1Password, Bitwarden) |
+| **Physical backup**   | Print the age private key and store in a sealed envelope in a secure location    |
+| **Access control**    | Limit age key access to operators who need it (principle of least privilege)     |
+| **Rotation schedule** | Review age key custody quarterly (or after team changes)                         |
+| **Documentation**     | This document is the single source of truth for recovery procedures              |
 
 ---
 
@@ -347,16 +353,16 @@ Regular drills validate the DR plan and transition RTO/RPO values from "Estimate
 
 Use this checklist to confirm host readiness and configuration integrity post-recovery:
 
-| Check | Command | Expected |
-|-------|---------|----------|
-| SSH is hardened | `ssh -o PasswordAuthentication=no root@<host>` | Key-only auth (connection refused for password auth) |
-| Firewall is active | `ssh <host> "sudo ufw status"` or `sudo nft list ruleset` | Active with rules |
-| CrowdSec is running | `ssh <host> "sudo systemctl status crowdsec"` | active (running) |
-| Docker is running | `ssh <host> "sudo systemctl status docker"` | active (running) |
-| All apps healthy | Per-app smoke tests or `curl -f http://localhost:<port>/health` | HTTP 200 each |
-| Ingress routes | `curl -sf https://<host>` | HTTP 200 |
-| Backups are scheduled | `ssh <host> "systemctl list-timers \| grep backup"` | Active timers |
-| Evidence is current | `ssh <host> "ls -lt /srv/evidence/nist/ac-2/ \| head -3"` | Files ≤ 24h old |
+| Check                 | Command                                                         | Expected                                             |
+| --------------------- | --------------------------------------------------------------- | ---------------------------------------------------- |
+| SSH is hardened       | `ssh -o PasswordAuthentication=no root@<host>`                  | Key-only auth (connection refused for password auth) |
+| Firewall is active    | `ssh <host> "sudo ufw status"` or `sudo nft list ruleset`       | Active with rules                                    |
+| CrowdSec is running   | `ssh <host> "sudo systemctl status crowdsec"`                   | active (running)                                     |
+| Docker is running     | `ssh <host> "sudo systemctl status docker"`                     | active (running)                                     |
+| All apps healthy      | Per-app smoke tests or `curl -f http://localhost:<port>/health` | HTTP 200 each                                        |
+| Ingress routes        | `curl -sf https://<host>`                                       | HTTP 200                                             |
+| Backups are scheduled | `ssh <host> "systemctl list-timers \| grep backup"`             | Active timers                                        |
+| Evidence is current   | `ssh <host> "ls -lt /srv/evidence/nist/ac-2/ \| head -3"`       | Files ≤ 24h old                                      |
 
 ---
 

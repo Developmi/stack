@@ -18,13 +18,13 @@ repo: github.com/Developmi/stack
 
 ## Prerequisites
 
-| Component | Version | Installation |
-|-----------|---------|-------------|
-| **Python** | 3.14+ | `apt install python3.14` or via `pyenv` |
-| **uv** | latest stable | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| **ansible-core** | 2.21.1 (pinned) | `uv pip install ansible-core==2.21.1` |
-| **Git** | 2.40+ | `apt install git` |
-| **OS** | Linux (Debian 12 or Ubuntu 22.04 recommended) | - |
+| Component        | Version                                       | Installation                                       |
+| ---------------- | --------------------------------------------- | -------------------------------------------------- |
+| **Python**       | 3.14+                                         | `apt install python3.14` or via `pyenv`            |
+| **uv**           | latest stable                                 | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| **ansible-core** | 2.21.1 (pinned)                               | `uv pip install ansible-core==2.21.1`              |
+| **Git**          | 2.40+                                         | `apt install git`                                  |
+| **OS**           | Linux (Debian 12 or Ubuntu 22.04 recommended) | -                                                  |
 
 ---
 
@@ -115,12 +115,12 @@ ssh <target-host> "sysctl kernel.kptr_restrict"
 
 ## Common Issues
 
-| Issue | Resolution |
-|-------|-----------|
-| `ansible-core` version mismatch | `uv pip install ansible-core==2.21.1 --force-reinstall` |
-| SOPS age key not found | Ensure `~/.config/sops/age/keys.txt` exists (see Step 3) |
-| SSH connection refused | Target host must have SSH enabled. Verify with `ssh <host> echo ok` |
-| `uv sync` fails on ARM64 | ARM64 is fully supported. Ensure Python 3.14+ is installed for ARM64 |
+| Issue                           | Resolution                                                           |
+| ------------------------------- | -------------------------------------------------------------------- |
+| `ansible-core` version mismatch | `uv pip install ansible-core==2.21.1 --force-reinstall`              |
+| SOPS age key not found          | Ensure `~/.config/sops/age/keys.txt` exists (see Step 3)             |
+| SSH connection refused          | Target host must have SSH enabled. Verify with `ssh <host> echo ok`  |
+| `uv sync` fails on ARM64        | ARM64 is fully supported. Ensure Python 3.14+ is installed for ARM64 |
 
 ---
 

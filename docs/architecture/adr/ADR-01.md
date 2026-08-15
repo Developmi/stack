@@ -33,11 +33,13 @@ We needed a runtime model where Compose works without Portainer, and Portainer i
 ## 3. Consequences
 
 ### Positive
+
 - Minimal deploy (local workstation, small VPS) requires zero management UI overhead
 - Portainer is additive, not foundational - adding it is a toggle, not a re-architecture
 - Future engines (Swarm, K3s) can enter as alternatives without rewriting manager logic
 
 ### Negative
+
 - Two separate axes to maintain and test independently
 - Operator must understand two deployment concepts (engine + optional manager)
 

@@ -18,17 +18,17 @@ How to navigate the SDD workflow, documentation ecosystem, and project conventio
 
 ## Quick Start: Find Your Path
 
-| I want to... | Start here |
-|-------------|-----------|
-| Understand the platform architecture | [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md) |
-| Set up my development environment | [../operations/DEVELOPER_SETUP.md](../operations/DEVELOPER_SETUP.md) |
-| Understand SDD workflow terms | [GLOSSARY.md](../GLOSSARY.md) |
-| Know how docs are organized | [ARCHITECTURE.md](../architecture/ARCHITECTURE.md) |
-| Find all related documents | [README.md](../README.md) |
-| Contribute documentation | [CONTRIBUTORS_DOC_GUIDE.md](CONTRIBUTORS_DOC_GUIDE.md) |
-| Understand the 10 architectural principles | [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md) §4 |
-| See all architecture decisions | [../architecture/adr/](../architecture/adr/) |
-| Deploy applications | [ARCHITECTURE.md](../architecture/ARCHITECTURE.md) §8 (Application Profile Schema) |
+| I want to...                               | Start here                                                                         |
+| ------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Understand the platform architecture       | [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md)                 |
+| Set up my development environment          | [../operations/DEVELOPER_SETUP.md](../operations/DEVELOPER_SETUP.md)               |
+| Understand SDD workflow terms              | [GLOSSARY.md](../GLOSSARY.md)                                                      |
+| Know how docs are organized                | [ARCHITECTURE.md](../architecture/ARCHITECTURE.md)                                 |
+| Find all related documents                 | [README.md](../README.md)                                                          |
+| Contribute documentation                   | [CONTRIBUTORS_DOC_GUIDE.md](CONTRIBUTORS_DOC_GUIDE.md)                             |
+| Understand the 10 architectural principles | [../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md) §4              |
+| See all architecture decisions             | [../architecture/adr/](../architecture/adr/)                                       |
+| Deploy applications                        | [ARCHITECTURE.md](../architecture/ARCHITECTURE.md) §8 (Application Profile Schema) |
 
 ---
 

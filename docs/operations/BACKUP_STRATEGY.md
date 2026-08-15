@@ -354,7 +354,7 @@ Full disaster recovery procedures are documented in [`docs/operations/INCIDENT_R
    docker run --rm \
      -v /srv/backup/dumps:/data \
      -e RESTIC_REPOSITORY="s3://<r2-endpoint>/nist-backups-prod/restic/<hostname>" \
-  -e RESTIC_PASSWORD="<restic-password>" \
+   -e RESTIC_PASSWORD="<restic-password>" \
      -e AWS_ACCESS_KEY_ID="<r2-key>" \
      -e AWS_SECRET_ACCESS_KEY="<r2-secret>" \
      restic/restic:0.19.0 \
@@ -373,7 +373,7 @@ Full disaster recovery procedures are documented in [`docs/operations/INCIDENT_R
 2. **Restore volumes**:
    ```bash
    sudo RESTIC_REPOSITORY="s3://<r2-endpoint>/nist-backups-prod/stack-restic/<hostname>" \
-  RESTIC_PASSWORD="<restic-password>" \
+   RESTIC_PASSWORD="<restic-password>" \
      AWS_ACCESS_KEY_ID="<r2-key>" \
      AWS_SECRET_ACCESS_KEY="<r2-secret>" \
      restic restore <snapshot-id> --target /srv/backups/stack-restic/

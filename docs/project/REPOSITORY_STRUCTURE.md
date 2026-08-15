@@ -107,7 +107,7 @@ Container management, runtime backup, and monitoring stack.
 
 | Role                       | Purpose                                                               | Key Variables                                       |
 | -------------------------- | --------------------------------------------------------------------- | --------------------------------------------------- |
-| `L6_runtime/portainer`     | Portainer CE container management UI, agent deployment                | `enable_portainer`                         |
+| `L6_runtime/portainer`     | Portainer CE container management UI, agent deployment                | `enable_portainer`                                  |
 | `L6_runtime/backup`        | Restic-based backup of Docker volumes and stack configs to R2         | `stack_restic_repo`, `r2_stack_bucket`              |
 | `L3_observability/general` | Prometheus exporters (node_exporter, cadvisor), VictoriaMetrics stack | `enable_observability`, `vm_url`, `scrape_interval` |
 
@@ -248,60 +248,60 @@ The Makefile is the primary operational interface. All targets run through the `
 
 #### Setup
 
-| Target                | Description                                                |
-| --------------------- | ---------------------------------------------------------- |
-| `sync`                | Sync Python toolchain via `uv sync`                        |
-| `install-collections` | Install Ansible Galaxy collections from `requirements.yml` |
-| `setup-toolchain`     | Install the toolchain (`scripts/setup.sh --install`)       |
+| Target                | Description                                                  |
+| --------------------- | ------------------------------------------------------------ |
+| `sync`                | Sync Python toolchain via `uv sync`                          |
+| `install-collections` | Install Ansible Galaxy collections from `requirements.yml`   |
+| `setup-toolchain`     | Install the toolchain (`scripts/setup.sh --install`)         |
 | `check-toolchain`     | Validate the local toolchain (`scripts/setup.sh --validate`) |
-| `lint`                | Run `yamllint` + `ansible-lint`                            |
-| `precommit-install`   | Install pre-commit hooks                                   |
-| `precommit-run`       | Run all pre-commit hooks                                   |
+| `lint`                | Run `yamllint` + `ansible-lint`                              |
+| `precommit-install`   | Install pre-commit hooks                                     |
+| `precommit-run`       | Run all pre-commit hooks                                     |
 
 #### Secrets (SOPS)
 
-| Target          | Description                                                         |
-| --------------- | ------------------------------------------------------------------- |
-| `sops-init`     | Copy `secrets.sops.yml.example` → `secrets.sops.yml` if missing     |
-| `sops-encrypt`  | Encrypt the SOPS secrets file in place (age key required)           |
-| `sops-edit`     | Edit the SOPS secrets file (decrypts to $EDITOR, re-encrypts)       |
-| `sops-view`     | View the SOPS secrets file                                          |
+| Target         | Description                                                     |
+| -------------- | --------------------------------------------------------------- |
+| `sops-init`    | Copy `secrets.sops.yml.example` → `secrets.sops.yml` if missing |
+| `sops-encrypt` | Encrypt the SOPS secrets file in place (age key required)       |
+| `sops-edit`    | Edit the SOPS secrets file (decrypts to $EDITOR, re-encrypts)   |
+| `sops-view`    | View the SOPS secrets file                                      |
 
 #### Deploy
 
-| Target                        | Description                                              | Playbook                                                    |
-| ----------------------------- | -------------------------------------------------------- | ----------------------------------------------------------- |
-| `deploy-hardening` (`deploy`) | Full L1+L2 hardening                                     | `playbooks/site.yml`                                        |
-| `deploy-l1`                   | L1 OS baseline only                                      | `playbooks/l1/baseline.yml`                                 |
-| `deploy-first` (`deploy-bootstrap`) | First-deploy bootstrap mode (auto-detects controller_ip) | `playbooks/site.yml -e bootstrap_mode=true`                 |
-| `deploy-lockdown`             | Post-bootstrap SSH lockdown                              | `playbooks/l2/lockdown.yml`                                 |
-| `deploy-compliance`           | Collect NIST 800-53 compliance evidence                  | `playbooks/l2/compliance.yml`                               |
-| `reconnect-tailscale`         | Tailscale mesh recovery                                  | `playbooks/l2/tailscale-recover.yml`                        |
-| `deploy-exporters`            | Deploy node_exporter + cadvisor                          | `playbooks/l3/exporters.yml`                                |
-| `deploy-monitoring-stack`     | Deploy VictoriaMetrics + Loki + Grafana (brain)          | `playbooks/l3/stack.yml`                                    |
-| `deploy-monitoring`           | Full L3: exporters + monitoring stack                    | `deploy-exporters` + `deploy-monitoring-stack`              |
-| `deploy-edge`                 | Deploy edge proxy (requires BACKEND=, TARGET=)           | `playbooks/l4/edge.yml`                                     |
-| `deploy-engine`               | Deploy Docker Engine                                     | `playbooks/l6/engine.yml`                                   |
-| `deploy-portainer`            | Deploy Portainer                                         | `playbooks/l6/portainer.yml`                                |
-| `deploy-backup-stack`         | Deploy Restic stack backup (brain only)                  | `playbooks/l6/backup-stack.yml`                             |
-| `deploy-backup-appdata`       | Deploy app data backup (DB dumps → R2)                   | `playbooks/l6/backup-appdata.yml`                           |
-| `deploy-backup-timers`        | Deploy systemd backup timers                             | `playbooks/l6/backup-timers.yml`                            |
-| `deploy-backup-databases`     | Deploy DB auto-discovery backups                         | `playbooks/l6/backup-databases.yml`                         |
-| `deploy-backups`              | All backup layers (stack→appdata→timers→databases)       | umbrella target                                             |
-| `deploy-local`                | Workstation hardening                                    | `playbooks/ops/local-devices.yml`                           |
-| `run`                         | Generic runner (`PLAYBOOK=`, `TAGS=`, `SKIP_TAGS=`, `CHECK=1`) | variable                                               |
-| `nuke`                        | Destructive teardown (requires CONFIRM=)                 | `playbooks/ops/nuke.yml`                                    |
-| `deploy-platform`             | Complete platform (hardening→engine→monitoring→portainer→backups) | meta-target (L4 edge excluded)                    |
-| `provision-host`              | Provision fresh host (inventory identity)                | `playbooks/ops/bootstrap.yml`                               |
-| `audit-full`                  | Full validation audit (L1 + L2, read-only)               | `playbooks/ops/validate.yml` + `playbooks/l2/validate.yml`  |
-| `validate-l1`                 | Audit L1 OS baseline (read-only)                         | `playbooks/ops/validate.yml --tags l1-os-baseline`          |
-| `validate-l2`                 | Audit L2 hardening and integrity (read-only)             | `playbooks/l2/validate.yml`                                 |
-| `backup-now`                  | Trigger immediate stack backup on brain                  | `playbooks/l6/backup-stack.yml --tags stack_backup --limit brain` |
-| `gate-lockdown`               | Pre-flight checks before disabling root SSH              | meta-target                                                 |
-| `verify-lockdown`             | 3-stage lockdown verification (ping + whoami + lockout)  | meta-target                                                 |
-| `monitor-crowdsec`            | Run local CrowdSec monitor script                        | `scripts/monitor-crowdsec.sh`                               |
-| `test`                        | Run the whole Molecule suite                             | `molecule test --all`                                       |
-| `test-layer`                  | Run a specific Molecule layer (`LAYER=<name>`)           | `molecule test -s <layer>`                                  |
+| Target                              | Description                                                       | Playbook                                                          |
+| ----------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `deploy-hardening` (`deploy`)       | Full L1+L2 hardening                                              | `playbooks/site.yml`                                              |
+| `deploy-l1`                         | L1 OS baseline only                                               | `playbooks/l1/baseline.yml`                                       |
+| `deploy-first` (`deploy-bootstrap`) | First-deploy bootstrap mode (auto-detects controller_ip)          | `playbooks/site.yml -e bootstrap_mode=true`                       |
+| `deploy-lockdown`                   | Post-bootstrap SSH lockdown                                       | `playbooks/l2/lockdown.yml`                                       |
+| `deploy-compliance`                 | Collect NIST 800-53 compliance evidence                           | `playbooks/l2/compliance.yml`                                     |
+| `reconnect-tailscale`               | Tailscale mesh recovery                                           | `playbooks/l2/tailscale-recover.yml`                              |
+| `deploy-exporters`                  | Deploy node_exporter + cadvisor                                   | `playbooks/l3/exporters.yml`                                      |
+| `deploy-monitoring-stack`           | Deploy VictoriaMetrics + Loki + Grafana (brain)                   | `playbooks/l3/stack.yml`                                          |
+| `deploy-monitoring`                 | Full L3: exporters + monitoring stack                             | `deploy-exporters` + `deploy-monitoring-stack`                    |
+| `deploy-edge`                       | Deploy edge proxy (requires BACKEND=, TARGET=)                    | `playbooks/l4/edge.yml`                                           |
+| `deploy-engine`                     | Deploy Docker Engine                                              | `playbooks/l6/engine.yml`                                         |
+| `deploy-portainer`                  | Deploy Portainer                                                  | `playbooks/l6/portainer.yml`                                      |
+| `deploy-backup-stack`               | Deploy Restic stack backup (brain only)                           | `playbooks/l6/backup-stack.yml`                                   |
+| `deploy-backup-appdata`             | Deploy app data backup (DB dumps → R2)                            | `playbooks/l6/backup-appdata.yml`                                 |
+| `deploy-backup-timers`              | Deploy systemd backup timers                                      | `playbooks/l6/backup-timers.yml`                                  |
+| `deploy-backup-databases`           | Deploy DB auto-discovery backups                                  | `playbooks/l6/backup-databases.yml`                               |
+| `deploy-backups`                    | All backup layers (stack→appdata→timers→databases)                | umbrella target                                                   |
+| `deploy-local`                      | Workstation hardening                                             | `playbooks/ops/local-devices.yml`                                 |
+| `run`                               | Generic runner (`PLAYBOOK=`, `TAGS=`, `SKIP_TAGS=`, `CHECK=1`)    | variable                                                          |
+| `nuke`                              | Destructive teardown (requires CONFIRM=)                          | `playbooks/ops/nuke.yml`                                          |
+| `deploy-platform`                   | Complete platform (hardening→engine→monitoring→portainer→backups) | meta-target (L4 edge excluded)                                    |
+| `provision-host`                    | Provision fresh host (inventory identity)                         | `playbooks/ops/bootstrap.yml`                                     |
+| `audit-full`                        | Full validation audit (L1 + L2, read-only)                        | `playbooks/ops/validate.yml` + `playbooks/l2/validate.yml`        |
+| `validate-l1`                       | Audit L1 OS baseline (read-only)                                  | `playbooks/ops/validate.yml --tags l1-os-baseline`                |
+| `validate-l2`                       | Audit L2 hardening and integrity (read-only)                      | `playbooks/l2/validate.yml`                                       |
+| `backup-now`                        | Trigger immediate stack backup on brain                           | `playbooks/l6/backup-stack.yml --tags stack_backup --limit brain` |
+| `gate-lockdown`                     | Pre-flight checks before disabling root SSH                       | meta-target                                                       |
+| `verify-lockdown`                   | 3-stage lockdown verification (ping + whoami + lockout)           | meta-target                                                       |
+| `monitor-crowdsec`                  | Run local CrowdSec monitor script                                 | `scripts/monitor-crowdsec.sh`                                     |
+| `test`                              | Run the whole Molecule suite                                      | `molecule test --all`                                             |
+| `test-layer`                        | Run a specific Molecule layer (`LAYER=<name>`)                    | `molecule test -s <layer>`                                        |
 
 > **Compatibility aliases kept in the Makefile**: `deploy` → `deploy-hardening`, `deploy-bootstrap` → `deploy-first`, `deploy-tags` / `dry-run` / `check` → `run` (with `TAGS=` / `CHECK=1`).
 >
@@ -320,19 +320,19 @@ The Makefile is the primary operational interface. All targets run through the `
 
 #### Key Variables
 
-| Variable            | Default                                | Description                                    |
-| ------------------- | -------------------------------------- | ---------------------------------------------- |
-| `PLAYBOOK`          | `playbooks/site.yml`                   | Playbook file for `run` (and aliases `dry-run`, `deploy-tags`, `check`) |
-| `TAGS`              | (empty)                                | Ansible `--tags` filter for `run`              |
-| `SKIP_TAGS`         | (empty)                                | Ansible `--skip-tags` filter for `run`         |
-| `CHECK`             | (empty)                                | `1` → `--check --diff` for `run`               |
-| `ANSIBLE_INVENTORY` | `inventory/hosts.ini`                  | Inventory path                                 |
-| `ANSIBLE_LIMIT`     | (empty)                                | Ansible `--limit` filter                       |
-| `ANSIBLE_TAGS`      | (empty)                                | Tags for the `deploy-tags` compatibility alias |
-| `ANSIBLE_SKIP_TAGS` | (empty)                                | Legacy; use `SKIP_TAGS` with `run`              |
-| `ANSIBLE_OPTS`      | (empty)                                | Extra ansible-playbook options                 |
-| `SOPS_FILE`        | `inventory/group_vars/all/secrets.sops.yml` | SOPS secrets file                                |
-| `APT_FORCE`         | `false`                                | Force-kill hung apt processes                  |
+| Variable            | Default                                     | Description                                                             |
+| ------------------- | ------------------------------------------- | ----------------------------------------------------------------------- |
+| `PLAYBOOK`          | `playbooks/site.yml`                        | Playbook file for `run` (and aliases `dry-run`, `deploy-tags`, `check`) |
+| `TAGS`              | (empty)                                     | Ansible `--tags` filter for `run`                                       |
+| `SKIP_TAGS`         | (empty)                                     | Ansible `--skip-tags` filter for `run`                                  |
+| `CHECK`             | (empty)                                     | `1` → `--check --diff` for `run`                                        |
+| `ANSIBLE_INVENTORY` | `inventory/hosts.ini`                       | Inventory path                                                          |
+| `ANSIBLE_LIMIT`     | (empty)                                     | Ansible `--limit` filter                                                |
+| `ANSIBLE_TAGS`      | (empty)                                     | Tags for the `deploy-tags` compatibility alias                          |
+| `ANSIBLE_SKIP_TAGS` | (empty)                                     | Legacy; use `SKIP_TAGS` with `run`                                      |
+| `ANSIBLE_OPTS`      | (empty)                                     | Extra ansible-playbook options                                          |
+| `SOPS_FILE`         | `inventory/group_vars/all/secrets.sops.yml` | SOPS secrets file                                                       |
+| `APT_FORCE`         | `false`                                     | Force-kill hung apt processes                                           |
 
 ### Ansible Configuration (`ansible.cfg`)
 
@@ -376,11 +376,11 @@ The Makefile is the primary operational interface. All targets run through the `
 
 ## Scripts
 
-| Script                  | Purpose                                                                                      |
-| ----------------------- | -------------------------------------------------------------------------------------------- |
+| Script                  | Purpose                                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------------------- |
 | `setup.sh`              | Bootstrap, install, and validate toolchain - invoked by `make setup-toolchain` and `make check-toolchain` |
-| `monitor-crowdsec.sh`   | Local CrowdSec alert monitoring - invoked by `make monitor-crowdsec`                         |
-| `validate-hierarchy.sh` | Variable hierarchy validation                                                                |
+| `monitor-crowdsec.sh`   | Local CrowdSec alert monitoring - invoked by `make monitor-crowdsec`                                      |
+| `validate-hierarchy.sh` | Variable hierarchy validation                                                                             |
 
 ---
 

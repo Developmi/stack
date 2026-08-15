@@ -189,8 +189,7 @@ validate_playbooks() {
         playbooks/ops/bootstrap.yml \
         playbooks/ops/local-devices.yml \
         playbooks/ops/nuke.yml \
-        playbooks/ops/validate.yml \
-        playbooks/_shared/apt_lock_preflight.yml; do
+        playbooks/ops/validate.yml; do
         if [[ -f "$pb" ]]; then
             uv run ansible-playbook "$pb" --syntax-check && print_success "$pb syntax valid"
         else

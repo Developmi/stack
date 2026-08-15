@@ -547,7 +547,7 @@ monitoring (by stopping monitoring containers).
 | Portainer removed and stacks break       | Violation of ADR-07. Compose stacks are coupled to Portainer.                                         | Integration test: remove Portainer container, verify `docker compose ls` shows all stacks still active.                       |
 | `backup` not running                     | Runtime state not backed up. Portainer configs lost on disk failure.                                  | L3 alert: `backup` job exit code ≠ 0. Backup age exceeds schedule interval.                                                   |
 | `backup` touches app data                | Boundary violation: L6 accessing L5 data. Backups are incomplete (runtime state mixed with app data). | Audit: `roles/L6_runtime/backup/` tasks must not reference `/srv/app/<name>/` or app database paths.                          |
-| Compose depends on Portainer for deploy  | Portainer becomes required. Engine-Manager decoupling violated. Can't deploy without Portainer.       | CI test: deploy an app profile with `enable_portainer: false`. Must succeed.                                           |
+| Compose depends on Portainer for deploy  | Portainer becomes required. Engine-Manager decoupling violated. Can't deploy without Portainer.       | CI test: deploy an app profile with `enable_portainer: false`. Must succeed.                                                  |
 | Adapter uses per-app conditionals        | `deploy.yml.j2` contains `if app == "chatwoot"`. Runtime adapter is not agnostic.                     | Code review: `roles/L6_runtime/compose/deploy.yml.j2` must contain zero app names.                                            |
 
 ---

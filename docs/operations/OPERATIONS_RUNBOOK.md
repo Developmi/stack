@@ -182,6 +182,7 @@ make precommit-run
 Apps deploy as Docker Compose stacks from structured profiles under `apps/` via the L6 runtime (Compose-only path, ADR-07). With the optional manager enabled (`enable_portainer: true`), the same stacks can be managed through Portainer's UI (Edge agent).
 
 **Shared network condition (D9):** any Compose app that must be reachable through Caddy MUST join BOTH networks:
+
 - `expose_network` - the intentional app-exposure bridge (`external: true`, static compose files)
 - the shared network - `{{ shared_network_name }}` (`public_net`, single source of truth in `inventory/group_vars/all/main.yml`)
 
@@ -707,6 +708,7 @@ uv run ansible brain -i inventory/hosts.ini -m shell -a "docker compose ls"
 ```
 
 **Troubleshooting:**
+
 - The Compose-only path never touches `playbooks/l6/portainer.yml`; `deploy-portainer` (with `-e enable_portainer=true`) is the explicit opt-in.
 - If a run fails on an undefined `portainer_*` variable, a manager variable leaked into a host/group vars file: `portainer_*` is confined to `inventory/group_vars/all/managers/` (N4) and `enable_portainer` must stay `false`.
 - Secrets decrypt transparently via SOPS+age - no `--ask-vault-pass` needed (Tailscale trio consumers excepted, see §1.4).
@@ -866,18 +868,18 @@ make deploy-backup-timers
 
 Run individual playbooks for targeted operations.
 
-| Playbook                | Command                                             | Use Case                                       |
-| ----------------------- | --------------------------------------------------- | ---------------------------------------------- |
-| `site.yml`              | `make deploy-hardening`                                       | OS hardening + compliance                      |
-| `l6/engine.yml`         | `make deploy-engine`                                | Docker Engine + compose plugin                 |
+| Playbook                | Command                                   | Use Case                                       |
+| ----------------------- | ----------------------------------------- | ---------------------------------------------- |
+| `site.yml`              | `make deploy-hardening`                   | OS hardening + compliance                      |
+| `l6/engine.yml`         | `make deploy-engine`                      | Docker Engine + compose plugin                 |
 | `l4/edge.yml`           | `make run PLAYBOOK=playbooks/l4/edge.yml` | Caddy + WAF deployment                         |
-| `l6/portainer.yml`      | `make deploy-portainer`                             | Portainer BE (optional Manager)                |
-| `l6/backup-stack.yml`   | `make deploy-backup-stack`                          | Runtime backup (Restic → R2)                   |
-| `l3/exporters.yml`      | `make deploy-monitoring`                            | Node exporter + cadvisor (all hosts)           |
-| `l3/stack.yml`          | `make deploy-monitoring`                            | VictoriaMetrics + Grafana + Loki (brain only)  |
-| `l6/backup-appdata.yml` | `make deploy-backups`                               | App data backup (database dumps → Restic → R2) |
-| `l6/backup-timers.yml`  | `make deploy-backup-timers`                         | Systemd backup timer scheduling                |
-| `local-devices.yml`     | `make deploy-local`                                 | Workstation hardening                          |
+| `l6/portainer.yml`      | `make deploy-portainer`                   | Portainer BE (optional Manager)                |
+| `l6/backup-stack.yml`   | `make deploy-backup-stack`                | Runtime backup (Restic → R2)                   |
+| `l3/exporters.yml`      | `make deploy-monitoring`                  | Node exporter + cadvisor (all hosts)           |
+| `l3/stack.yml`          | `make deploy-monitoring`                  | VictoriaMetrics + Grafana + Loki (brain only)  |
+| `l6/backup-appdata.yml` | `make deploy-backups`                     | App data backup (database dumps → Restic → R2) |
+| `l6/backup-timers.yml`  | `make deploy-backup-timers`               | Systemd backup timer scheduling                |
+| `local-devices.yml`     | `make deploy-local`                       | Workstation hardening                          |
 | `l2/compliance.yml`     | `make deploy-compliance`                  | Compliance audit tags only                     |
 
 ### 5.3 Selective Deploy (Tags / Limits)
@@ -949,31 +951,31 @@ This executes `playbooks/l2/compliance.yml` with NIST 800-53 compliance tags, co
 
 ### 5.6 Decision Guidance
 
-| Scenario             | Recommended Approach                                                   |
-| -------------------- | ---------------------------------------------------------------------- |
-| First deployment     | Full L0→L6 sequence (§5.1)                                             |
-| OS update applied    | Dry-run → `make deploy-hardening`                                                |
+| Scenario             | Recommended Approach                                   |
+| -------------------- | ------------------------------------------------------ |
+| First deployment     | Full L0→L6 sequence (§5.1)                             |
+| OS update applied    | Dry-run → `make deploy-hardening`                      |
 | Security patch only  | `make run PLAYBOOK=playbooks/site.yml TAGS='security'` |
-| Configuration change | Dry-run affected playbook → deploy                                     |
-| Pre-audit validation | `make deploy-compliance`                                     |
-| Destructive teardown | `make nuke CONFIRM=DESTROY_ALL_INFRASTRUCTURE`                         |
+| Configuration change | Dry-run affected playbook → deploy                     |
+| Pre-audit validation | `make deploy-compliance`                               |
+| Destructive teardown | `make nuke CONFIRM=DESTROY_ALL_INFRASTRUCTURE`         |
 
 ### 5.7 Variable Overrides
 
-| Variable            | Default                                | Purpose                           |
-| ------------------- | -------------------------------------- | --------------------------------- |
-| `ANSIBLE_INVENTORY` | `inventory/hosts.ini`                  | Inventory file path               |
-| `ANSIBLE_LIMIT`     | (all hosts)                            | Limit to host or group            |
-| `PLAYBOOK`          | `playbooks/site.yml`                   | Target playbook for `run`         |
-| `TAGS`              | (all tags)                             | Filter by tags (`run`)            |
-| `SKIP_TAGS`         | (none)                                 | Exclude tags (`run`)              |
-| `CHECK`             | (empty)                                | `1` → `--check --diff` (`run`)    |
-| `ANSIBLE_TAGS`      | (all tags)                             | Tags for the `deploy-tags` alias  |
-| `ANSIBLE_SKIP_TAGS` | (none)                                 | Legacy; use `SKIP_TAGS` with `run`     |
-| `ANSIBLE_OPTS`      | (empty)                                | Pass extra ansible-playbook flags |
-| `VAULT_PROMPT_FLAG` | (empty)                              | Retired: deploy targets no longer prompt (SOPS+age). Tailscale trio consumers pin `--ask-vault-pass` until trio expiry; use `ANSIBLE_OPTS='--ask-vault-pass'` when a non-tailscale target still needs the vault. |
-| `APT_FORCE`         | `false`                                | Force-clean locked APT states     |
-| `SOPS_FILE`        | `inventory/group_vars/all/secrets.sops.yml` | SOPS secrets file (make sops-*)         |
+| Variable            | Default                                     | Purpose                                                                                                                                                                                                          |
+| ------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANSIBLE_INVENTORY` | `inventory/hosts.ini`                       | Inventory file path                                                                                                                                                                                              |
+| `ANSIBLE_LIMIT`     | (all hosts)                                 | Limit to host or group                                                                                                                                                                                           |
+| `PLAYBOOK`          | `playbooks/site.yml`                        | Target playbook for `run`                                                                                                                                                                                        |
+| `TAGS`              | (all tags)                                  | Filter by tags (`run`)                                                                                                                                                                                           |
+| `SKIP_TAGS`         | (none)                                      | Exclude tags (`run`)                                                                                                                                                                                             |
+| `CHECK`             | (empty)                                     | `1` → `--check --diff` (`run`)                                                                                                                                                                                   |
+| `ANSIBLE_TAGS`      | (all tags)                                  | Tags for the `deploy-tags` alias                                                                                                                                                                                 |
+| `ANSIBLE_SKIP_TAGS` | (none)                                      | Legacy; use `SKIP_TAGS` with `run`                                                                                                                                                                               |
+| `ANSIBLE_OPTS`      | (empty)                                     | Pass extra ansible-playbook flags                                                                                                                                                                                |
+| `VAULT_PROMPT_FLAG` | (empty)                                     | Retired: deploy targets no longer prompt (SOPS+age). Tailscale trio consumers pin `--ask-vault-pass` until trio expiry; use `ANSIBLE_OPTS='--ask-vault-pass'` when a non-tailscale target still needs the vault. |
+| `APT_FORCE`         | `false`                                     | Force-clean locked APT states                                                                                                                                                                                    |
+| `SOPS_FILE`         | `inventory/group_vars/all/secrets.sops.yml` | SOPS secrets file (make sops-\*)                                                                                                                                                                                 |
 
 ---
 
@@ -984,7 +986,7 @@ This executes `playbooks/l2/compliance.yml` with NIST 800-53 compliance tags, co
 | Component           | Restart Command                                                                                         | Notes                                    |
 | ------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | Docker Engine       | `uv run ansible all -i inventory/hosts.ini -m shell -a "systemctl restart docker" --become`             | Check containers restart cleanly         |
-| Caddy (WAF)         | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker restart caddy-waf"`                  | Verify TLS endpoint after restart        |
+| Caddy (WAF)         | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker restart caddy-waf"`                   | Verify TLS endpoint after restart        |
 | Portainer           | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker restart portainer"`                   | UI available within 10s                  |
 | CrowdSec            | `uv run ansible all -i inventory/hosts.ini -m shell -a "systemctl restart crowdsec" --become`           | Verify with `make verify-crowdsec`       |
 | Tailscale           | `uv run ansible all -i inventory/hosts.ini -m shell -a "systemctl restart tailscaled" --become`         | Verify mesh with `make verify-tailscale` |
@@ -1132,20 +1134,20 @@ uv run ansible all -i inventory/hosts.ini -m shell -a "docker pull alpine:latest
 
 ### 8.1 Common Failure Modes
 
-| Symptom                                                                         | Likely Cause                                                                                | Diagnostic Command                                                                                                                                                  | Resolution                                                                                      |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `make deploy-hardening` fails with SSH error                                              | SSH key not loaded or host unreachable                                                      | `uv run ansible all -i inventory/hosts.ini -m ping`                                                                                                                 | Verify SSH agent, check Tailscale connectivity                                                  |
-| `make lint` fails                                                               | YAML syntax or ansible-lint violation                                                       | `make lint PLAYBOOK=playbooks/site.yml` (see error output)                                                                                                          | Fix YAML indentation or lint violations; run `uv sync` if toolchain missing                     |
-| `apt` lock held during deploy                                                   | Stale dpkg/apt process                                                                      | `uv run ansible all -i inventory/hosts.ini -m shell -a "lsof /var/lib/dpkg/lock-frontend"`                                                                          | Retry with `APT_FORCE=true` or manually kill stale process                                      |
-| Vault decryption fails                                                          | Wrong vault password or corrupted vault                                                     | `uv run ansible-vault view inventory/group_vars/all/secrets.yml`                                                                                                    | Verify `/tmp/.vault_pass` matches; restore from backup if corrupted                             |
-| `changed` tasks on second deploy                                                | Idempotency issue in a role                                                                 | `make run CHECK=1 PLAYBOOK=playbooks/site.yml` (note changed tasks)                                                                                                     | Investigate the role's idempotency; check for non-deterministic tasks                           |
-| CrowdSec bouncers not blocking                                                  | Bouncer config out of sync                                                                  | `make verify-crowdsec`                                                                                                                                              | Re-deploy CrowdSec role: `make run PLAYBOOK=playbooks/site.yml TAGS='crowdsec'` |
-| Tailscale node offline                                                          | tailscaled not running or auth expired                                                      | `make verify-tailscale`                                                                                                                                             | SSH via alternative path, `systemctl restart tailscaled`, or re-deploy Tailscale role           |
-| Docker container exits immediately                                              | Image pull failure or config error                                                          | `docker logs <container>`                                                                                                                                           | Check `.env` values, verify image tag exists, check compose syntax                              |
-| Observability stack not scraping                                                | Exporter down or VM config mismatch                                                         | `make verify-observability`                                                                                                                                         | Check Docker container status, verify scrape targets in VictoriaMetrics                         |
-| Portainer inaccessible                                                          | Portainer disabled or container stopped                                                     | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker ps --filter name=portainer"`                                                                      | Ensure `make deploy-portainer` was run (the target passes `-e enable_portainer=true`; do not edit group_vars)                                  |
-| App deployment failure                                                          | Playbook error or missing SOPS secret                                                      | Check `make lint` output, verify SOPS secrets                                                                                                                      | Re-deploy via the operator's own toolchain using reference profiles at `apps/<name>/`           |
-| Grafana crash-loops with `Datasource provisioning error: data source not found` | Stale auto-generated datasource UID in Grafana DB (pre-`uid: victoriametrics` provisioning) | `sudo python3 -c "import sqlite3; c=sqlite3.connect('/srv/app/observability/grafana-data/grafana.db'); print(c.execute('SELECT uid FROM data_source').fetchall())"` | One-time datasource UID migration (see note below)                                              |
+| Symptom                                                                         | Likely Cause                                                                                | Diagnostic Command                                                                                                                                                  | Resolution                                                                                                    |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `make deploy-hardening` fails with SSH error                                    | SSH key not loaded or host unreachable                                                      | `uv run ansible all -i inventory/hosts.ini -m ping`                                                                                                                 | Verify SSH agent, check Tailscale connectivity                                                                |
+| `make lint` fails                                                               | YAML syntax or ansible-lint violation                                                       | `make lint PLAYBOOK=playbooks/site.yml` (see error output)                                                                                                          | Fix YAML indentation or lint violations; run `uv sync` if toolchain missing                                   |
+| `apt` lock held during deploy                                                   | Stale dpkg/apt process                                                                      | `uv run ansible all -i inventory/hosts.ini -m shell -a "lsof /var/lib/dpkg/lock-frontend"`                                                                          | Retry with `APT_FORCE=true` or manually kill stale process                                                    |
+| Vault decryption fails                                                          | Wrong vault password or corrupted vault                                                     | `uv run ansible-vault view inventory/group_vars/all/secrets.yml`                                                                                                    | Verify `/tmp/.vault_pass` matches; restore from backup if corrupted                                           |
+| `changed` tasks on second deploy                                                | Idempotency issue in a role                                                                 | `make run CHECK=1 PLAYBOOK=playbooks/site.yml` (note changed tasks)                                                                                                 | Investigate the role's idempotency; check for non-deterministic tasks                                         |
+| CrowdSec bouncers not blocking                                                  | Bouncer config out of sync                                                                  | `make verify-crowdsec`                                                                                                                                              | Re-deploy CrowdSec role: `make run PLAYBOOK=playbooks/site.yml TAGS='crowdsec'`                               |
+| Tailscale node offline                                                          | tailscaled not running or auth expired                                                      | `make verify-tailscale`                                                                                                                                             | SSH via alternative path, `systemctl restart tailscaled`, or re-deploy Tailscale role                         |
+| Docker container exits immediately                                              | Image pull failure or config error                                                          | `docker logs <container>`                                                                                                                                           | Check `.env` values, verify image tag exists, check compose syntax                                            |
+| Observability stack not scraping                                                | Exporter down or VM config mismatch                                                         | `make verify-observability`                                                                                                                                         | Check Docker container status, verify scrape targets in VictoriaMetrics                                       |
+| Portainer inaccessible                                                          | Portainer disabled or container stopped                                                     | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker ps --filter name=portainer"`                                                                      | Ensure `make deploy-portainer` was run (the target passes `-e enable_portainer=true`; do not edit group_vars) |
+| App deployment failure                                                          | Playbook error or missing SOPS secret                                                       | Check `make lint` output, verify SOPS secrets                                                                                                                       | Re-deploy via the operator's own toolchain using reference profiles at `apps/<name>/`                         |
+| Grafana crash-loops with `Datasource provisioning error: data source not found` | Stale auto-generated datasource UID in Grafana DB (pre-`uid: victoriametrics` provisioning) | `sudo python3 -c "import sqlite3; c=sqlite3.connect('/srv/app/observability/grafana-data/grafana.db'); print(c.execute('SELECT uid FROM data_source').fetchall())"` | One-time datasource UID migration (see note below)                                                            |
 
 #### Grafana Datasource UID Migration (one-time)
 
@@ -1178,13 +1180,13 @@ per-host timers on muscle, remote dump over the tailnet, or DB placement.
 
 | Layer | Diagnostic       | Command                                                                                                                            |
 | ----- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| L0    | Toolchain health | `uv run ansible --version && make check-toolchain`                                                                                        |
+| L0    | Toolchain health | `uv run ansible --version && make check-toolchain`                                                                                 |
 | L1    | OS state         | `uv run ansible all -i inventory/hosts.ini -m setup`                                                                               |
 | L2    | Firewall rules   | `uv run ansible all -i inventory/hosts.ini -m shell -a "ufw status verbose" --become`                                              |
 | L2    | SSH config       | `uv run ansible all -i inventory/hosts.ini -m shell -a "sshd -T \| grep -E 'PermitRoot                                             | PasswordAuth'" --become` |
 | L2    | CrowdSec metrics | `make verify-crowdsec`                                                                                                             |
 | L3    | Metrics flow     | `make verify-observability`                                                                                                        |
-| L4    | Caddy status     | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker logs caddy-waf --tail 20"`                                        |
+| L4    | Caddy status     | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker logs caddy-waf --tail 20"`                                       |
 | L5    | Backup status    | `make verify-timers`                                                                                                               |
 | L6    | Docker health    | `uv run ansible all -i inventory/hosts.ini -m shell -a "docker info --format '{{.ServerVersion}} running={{.ContainersRunning}}'"` |
 

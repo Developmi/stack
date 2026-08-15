@@ -131,8 +131,6 @@ This is intentionally presented as operational proof-of-execution while broader 
 
 ![Base hardening deployment evidence](docs/assets/make-deploy.png)
 
-
-
 ![Monitoring deployment evidence](docs/assets/make-deploy-monitoring.png)
 
 ---
@@ -339,6 +337,7 @@ These are required only when the observability stack is enabled:
 ### App Configuration
 
 Application variables are managed through the Ansible variable hierarchy (5-tier precedence). Each app has:
+
 - `apps/<name>/docker-compose.yml` - pinned compose stack; env via `apps/<name>/.env.example` (operator-managed)
 - `apps/<name>/profile.yml` - metadata (version, DB type, backup schedule, monitoring)
 

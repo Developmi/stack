@@ -14,7 +14,7 @@ repo: github.com/Developmi/stack
 
 This guide walks you through assigning hosts to classes (`brain`, `muscle`, `local`), migrating hosts between classes, and verifying the result. Host classes control which Ansible roles, hardening profiles, and platform services apply to a node. Assigning the wrong class means the wrong profile is deployed.
 
-*(Source: ARCHITECTURE.md §7)*
+_(Source: ARCHITECTURE.md §7)_
 
 ## Before You Start
 
@@ -29,6 +29,7 @@ You need to understand what each class does before assigning one.
 > **Legacy variables (documented, not used):** `node_role` (still present in `inventory/hosts.ini.example`), `server_role` and `server_type` (in `inventory/group_vars/{brain,muscle,local}/main.yml`) are legacy classifiers with no code usage. The real classifiers are `host_class` (inventory group membership) + `hardening_profile`. Do not build new logic on the legacy vars; `server_type` is only consumed as a cosmetic display string in `playbooks/ops/local-devices.yml`. They are kept in the repo for reference only and may be removed in a future major release.
 
 **Brain vs muscle roles** - both run Docker, but with different purposes:
+
 - **brain** = operations + observability (runs Docker, monitoring stack, edge proxy, backup orchestration)
 - **muscle** = application runtime (runs Docker, application containers, backup-db for databases)
 
@@ -105,6 +106,7 @@ Migrating a host between classes (e.g., promoting a `local` node to `muscle`, or
 ### brain → muscle migration
 
 1. **Backup existing configuration**
+
    ```bash
    mkdir -p backups/$(date +%Y%m%d)
    ansible <hostname> -m fetch \
@@ -113,15 +115,17 @@ Migrating a host between classes (e.g., promoting a `local` node to `muscle`, or
      --flat
    ```
 
-2. **Reassign group in inventory** - move the host from the `brain` group to the `muscle` group in `inventory/hosts.yml`. If the host is the *only* brain, you must first designate another node as brain or accept that management services (Portainer, Grafana) will go down.
+2. **Reassign group in inventory** - move the host from the `brain` group to the `muscle` group in `inventory/hosts.yml`. If the host is the _only_ brain, you must first designate another node as brain or accept that management services (Portainer, Grafana) will go down.
 
 3. **Review role differences** - `muscle` excludes management-only roles. Verify `site.yml` or your playbook does not assign brain-only roles (e.g., `portainer` as primary server) to this host.
 
 4. **Dry-run the migration**
+
    ```bash
    uv run ansible-playbook -i inventory/hosts.yml site.yml \
      --limit <hostname> --check --diff
    ```
+
    Watch for:
    - Firewall rule deltas (UFW policy may not change between brain/muscle, but verify)
    - Role removals that would stop services (Portainer server, observability dashboards)
@@ -207,10 +211,12 @@ mgmt-node-01 | SUCCESS => {
 **Symptom:** `hardening_profile` returns `workstation` on a server host (or vice versa).
 
 **Causes:**
+
 - Host is in the wrong Ansible group
 - `inventory/group_vars/<class>/main.yml` is missing or misspelled
 
 **Fix:**
+
 ```bash
 # Check which vars files are loaded
 ansible <hostname> -m debug -a "var=vars"
@@ -223,6 +229,7 @@ ls -la inventory/group_vars/{brain,muscle,local}/main.yml
 **Symptom:** `hardening_profile` is undefined, playbook fails with `'hardening_profile' is undefined`.
 
 **Fix:** Create the file per the assignment procedure above, or add a default in `inventory/group_vars/all/main.yml` (with a loud comment that it must be overridden):
+
 ```yaml
 # inventory/group_vars/all/main.yml
 # ponytail: fallback default; every host SHOULD set this in its class group_vars
@@ -236,6 +243,7 @@ hardening_profile: "UNDEFINED - set per host class!"
 **Cause:** `site.yml` or playbook does not gate roles on group membership.
 
 **Fix:** Add `when: "'local' not in group_names"` conditionals in the playbook, or restructure plays so roles are applied per group:
+
 ```yaml
 - hosts: brain:muscle
   roles:
@@ -250,6 +258,7 @@ hardening_profile: "UNDEFINED - set per host class!"
 **Symptom:** After brain→muscle migration, Portainer or Grafana is still running on the muscle node.
 
 **Fix:** Ansible roles are additive by default - they do not automatically stop services when a role is removed from a host. Manually stop and disable:
+
 ```bash
 ansible <hostname> -m systemd -a "name=portainer state=stopped enabled=no" --become
 ```

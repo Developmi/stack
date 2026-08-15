@@ -2,8 +2,8 @@
 
 Compose plugin and project structure.
 
-| Field | Value |
-|-------|-------|
+| Field  | Value       |
+| ------ | ----------- |
 | Status | `reference` |
 
 ## Notes

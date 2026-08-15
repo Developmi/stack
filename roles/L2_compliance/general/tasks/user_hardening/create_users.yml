@@ -16,7 +16,7 @@
     comment: "{{ item.comment }}"
     state: "{{ item.state }}"
     create_home: true
-    update_password: on_create
+    update_password: on_create # pragma: allowlist secret
     append: false
   loop: "{{ user_hardening_users }}"
   tags: [users, l2-compliance, nist, ac-2, ac-6]

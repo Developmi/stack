@@ -9,6 +9,12 @@ exclude_paths:
   - docs/
   - roles/*/files/
   - playbooks/l5/
+  # SOPS-encrypted operator files (gitignored, not lintable YAML in plaintext)
+  - inventory/group_vars/all/secrets.sops.yml
+  - inventory/group_vars/all/managers/portainer.sops.yml
+  # Molecule fixtures that are vars files, not playbooks
+  - molecule/*/vars.yml
+  - molecule/L4_networking/.env.yml
 
 # Project-policy exclusions (documented, intentional deviations)
 skip_list:
@@ -22,6 +28,9 @@ skip_list:
   - role-name
   # Jinja templates in task names for dynamic app identification (backup timers)
   - name[template]
+  # Molecule backup verify lists systemd units; `systemctl list-timers` has no
+  # equivalent in the systemd module (read-only inspection, not service control)
+  - command-instead-of-module
 
 # Rules to enforce
 warn_list:

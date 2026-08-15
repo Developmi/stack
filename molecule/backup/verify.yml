@@ -14,10 +14,10 @@
     enable_backups: true
     backup_r2_account_id: "molecule-test-account"
     vault_backup_r2_access_key_id: "molecule-test-access-key"
-    vault_backup_r2_secret_access_key: "molecule-test-secret-key"
+    vault_backup_r2_secret_access_key: "molecule-test-secret-key" # pragma: allowlist secret
     backup_r2_endpoint: "https://molecule-test.example.com"
   handlers:
-    - name: reload systemd
+    - name: Reload systemd
       ansible.builtin.systemd:
         daemon_reload: true
   tasks:
