@@ -12,8 +12,9 @@ firewall_ssh_rate_limit: true
 firewall_ssh_rate_limit_connections: "10/minute"
 
 # --- Web Traffic ---
-firewall_allow_http: true
-firewall_allow_https: true
+# Public web access (80/443 TCP+UDP) is gated on group membership
+# ('brain' in group_names) in the L2 firewall rules - NOT by variables here.
+# Legacy firewall_allow_http/firewall_allow_https were removed: nothing consumed them.
 
 # --- Docker Cluster ---
 firewall_allow_docker_ssh: true # Allow containers to access SSH

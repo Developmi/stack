@@ -13,6 +13,14 @@
     fail_msg: "CRITICAL: Port 22 found in allowed_ports. Remove it - SSH access is controlled by ssh_allowed_sources (admin_cidr only per L2 contract §Promise 2)."
   tags: [l2-hardening]
 
+- name: "L2 | Fail-safe - Caddy admin ports must not be in allowed_ports"
+  ansible.builtin.assert:
+    that:
+      - 2019 not in allowed_ports
+      - 2020 not in allowed_ports
+    fail_msg: "CRITICAL: Caddy admin API (2019) / Prometheus API (2020) found in allowed_ports. These control-plane ports are denied on all interfaces (zero-trust, contract §6/M1)."
+  tags: [l2-hardening]
+
 - name: "SC-7 | Install UFW package"
   ansible.builtin.apt:
     name: ufw
@@ -122,6 +130,30 @@
     port: "{{ item | string }}"
     proto: "{{ 'udp' if item | int == 41641 else 'tcp' }}"
   loop: "{{ allowed_ports }}"
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+# ─── Deny Caddy admin API on ALL interfaces (zero-trust) ─────────────────
+# Closes the container -> host path: the Docker bridge allow below
+# (172.16.0.0/12) would otherwise permit any container to reach a host-bound
+# 0.0.0.0:2019 admin API (systemd/bare-metal deployments). The admin API
+# accepts config POSTs, so it is denied everywhere except loopback
+# (contract §6/M1).
+- name: "SC-7 | Deny Caddy admin API on all interfaces (2019)"
+  community.general.ufw:
+    rule: deny
+    port: "2019"
+    proto: tcp
+    direction: in
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
+- name: "SC-7 | Deny Caddy Prometheus API on all interfaces (2020)"
+  community.general.ufw:
+    rule: deny
+    port: "2020"
+    proto: tcp
+    direction: in
   notify: Reload UFW
   tags: [firewall, l2-compliance, nist, sc-7]
 

@@ -92,3 +92,38 @@
   notify: Restart auditd
   when: _caddy_installed.stat.exists
   tags: [audit, l2-compliance, nist, au-12]
+
+# ------------------------------------------------------------------------------
+# Per-file FIM (contract §7/§9, PCI 10.3.4): directory watches cover the dir
+# inode only; the three D6 log streams get explicit file-level rules.
+# ------------------------------------------------------------------------------
+
+- name: "AU-12 | Add auditd rule - Caddy access log tampering (per-file, D6)"
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/nist-hardening.rules
+    regexp: "caddy_access_log_change$"
+    line: "-w {{ app_base_dir }}/ingress/caddy-data/logs/access.log -p wa -k caddy_access_log_change"
+    state: present
+  notify: Restart auditd
+  when: _caddy_installed.stat.exists
+  tags: [audit, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Add auditd rule - Caddy runtime log tampering (per-file, D6)"
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/nist-hardening.rules
+    regexp: "caddy_runtime_log_change$"
+    line: "-w {{ app_base_dir }}/ingress/caddy-data/logs/caddy.log -p wa -k caddy_runtime_log_change"
+    state: present
+  notify: Restart auditd
+  when: _caddy_installed.stat.exists
+  tags: [audit, l2-compliance, nist, au-12]
+
+- name: "AU-12 | Add auditd rule - Coraza audit log tampering (per-file, D6)"
+  ansible.builtin.lineinfile:
+    path: /etc/audit/rules.d/nist-hardening.rules
+    regexp: "caddy_audit_log_change$"
+    line: "-w {{ app_base_dir }}/ingress/caddy-data/logs/coraza-audit.log -p wa -k caddy_audit_log_change"
+    state: present
+  notify: Restart auditd
+  when: _caddy_installed.stat.exists
+  tags: [audit, l2-compliance, nist, au-12]

@@ -12,8 +12,11 @@ firewall_ssh_rate_limit: false # No rate limit (VPN only)
 firewall_ssh_vpn_only: true # SSH only via Tailscale
 
 # --- Web Traffic ---
-firewall_allow_http: true # Public apps via Caddy proxy
-firewall_allow_https: true
+# Public web access (80/443 TCP+UDP) is gated on group membership
+# ('brain' in group_names) in the L2 firewall rules - NOT by variables here.
+# Note: muscle nodes with ingress routes pass the L4 role but are firewalled
+# until they join the brain ingress group (known limitation, see contract §10).
+# Legacy firewall_allow_http/firewall_allow_https were removed: nothing consumed them.
 
 # --- Docker Cluster ---
 firewall_allow_docker_ssh: true # Allow containers to access SSH
