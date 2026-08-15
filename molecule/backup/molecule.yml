@@ -5,7 +5,7 @@ driver:
   name: docker
 platforms:
   - name: debian12-backup
-    image: geerlingguy/docker-debian12-ansible:latest
+    image: geerlingguy/docker-debian12-ansible@sha256:0b96d8780359f0833bf2d81b5b26ede106beae09c7f22b19a7abeef54770551f
     pre_build_image: true
     command: /lib/systemd/systemd
     tmpfs:

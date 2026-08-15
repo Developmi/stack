@@ -5,7 +5,7 @@ driver:
   name: docker
 platforms:
   - name: debian12-l1-os-baseline
-    image: geerlingguy/docker-debian12-ansible:latest
+    image: geerlingguy/docker-debian12-ansible@sha256:0b96d8780359f0833bf2d81b5b26ede106beae09c7f22b19a7abeef54770551f
     pre_build_image: true
     command: /lib/systemd/systemd
     tmpfs:
@@ -22,7 +22,7 @@ platforms:
       - seccomp=unconfined
       - apparmor=unconfined
   - name: ubuntu2204-l1-os-baseline
-    image: geerlingguy/docker-ubuntu2204-ansible:latest
+    image: geerlingguy/docker-ubuntu2204-ansible@sha256:ed3b7bae425dee1558dc939230de4d2dbe1e3df61e4534a2a786c20ad95922a2
     pre_build_image: true
     command: /lib/systemd/systemd
     tmpfs:
