@@ -13,6 +13,14 @@
     fail_msg: "CRITICAL: Port 22 found in allowed_ports. Remove it - SSH access is controlled by ssh_allowed_sources (admin_cidr only per L2 contract §Promise 2)."
   tags: [l2-hardening]
 
+- name: "L2 | Fail-safe - Caddy admin ports must not be in allowed_ports"
+  ansible.builtin.assert:
+    that:
+      - 2019 not in allowed_ports
+      - 2020 not in allowed_ports
+    fail_msg: "CRITICAL: Caddy admin API (2019) / Prometheus API (2020) found in allowed_ports. These control-plane ports are denied on all interfaces (zero-trust, contract §6/M1)."
+  tags: [l2-hardening]
+
 # ponytail: nf_conntrack may not be auto-loaded on minimal installs,
 # causing "ct state" rules to fail with "No such file or directory".
 # Reference: https://dietpi.com/forum/t/solved-problems-starting-nftables/6226
@@ -80,6 +88,13 @@
               {% for port in allowed_ports %}
               tcp dport {{ port }} accept
               {% endfor %}
+
+              # Deny Caddy admin + Prometheus API on ALL interfaces (zero-trust).
+              # Must precede the Docker bridge accept below: it closes the
+              # container -> host path to a host-bound 0.0.0.0:2019 admin API
+              # (systemd/bare-metal deployments). The admin API accepts config
+              # POSTs (contract §6/M1).
+              tcp dport { 2019, 2020 } drop
 
               # Docker bridge internal
               ip saddr 172.16.0.0/12 accept
