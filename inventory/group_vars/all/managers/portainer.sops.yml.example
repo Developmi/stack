@@ -17,9 +17,9 @@
 # The map keys MUST equal inventory hostnames (e.g. brain-1, muscle-1 in
 # hosts.ini.example). The portainer role asserts
 # portainer_edge_keys_by_node[inventory_hostname] and fails loudly when the
-# key is missing (F4). Replace the generic slugs below with your own host
-# naming before encrypting in your private clone.
+# key is missing (F4). Keys below match the hostnames in hosts.ini.example;
+# keep them in sync when you rename hosts in your private clone.
 # =============================================================================
 portainer_edge_keys_by_node:
-  node_control: "REPLACE_WITH_EDGE_KEY"
-  node_worker_1: "REPLACE_WITH_EDGE_KEY"
+  brain-1: "REPLACE_WITH_EDGE_KEY"
+  muscle-1: "REPLACE_WITH_EDGE_KEY"

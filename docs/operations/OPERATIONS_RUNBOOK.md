@@ -622,7 +622,11 @@ make run PLAYBOOK=playbooks/l4/edge.yml TAGS='l4-networking,caddy,ingress'
 
 ```bash
 # Check Caddy container running
-uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker ps --filter name=caddy --format '{{.Status}}'"
+uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker ps --filter name=caddy-waf --format '{{.Status}}'"
+
+# NOTE: the container is named `caddy-waf`; the Compose *service key* is `caddy`
+# (docker compose ... caddy). Use the container name with docker exec/logs/restart,
+# and the service key with docker compose commands.
 
 # Verify TLS endpoint
 curl -fsS https://<public-domain>/health 2>&1 | head -5
@@ -980,7 +984,7 @@ This executes `playbooks/l2/compliance.yml` with NIST 800-53 compliance tags, co
 | Component           | Restart Command                                                                                         | Notes                                    |
 | ------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | Docker Engine       | `uv run ansible all -i inventory/hosts.ini -m shell -a "systemctl restart docker" --become`             | Check containers restart cleanly         |
-| Caddy (WAF)         | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker restart caddy"`                       | Verify TLS endpoint after restart        |
+| Caddy (WAF)         | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker restart caddy-waf"`                  | Verify TLS endpoint after restart        |
 | Portainer           | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker restart portainer"`                   | UI available within 10s                  |
 | CrowdSec            | `uv run ansible all -i inventory/hosts.ini -m shell -a "systemctl restart crowdsec" --become`           | Verify with `make verify-crowdsec`       |
 | Tailscale           | `uv run ansible all -i inventory/hosts.ini -m shell -a "systemctl restart tailscaled" --become`         | Verify mesh with `make verify-tailscale` |
@@ -1071,7 +1075,7 @@ Certificates managed via Cloudflare API. Rotation is handled by the Caddy module
 ```bash
 # Force Caddy to renew all certificates
 uv run ansible muscle -i inventory/hosts.ini -m shell -a \
-  "docker exec caddy caddy reload"
+  "docker exec caddy-waf caddy reload"
 
 # Verify certificate expiry dates
 echo | openssl s_client -servername <domain> -connect <domain>:443 2>/dev/null \
@@ -1180,7 +1184,7 @@ per-host timers on muscle, remote dump over the tailnet, or DB placement.
 | L2    | SSH config       | `uv run ansible all -i inventory/hosts.ini -m shell -a "sshd -T \| grep -E 'PermitRoot                                             | PasswordAuth'" --become` |
 | L2    | CrowdSec metrics | `make verify-crowdsec`                                                                                                             |
 | L3    | Metrics flow     | `make verify-observability`                                                                                                        |
-| L4    | Caddy status     | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker logs caddy --tail 20"`                                           |
+| L4    | Caddy status     | `uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker logs caddy-waf --tail 20"`                                        |
 | L5    | Backup status    | `make verify-timers`                                                                                                               |
 | L6    | Docker health    | `uv run ansible all -i inventory/hosts.ini -m shell -a "docker info --format '{{.ServerVersion}} running={{.ContainersRunning}}'"` |
 
