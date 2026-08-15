@@ -80,4 +80,4 @@ All new documentation PRs must follow this rule. Existing docs grandfathered - r
 ## App Compose Networks (MUST)
 
 - Static app compose files under `apps/` reference the INTENTIONAL app-exposure bridge named `expose_network` (declared `external: true`). This is deliberate: static compose files cannot interpolate Ansible variables, so `shared_network_name` governs Ansible roles/templates/playbooks ONLY.
-- Any Docker Compose app that must be reachable through Caddy (compose or Portainer) MUST join the SAME shared network (`{{ shared_network_name }}` / `public_net`) in addition to `expose_network`.
+- Apps reachable through Caddy (compose or Portainer) MUST eventually join the SAME shared network (`{{ shared_network_name }}` / `public_net`) in addition to `expose_network`. This wiring is a planned follow-up (OpenSpec D9, deferred wiring): the 11 app stacks currently join only `expose_network`, and changing the 12 compose files is explicitly out of scope for the consolidation work. Until the follow-up lands, Caddy does not resolve app services across networks; verify reachability before enabling a new route.
