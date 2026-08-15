@@ -91,6 +91,9 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pin pre-license version: v8.24+ requires a license for organization
+          # domains; this is a public repo, contributors must run without one.
+          GITLEAKS_VERSION: v8.23.3
 
   validate-roles:
     name: Validate Role Structure

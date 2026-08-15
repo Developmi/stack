@@ -14,8 +14,11 @@ repos:
           )$
 
   # Secret leak scanning (gitleaks) - D10 human-error safety net
+  # Pinned to v8.23.3: gitleaks v8.24+ requires a license for organization
+  # domains (the committer email domain). This repo is public/opensource, so
+  # contributors must be able to run the hook without a license.
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.24.3
+    rev: v8.23.3
     hooks:
       - id: gitleaks
         args: [--verbose, --redact, --staged]
