@@ -119,7 +119,7 @@
   ansible.builtin.debug:
     msg: >-
       Skipping observability stack: run the L4 stack first
-      (make deploy-edge EDGE=caddy HOST=<host>) to create
+      (make deploy-edge BACKEND=caddy TARGET=<host>) to create
       {{ observability_stack_network_name }} for this layer.
   when:
     - observability_stack_network_external | bool
@@ -231,8 +231,58 @@
       storage_config:
         filesystem:
           directory: /loki/chunks
+      # PCI DSS 10.5: retain >= 12 months; >= 3 months immediately available.
+      # The filesystem store requires the compactor for retention to apply.
+      limits_config:
+        retention_period: 8760h
+      compactor:
+        working_directory: /loki/compactor
+        retention_enabled: true
     mode: "0644"
   tags: [l3-observability, observability, monitoring, stack, observability_stack, loki]
+
+- name: Create Alloy config (River — Caddy log shipping, D6)
+  ansible.builtin.copy:
+    dest: "{{ app_base_dir }}/observability/alloy-config.alloy"
+    content: |
+      // Caddy log shipping to Loki (contract §7, D6).
+      // Alloy replaces promtail (EOL 2026-03-02). Push API is stable
+      // against Loki 3.6.x. Non-__path__ target keys become stream labels.
+      loki.source.file "caddy_access" {
+        targets = [{__path__ = "/var/log/caddy/access.log", job = "caddy-access", instance = "${ALLOY_INSTANCE}"}]
+        forward_to = [loki.write.caddy.receiver]
+        tail_from_end = true
+      }
+
+      loki.source.file "caddy_runtime" {
+        targets = [{__path__ = "/var/log/caddy/caddy.log", job = "caddy-runtime", instance = "${ALLOY_INSTANCE}"}]
+        forward_to = [loki.write.caddy.receiver]
+        tail_from_end = true
+      }
+
+      loki.source.file "caddy_audit" {
+        targets = [{__path__ = "/var/log/caddy/coraza-audit.log", job = "caddy-audit", instance = "${ALLOY_INSTANCE}"}]
+        forward_to = [loki.write.caddy.receiver]
+        tail_from_end = true
+      }
+
+      loki.write "caddy" {
+        endpoint {
+          url = "http://loki:3100/loki/api/v1/push"
+        }
+      }
+    mode: "0644"
+  tags: [l3-observability, observability, monitoring, stack, observability_stack, alloy, loki]
+
+- name: Ensure Alloy data directory exists (UID 1337 — Caddy UID)
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/observability/alloy-data"
+    state: directory
+    mode: "0775"
+    owner: "{{ (observability_effective_uid | int) + 1337 }}"
+    group: "{{ (observability_effective_gid | int) + 1337 }}"
+    recurse: true
+  tags: [l3-observability, observability, monitoring, stack, observability_stack, alloy]
 
 - name: Create Grafana datasource config
   ansible.builtin.copy:

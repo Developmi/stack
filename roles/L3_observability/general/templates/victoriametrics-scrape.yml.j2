@@ -33,6 +33,26 @@ scrape_configs:
     static_configs:
       - targets: ['blackbox-exporter:{{ observability_blackbox_port }}']
 
+  # --- Caddy Edge Proxy (Admin API /metrics, contract M1) ---
+  # Requires caddy_admin_enabled: true — one flag, two consumers (the
+  # caddy-waf-ui and VictoriaMetrics). Scraped over the shared
+  # observability/public_net network; the admin endpoint is NEVER
+  # host-published (contract §6).
+{% if caddy_admin_enabled | default(false) %}
+  - job_name: 'caddy'
+    static_configs:
+      - targets: ['caddy-waf:2019']
+        labels:
+          instance: '{{ inventory_hostname }}'
+{% endif %}
+
+  # --- Grafana Alloy (Log Shipping Agent self-metrics, D6) ---
+  - job_name: 'alloy'
+    static_configs:
+      - targets: ['alloy:12345']
+        labels:
+          instance: '{{ inventory_hostname }}'
+
   # --- App Profile Scrape Jobs (L5-driven, graceful skip if app_profiles empty) ---
 {% for app in app_profiles | default([]) %}
 {% if app.monitoring is defined and app.monitoring.scrape_port is defined %}

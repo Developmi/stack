@@ -257,9 +257,67 @@ groups:
               expression: A
               conditions:
                 - evaluator:
-                    type: lt
+                    type: gt
                     params:
                       - {{ observability_alert_cert_expiry_days | int * 86400 }}
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+
+      # --- CaddyWAFDetections: Coraza audit log records WAF events (M5) ---
+      # Alerting mechanism for M5: audit JSONL (job=caddy-audit) → Loki →
+      # this rule. Fires on ANY recorded event (blocked with SecRuleEngine On,
+      # detected with DetectionOnly) — the "messages" array is non-empty when
+      # Coraza matched rules. Threshold/window tunable via defaults.
+      - uid: l3-caddywafdetections
+        title: CaddyWAFDetections
+        for: 1m
+        labels:
+          severity: warning
+          layer: l4-caddy-waf
+        annotations:
+          summary: "Coraza WAF events detected for {{ '{{ $labels.instance }}' }}"
+          description: "Coraza audit log recorded WAF events on {{ '{{ $labels.instance }}' }} ({{ '{{ $value }}' }} events in the last {{ observability_alert_caddy_waf_window }})."
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: loki
+            model:
+              expr: 'count_over_time({job="caddy-audit"} | json | messages != "" [{{ observability_alert_caddy_waf_window }}])'
+              instant: true
+              range: false
+              refId: A
+              datasource:
+                type: loki
+                uid: loki
+              intervalMs: 1000
+              maxDataPoints: 43200
+            relativeTimeRange:
+              from: 300
+              to: 0
+          - refId: C
+            datasourceUid: __expr__
+            type: threshold
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - {{ observability_alert_caddy_waf_threshold }}
                   operator:
                     type: and
                   query:

@@ -32,6 +32,36 @@ services:
       - {{ observability_stack_network_name }}
 
   # ----------------------------------------------------------------
+  # ALLOY (log shipping: Caddy files -> Loki) — D6 contract §7
+  # ----------------------------------------------------------------
+  # Ships the three Caddy log streams (access/runtime/audit) from the
+  # ingress caddy-data/logs dir to Loki over the stable push API.
+  # Runs as the Caddy UID (caddy_user_uid/gid) so it can read the 0640
+  # log files directly — no ACL extension needed, userns-safe by
+  # construction. Replaces promtail (EOL 2026-03-02).
+  alloy:
+    image: {{ alloy_image }}
+    container_name: alloy
+    restart: unless-stopped
+    user: "{{ caddy_user_uid }}:{{ caddy_user_gid }}"
+    volumes:
+      - {{ app_base_dir }}/observability/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - {{ app_base_dir }}/ingress/caddy-data/logs:/var/log/caddy:ro
+      - {{ app_base_dir }}/observability/alloy-data:/var/lib/alloy/data
+    command:
+      - 'run'
+      - '/etc/alloy/config.alloy'
+      - '--server.http.listen-addr=0.0.0.0:12345'
+      - '--storage.path=/var/lib/alloy/data'
+    environment:
+      - ALLOY_INSTANCE={{ inventory_hostname }}
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - {{ observability_stack_network_name }}
+
+  # ----------------------------------------------------------------
   # GRAFANA
   # ----------------------------------------------------------------
   grafana:
