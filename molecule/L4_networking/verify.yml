@@ -147,3 +147,141 @@
           - (caddy_user_check.ansible_facts.getent_passwd['caddy'])[5] == '/usr/sbin/nologin'
         fail_msg: "SDD Failed: Caddy user has a login shell"
         success_msg: "Caddy user shell is /usr/sbin/nologin"
+
+    # ---------------------------------------------------------------------------
+    # CONTRACT: ui_managed overlay import contract (D2)
+    # Mirrors caddy-waf-ui tests/integration/caddyfile_test.go assertions against
+    # the tracked SSOT render (Caddyfile.example.j2 -> Caddyfile.contract).
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Slurp the contract-rendered Caddyfile"
+      ansible.builtin.slurp:
+        src: /opt/user/apps/testing/ingress/Caddyfile.contract
+      register: contract_slurp
+
+    - name: "GIVEN: Decode contract render into facts"
+      ansible.builtin.set_fact:
+        contract_caddyfile: "{{ contract_slurp.content | b64decode }}"
+        contract_lines: "{{ (contract_slurp.content | b64decode).split('\n') | map('trim') | list }}"
+        contract_block_api: "{{ (contract_slurp.content | b64decode) | regex_search('(?s)api\\.example\\.com \\{.*?\\n\\}') }}"
+        contract_block_wildcard: "{{ (contract_slurp.content | b64decode) | regex_search('(?s)\\*\\.example\\.com \\{.*?\\n\\}') }}"
+        contract_block_plain: "{{ (contract_slurp.content | b64decode) | regex_search('(?s)plain\\.example\\.com \\{.*?\\n\\}') }}"
+        contract_block_ws: "{{ (contract_slurp.content | b64decode) | regex_search('(?s)ws\\.example\\.com \\{.*?\\n\\}') }}"
+        contract_block_legacy: "{{ (contract_slurp.content | b64decode) | regex_search('(?s)test\\.example\\.com \\{.*?\\n\\}') }}"
+
+    - name: "THEN: Managed api.example.com imports ip-rules before waf, never import waf (D2)"
+      ansible.builtin.assert:
+        that:
+          - contract_block_api is not none
+          - contract_block_api.find("import /etc/caddy/ui-managed/ip-rules-api_example_com.conf") >= 0
+          - contract_block_api.find("import /etc/caddy/ui-managed/waf-api_example_com.conf") > contract_block_api.find("import /etc/caddy/ui-managed/ip-rules-api_example_com.conf")
+          - '"import waf" not in contract_block_api'
+          - '"route /waf*" not in contract_block_api'
+          - '"coraza_waf" not in contract_block_api'
+        fail_msg: "SDD Failed: managed block violates D2 overlay import contract (ip-rules before waf, no import waf)"
+        success_msg: "Managed api.example.com block satisfies the D2 import contract"
+
+    - name: "THEN: Managed wildcard *.example.com escapes slug per D5 (wildcard_example_com)"
+      ansible.builtin.assert:
+        that:
+          - contract_block_wildcard is not none
+          - contract_block_wildcard.find("import /etc/caddy/ui-managed/ip-rules-wildcard_example_com.conf") >= 0
+          - contract_block_wildcard.find("import /etc/caddy/ui-managed/waf-wildcard_example_com.conf") > contract_block_wildcard.find("import /etc/caddy/ui-managed/ip-rules-wildcard_example_com.conf")
+          - '"import waf" not in contract_block_wildcard'
+          - '"route /waf*" not in contract_block_wildcard'
+          - '"coraza_waf" not in contract_block_wildcard'
+          - '"*_example_com" not in contract_caddyfile'
+        fail_msg: "SDD Failed: wildcard slug not escaped (raw * would trigger Caddy glob semantics)"
+        success_msg: "Wildcard block uses escaped slug wildcard_example_com (D5)"
+
+    - name: "THEN: Unmanaged plain.example.com keeps import waf (D1)"
+      ansible.builtin.assert:
+        that:
+          - contract_block_plain is not none
+          - '"import waf" in contract_block_plain'
+          - '"route /waf*" in contract_block_plain'
+          - '"ui-managed" not in contract_block_plain'
+        fail_msg: "SDD Failed: unmanaged block lost the waf snippet import"
+        success_msg: "Unmanaged plain.example.com keeps the baseline waf snippet"
+
+    - name: "THEN: Unmanaged ws.example.com keeps websocket bypass and import waf"
+      ansible.builtin.assert:
+        that:
+          - contract_block_ws is not none
+          - '"@ws" in contract_block_ws'
+          - '"import waf" in contract_block_ws'
+          - '"ui-managed" not in contract_block_ws'
+        fail_msg: "SDD Failed: websocket unmanaged block violated the contract"
+        success_msg: "Unmanaged ws.example.com keeps websocket bypass with waf snippet"
+
+    - name: "THEN: Line-based import counts match the D2 contract (4 ui-managed, 2 import waf)"
+      ansible.builtin.assert:
+        that:
+          - contract_lines | select('match', '^import /etc/caddy/ui-managed/') | list | length == 4
+          - contract_lines | select('equalto', 'import waf') | list | length == 2
+        fail_msg: "SDD Failed: import counts do not match the contract (expected 4 ui-managed, 2 import waf)"
+        success_msg: "Import counts match the contract (4 ui-managed imports, 2 import waf)"
+
+    - name: "THEN: Legacy test.example.com (import_waf: false) remains untouched"
+      ansible.builtin.assert:
+        that:
+          - contract_block_legacy is not none
+          - '"ui-managed" not in contract_block_legacy'
+          - '"import waf" not in contract_block_legacy'
+        fail_msg: "SDD Failed: legacy no-waf service was altered"
+        success_msg: "Legacy test.example.com block unchanged"
+
+    # ------------------------------------------------------------------------------
+    # D2 | UI-MANAGED INFRASTRUCTURE (dirs + placeholders) — contract §5/§7
+    # ------------------------------------------------------------------------------
+    - name: "GIVEN: ui-managed and backups directories exist with caddy ownership"
+      ansible.builtin.stat:
+        path: /opt/user/apps/testing/ingress/{{ item }}
+      loop:
+        - "ui-managed"
+        - "backups"
+      register: ui_managed_dirs
+
+    - name: "THEN: Both directories exist, are directories and caddy-owned"
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isdir
+          - item.stat.pw_name == 'caddy'
+        fail_msg: "SDD Failed: {{ item.item }} directory missing or not caddy-owned"
+        success_msg: "{{ item.item }} directory exists and is caddy-owned (D2)"
+      loop: "{{ ui_managed_dirs.results }}"
+
+    - name: "GIVEN: D5 placeholder files for ui-managed contract services"
+      ansible.builtin.stat:
+        path: /opt/user/apps/testing/ingress/ui-managed/{{ item }}
+      loop:
+        - "ip-rules-api_example_com.conf"
+        - "waf-api_example_com.conf"
+        - "ip-rules-wildcard_example_com.conf"
+        - "waf-wildcard_example_com.conf"
+        - "exclusions-api_example_com.conf"
+        - "exclusions-wildcard_example_com.conf"
+      register: ui_managed_placeholders
+
+    - name: "THEN: All placeholders exist and are regular files"
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg
+        fail_msg: "SDD Failed: placeholder {{ item.item }} missing (Caddy would hard-fail the import)"
+        success_msg: "Placeholder {{ item.item }} present (D5)"
+      loop: "{{ ui_managed_placeholders.results }}"
+
+    - name: "GIVEN: waf placeholder content for api.example.com"
+      ansible.builtin.slurp:
+        src: /opt/user/apps/testing/ingress/ui-managed/waf-api_example_com.conf
+      register: waf_placeholder
+
+    - name: "THEN: waf placeholder carries the baseline DetectionOnly engine (never empty)"
+      ansible.builtin.assert:
+        that:
+          - '"SecRuleEngine DetectionOnly" in waf_placeholder.content | b64decode'
+          - '"# domain: api.example.com" in waf_placeholder.content | b64decode'
+          - '"SecAuditLog /data/logs/coraza-audit.log" in waf_placeholder.content | b64decode'
+        fail_msg: "SDD Failed: waf placeholder is not the DetectionOnly baseline (M5)"
+        success_msg: "waf placeholder is the DetectionOnly baseline (D5/M5)"

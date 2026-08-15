@@ -108,7 +108,68 @@
   loop:
     - "caddy-data"
     - "caddy-config"
+    # D2 (caddy-waf-ui contract §5/§7): shared overlay + backups dirs. The UI
+    # container must run as UID/GID caddy_user_uid:gid (1337) to write them.
+    - "ui-managed"
+    - "backups"
   tags: [l4-networking, caddy]
+
+# ------------------------------------------------------------------------------
+# D2 | UI-MANAGED OVERLAY PLACEHOLDERS (caddy-waf-ui contract, D5)
+# ------------------------------------------------------------------------------
+# Specific import files are a HARD-FAIL for Caddy when missing, so every
+# ui_managed service needs its placeholder before first boot. Missing -> create;
+# present -> NEVER overwrite (UI owns the content after its first write).
+- name: D2 | Pre-create ip-rules placeholders for ui-managed services (empty, never overwrite)
+  ansible.builtin.copy:
+    content: ""
+    dest: "{{ app_base_dir }}/ingress/ui-managed/ip-rules-{{ item.domain | lower | replace('.', '_') | replace('*', 'wildcard') | replace('?', 'qmark') | replace('-', '_') }}.conf"
+    mode: "0644"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+    force: false
+  loop: "{{ ingress_services | default([]) }}"
+  when: item.ui_managed | default(false)
+  tags: [l4-networking, caddy, d2]
+
+- name: D2 | Pre-create waf placeholders for ui-managed services (baseline DetectionOnly, never overwrite)
+  ansible.builtin.copy:
+    content: |-
+      # caddy-waf-ui managed — do not edit manually
+      # domain: {{ item.domain }} | mode: DetectionOnly | updated: {{ ansible_date_time.iso8601 }}
+      coraza_waf {
+          directives `
+              Include /etc/caddy/coraza.conf
+              Include /etc/caddy/owasp-crs/crs-setup.conf
+              Include /etc/caddy/owasp-crs/rules/*.conf
+              SecRuleEngine DetectionOnly
+              Include /etc/caddy/ui-managed/exclusions-{{ item.domain | lower | replace('.', '_') | replace('*', 'wildcard') | replace('?', 'qmark') | replace('-', '_') }}.conf
+              SecAuditEngine RelevantOnly
+              SecAuditLog /data/logs/coraza-audit.log
+              SecAuditLogFormat JSON
+              SecAuditLogParts ABCDEFGHIJKZ
+          `
+      }
+    dest: "{{ app_base_dir }}/ingress/ui-managed/waf-{{ item.domain | lower | replace('.', '_') | replace('*', 'wildcard') | replace('?', 'qmark') | replace('-', '_') }}.conf"
+    mode: "0644"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+    force: false
+  loop: "{{ ingress_services | default([]) }}"
+  when: item.ui_managed | default(false)
+  tags: [l4-networking, caddy, d2]
+
+- name: D2 | Pre-create exclusions placeholders for ui-managed services (empty, never overwrite)
+  ansible.builtin.copy:
+    content: ""
+    dest: "{{ app_base_dir }}/ingress/ui-managed/exclusions-{{ item.domain | lower | replace('.', '_') | replace('*', 'wildcard') | replace('?', 'qmark') | replace('-', '_') }}.conf"
+    mode: "0644"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+    force: false
+  loop: "{{ ingress_services | default([]) }}"
+  when: item.ui_managed | default(false)
+  tags: [l4-networking, caddy, d2]
 
 - name: Create host cert directory for container bind-mount
   ansible.builtin.file:
@@ -157,6 +218,17 @@
 - name: AU-12/SI-4 | Ensure Coraza audit log file exists and is writable
   ansible.builtin.file:
     path: "{{ app_base_dir }}/ingress/caddy-data/logs/coraza-audit.log"
+    state: touch
+    mode: "0640"
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
+    modification_time: preserve
+    access_time: preserve
+  tags: [l4-networking, caddy, nist, au-12, si-4]
+
+- name: AU-12/SI-4 | Ensure Caddy runtime log file exists and is writable (D6)
+  ansible.builtin.file:
+    path: "{{ app_base_dir }}/ingress/caddy-data/logs/caddy.log"
     state: touch
     mode: "0640"
     owner: "{{ _caddy_effective_uid | int }}"
