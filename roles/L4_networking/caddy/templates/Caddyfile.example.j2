@@ -13,13 +13,25 @@
 #   SC-28  | All domains and upstreams live exclusively in the encrypted SOPS file.
 #   SC-7   | Per-service security headers in site blocks.
 #   SC-8   | TLS 1.2/1.3 enforced; HTTP→HTTPS redirect; Cloudflare Origin Pull supported.
-#   AU-12  | JSON access log + Coraza audit log to /data/logs for CrowdSec ingestion.
-#   SI-4   | OWASP CRS via Coraza WAF; per-service enforcement mode (waf_mode).
-#   AC-3   | Admin API disabled in production; localhost-only when troubleshooting.
+#   AU-12  | D6 log pipeline: access + runtime + Coraza audit logs as FILES in
+#           | /data/logs (single writer per stream, native rotation).
+#           | Consumers: CrowdSec (access.log) + promtail → Loki (all three).
+#           | SI-4   | OWASP CRS via Coraza WAF; per-service enforcement mode (waf_mode).
+#   AC-3   | Admin API off by default; when the caddy-waf-ui is deployed it must
+#           | be enabled with enforce_origin + container-network binding (M1, §6).
 #
 # ROUTING: for-loop iterates ingress_services, skipping entries whose target_group
 # does not intersect with the current node's group_names OR match caddy_node_id.
 # target_group examples: "muscle" | "brain" | "muscle-1" | ["muscle-1", "brain-1"]
+#
+# UI-MANAGED SITES (caddy-waf-ui contract, D2):
+#   svc.ui_managed: true  → per-slug overlay imports (ip-rules first, then waf),
+#                           NEVER import waf nor route /waf* (double coraza_waf breaks reload).
+#   svc.ui_managed: false → current behavior (import waf + route /waf* per waf_mode).
+#   Slug = DomainSlug contract: lowercase; '.'→'_'; '*'→'wildcard'; '?'→'qmark'; '-'→'_'.
+#   The role pre-creates placeholders /etc/caddy/ui-managed/{ip-rules,waf,exclusions}-{slug}.conf
+#   (waf placeholder = baseline DetectionOnly, NEVER empty; missing file = Caddy hard-fail).
+#   After the first UI write the files are UI-owned — the role never overwrites them.
 #
 # WAF MODE (ADR-05):
 #   waf_mode_default - fallback for services without explicit waf_mode
@@ -29,31 +41,34 @@
 # (Coraza doesn't support WS upgrades). All other HTTP goes through WAF.
 {
     {% if caddy_admin_enabled | default(false) %}
-    # AC-3 | Admin API on localhost for troubleshooting only
-    admin localhost:2019
+    # M1 (caddy-waf-ui contract) | Admin API on the container network only:
+    #   - binds 0.0.0.0:2019 INSIDE the container so the UI (caddy-waf:2019)
+    #     and VictoriaMetrics scraping can reach it over the internal network;
+    #   - NEVER published to the host (compose publishes only 80/443);
+    #   - enforce_origin rejects cross-origin browser requests;
+    #   - mTLS (identity + client certs) is the contract §6 target state.
+    admin 0.0.0.0:2019 {
+        enforce_origin
+    }
     {% else %}
-    # AC-3 | Admin API disabled in production
+    # AC-3 | Admin API disabled in production (default; no UI deployed)
     admin off
     {% endif %}
     email {{ caddy_acme_email | default('') }}
     order coraza_waf first
     order rate_limit before basicauth
 
-    # AU-12 | Structured JSON access log to stdout (Loki ingestion via Docker log driver)
+    # AU-12 (D6) | Runtime/global log → FILE (Caddy internal events, NOT access logs).
+    # Contract §7: single writer per stream; promtail scrapes /data/logs/caddy.log.
+    # Native rotation: roll at 30MiB, keep 5 files, max 720h (30 days) per file.
     log {
-        output stdout
+        output file /data/logs/caddy.log {
+            roll_size 30MiB
+            roll_keep 5
+            roll_keep_for 720h
+        }
         format json
     }
-
-    # Alternative: file-based log rotation for non-Docker deployments
-    # log {
-    #     output file /data/logs/access.log {
-    #         roll_size 100mb
-    #         roll_keep 5
-    #         roll_keep_for 720h
-    #     }
-    #     format json
-    # }
 
     # Cloudflare real IP restoration (trusted_proxies)
     servers {
@@ -78,11 +93,13 @@
 }
 
 # SC-8 | HTTP → HTTPS redirect
+# D6: no access log here — redirects are logged at the target :443 site (avoids
+# duplicate lines for the same request in CrowdSec/promtail).
 :80 {
     redir https://{host}{uri} permanent
 }
 
-# Health check (Docker)
+# Health check (Docker) — no access log (probe noise)
 :2020 {
     respond "OK" 200
 }
@@ -138,10 +155,30 @@
 {% if _tg | select('in', group_names) | list | length > 0 or caddy_node_id in _tg %}
 {% set ph = svc.proxy_headers | default({}) %}
 {% set _waf_mode = svc.waf_mode | default(waf_mode_default) %}
+{% set _ui_managed = svc.ui_managed | default(false) %}
+{% set _slug = svc.domain | lower | replace('.', '_') | replace('*', 'wildcard') | replace('?', 'qmark') | replace('-', '_') %}
 {{ svc.domain }} {
     {% set _profile = ingress_security_profiles[svc.security_profile] %}
     {% if _profile.import_vpn_only | default(false) %}
     import vpn_only
+    {% endif %}
+
+    # AU-12 (D6) | Access log → FILE, shared single writer across sites.
+    # Contract §7: consumers = CrowdSec acquisition (type: caddy) + promtail → Loki.
+    log {
+        output file /data/logs/access.log {
+            roll_size 30MiB
+            roll_keep 5
+            roll_keep_for 720h
+        }
+        format json
+    }
+
+    {% if _ui_managed %}
+    # D2 | UI-managed site: per-slug overlay imports (order: ip-rules first —
+    # blocked traffic never reaches Coraza). Files owned by caddy-waf-ui after first write.
+    import /etc/caddy/ui-managed/ip-rules-{{ _slug }}.conf
+    import /etc/caddy/ui-managed/waf-{{ _slug }}.conf
     {% endif %}
 
     {% if ph.websocket | default(false) %}
@@ -161,7 +198,7 @@
         }
     }
     handle {
-        {% if _profile.import_waf | default(false) %}
+        {% if not _ui_managed and _profile.import_waf | default(false) %}
         import waf
         route /waf* {
             coraza_waf {
@@ -181,7 +218,7 @@
         }
     }
     {% else %}
-    {% if _profile.import_waf | default(false) %}
+    {% if not _ui_managed and _profile.import_waf | default(false) %}
     import waf
     route /waf* {
         coraza_waf {
