@@ -18,6 +18,14 @@ services:
       - {{ app_base_dir }}/ingress/caddy-config:/config
       - /srv/caddy/certs:/etc/caddy/certs:ro
       - {{ app_base_dir }}/ingress/Caddyfile:/etc/caddy/Caddyfile:ro
+      # D2 (caddy-waf-ui contract) | Shared ui-managed overlay directory, READ-ONLY
+      # for Caddy. The role pre-creates it plus the per-slug placeholder files
+      # (waf = baseline DetectionOnly, ip-rules = empty) so Caddy boots even
+      # before the UI writes; after the first UI write the files are UI-owned.
+      # Platform deployments: run the caddy-waf-ui container as UID/GID
+      # {{ caddy_user_uid }}:{{ caddy_user_gid }} so it can write overlays,
+      # /backups and read the audit log (contract §5/§7).
+      - {{ app_base_dir }}/ingress/ui-managed:/etc/caddy/ui-managed:ro
     tmpfs:
       - /tmp:size=64m,noexec,nosuid,nodev
     user: "{{ caddy_user_uid }}:{{ caddy_user_gid }}"

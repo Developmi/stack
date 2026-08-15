@@ -17,10 +17,21 @@
     group: root
   tags: [l4-networking, ingress]
 
+- name: Preflight | Detect Caddyfile path artifact type
+  ansible.builtin.stat:
+    path: "{{ app_base_dir }}/ingress/Caddyfile"
+  register: caddyfile_artifact
+  changed_when: false
+  tags: [l4-networking, ingress]
+
+# Removes ONLY a directory artifact left by a previous failed deploy.
+# A regular file is the normal rendered state and is never deleted, which
+# keeps the render task idempotent (file exists -> unchanged on re-runs).
 - name: Preflight | Remove Caddyfile directory artifact from previous failed deploy
   ansible.builtin.file:
     path: "{{ app_base_dir }}/ingress/Caddyfile"
     state: absent
+  when: caddyfile_artifact.stat.exists and caddyfile_artifact.stat.isdir
   changed_when: false
   tags: [l4-networking, ingress]
 

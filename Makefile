@@ -213,7 +213,7 @@ deploy-edge: ## L4: Deploy edge proxy (BACKEND=caddy, TARGET=<host>)
 	@test -n "$(BACKEND)" || (echo "ERROR: BACKEND is required. Options: caddy. Usage: make deploy-edge BACKEND=caddy TARGET=brain-1"; exit 1)
 	@test -n "$(TARGET)" || (echo "ERROR: TARGET is required. Usage: make deploy-edge BACKEND=caddy TARGET=brain-1"; exit 1)
 	@echo "=== L4: Edge Proxy ($(BACKEND) on $(TARGET)) ==="
-	$(ANSIBLE_RUN) playbooks/l4/edge.yml $(ANSIBLE_FLAGS) --limit "$(TARGET)" -e edge_backend=$(BACKEND) -e target_group=$(TARGET)
+	$(ANSIBLE_RUN) playbooks/l4/edge.yml $(ANSIBLE_FLAGS) --limit "$(TARGET)" -e reverse_proxy_backend=$(BACKEND) -e target_group=$(TARGET)
 
 ## L6
 

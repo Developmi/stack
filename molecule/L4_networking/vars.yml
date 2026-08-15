@@ -21,7 +21,7 @@ caddy_user_gid: 1337
 # ------------------------------------------------------------------------------
 # Container image
 # ------------------------------------------------------------------------------
-caddy_image: ghcr.io/developmi/caddy-waf:v3.2.1
+caddy_image: ghcr.io/developmi/caddy-waf:v3.3.1
 
 # ------------------------------------------------------------------------------
 # Paths
@@ -29,7 +29,7 @@ caddy_image: ghcr.io/developmi/caddy-waf:v3.2.1
 app_base_dir: /opt/user/apps/testing
 
 # ------------------------------------------------------------------------------
-# Ingress routing catalog (minimal - 1 test service)
+# Ingress routing catalog (contract fixture: 2 ui_managed + 2 unmanaged waf + 1 legacy)
 # ------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------
 # Tailscale subnet (required by Caddyfile.j2 template for vpn_only snippet)
@@ -48,6 +48,12 @@ ingress_security_profiles:
     rate_limit: 100
     import_waf: false
     import_vpn_only: false
+  waf:
+    waf_mode: detection_only
+    cors_enabled: false
+    rate_limit: 100
+    import_waf: true
+    import_vpn_only: false
 
 ingress_services:
   - name: test-app
@@ -56,6 +62,34 @@ ingress_services:
     upstream: 127.0.0.1:8080
     security_profile: default
     target_group: brain
+  - name: api-contract
+    client: testclient
+    domain: api.example.com
+    upstream: 127.0.0.1:8080
+    security_profile: default
+    target_group: brain
+    ui_managed: true
+  - name: wildcard-contract
+    client: testclient
+    domain: '*.example.com'
+    upstream: 127.0.0.1:8080
+    security_profile: default
+    target_group: brain
+    ui_managed: true
+  - name: plain-contract
+    client: testclient
+    domain: plain.example.com
+    upstream: 127.0.0.1:8080
+    security_profile: waf
+    target_group: brain
+  - name: ws-contract
+    client: testclient
+    domain: ws.example.com
+    upstream: 127.0.0.1:8080
+    security_profile: waf
+    target_group: brain
+    proxy_headers:
+      websocket: true
 
 # ------------------------------------------------------------------------------
 # Compose policies (avoid actual deploy - test config/infra only)

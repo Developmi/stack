@@ -66,6 +66,17 @@
       tags: [l4-networking]
 
   post_tasks:
+    # ---------------------------------------------------------------------------
+    # Contract render: Caddyfile.example.j2 is the TRACKED SSOT (convention: live
+    # Caddyfile/Caddyfile.j2 are never tracked). Verify assertions run against
+    # this render so the contract test pins the tracked file, never the local one.
+    # ---------------------------------------------------------------------------
+    - name: "Post | Render Caddyfile.example.j2 (tracked SSOT) for contract assertions"
+      ansible.builtin.template:
+        src: ../../roles/L4_networking/caddy/templates/Caddyfile.example.j2
+        dest: "{{ app_base_dir }}/ingress/Caddyfile.contract"
+        mode: "0644"
+
     - name: Post | Verify Caddy system user exists
       ansible.builtin.getent:
         database: passwd

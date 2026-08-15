@@ -10,11 +10,13 @@
 # -----------------------------------------------------------------------------
 # Custom image namespace
 image_namespace: "{{ vault_image_namespace }}"  # AC-3: value from secrets.sops.yml only
-# Caddy image
-caddy_image: "ghcr.io/developmi/caddy-waf:v3.2.1"
+# Caddy image (SSOT: caddy-waf repo releases; v3.3.1 = latest safe release, 2026-08-11)
+caddy_image: "ghcr.io/developmi/caddy-waf:v3.3.1"
 
-# Optional SHA256 digest for supply chain verification (keep with image pinning here)
-# caddy_image_digest: "{{ caddy_image_digest | default('') }}"
+# SHA256 digest (OCI index, multi-arch amd64+arm64) for supply chain verification.
+# Enforced as a verification gate by the L4 role (docker_image_info digest match,
+# tasks/caddy.yml 'Verify Caddy image digest if specified').
+caddy_image_digest: "sha256:379531c0ce56bdb468bcd9e14588f2f1ae095c944f079348d9f9b361db4b867e"
 
 # -----------------------------------------------------------------------------
 # GITHUB CONTAINER REGISTRY
@@ -78,6 +80,10 @@ ansible_python_interpreter: /usr/bin/python3 # Python interpreter for Ansible
 victoriametrics_image: "victoriametrics/victoria-metrics:v1.148.0"
 # Docs: https://github.com/grafana/loki/releases/tag/v3.6.13
 loki_image: "grafana/loki:3.6.13"
+# Docs: https://github.com/grafana/alloy/releases/tag/v1.18.1
+# Alloy is the supported successor of promtail (EOL 2026-03-02); ships Caddy
+# log files (access/runtime/audit) to Loki over the stable push API.
+alloy_image: "grafana/alloy:v1.18.1"
 # Docs: https://github.com/grafana/grafana/releases/tag/v13.1.1
 grafana_image: "grafana/grafana:13.1.1"
 # Docs: https://github.com/prometheus/node_exporter/releases/tag/v1.12.1

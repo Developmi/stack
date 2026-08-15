@@ -13,15 +13,17 @@
 caddy_type: "brain"
 
 # --- Admin API ---
-# NIST AC-3 / IA-2 | Disabled in production.
-# Set to true for troubleshooting (exposes Caddy config API on localhost:2019).
+# NIST AC-3 / IA-2 | Disabled in production (default).
+# Contract M1 (§6): enable ONLY when the caddy-waf-ui is deployed. When enabled,
+# Caddyfile renders `admin 0.0.0.0:2019 { enforce_origin }` — container-network
+# binding so the UI (caddy-waf:2019) and VictoriaMetrics reach it; port 2019 is
+# NEVER published to the host (compose publishes 80/443 only; L2 firewall also
+# denies 2019 on tailscale0). mTLS (identity + client certs) is the §6 target.
 caddy_admin_enabled: false
 
 # --- WAF (Coraza) Enforcement Mode ---
-# caddy_coraza_mode is intentionally NOT set here.
-# It must be defined per host as an inline inventory variable in hosts.ini.
-# Each brain node can have its own state: On (blocking), DetectionOnly (tuning), Off (disabled).
-# The preflight assert in tasks/main.yml fails loudly if any node is missing this variable.
-# Example inventory entries:
-#   brain-1 ansible_host=... caddy_node_id=brain-1 caddy_coraza_mode=On
-#   brain-2 ansible_host=... caddy_node_id=brain-2 caddy_coraza_mode=DetectionOnly
+# WAF mode is per SERVICE, defined in the SOPS routing catalog
+# (ingress_services[].waf_mode / waf_mode_default) and rendered by
+# roles/L4_networking/caddy/templates/Caddyfile.j2 (route /waf*).
+# There is NO per-host WAF variable - the legacy caddy_coraza_mode was removed
+# because nothing consumed it.

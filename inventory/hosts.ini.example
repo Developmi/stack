@@ -5,8 +5,8 @@
 # Never commit hosts.ini (contains server IPs).
 #
 # Variable ownership:
-#   SOPS (secrets.sops.yml) -> secrets, domains, certificates
-#   inventory            -> host-specific values (ansible_user, caddy_node_id, caddy_coraza_mode)
+#   SOPS (secrets.sops.yml) -> secrets, domains, certificates, per-service waf_mode
+#   inventory            -> host-specific values (ansible_user, caddy_node_id)
 #   group_vars           -> group defaults (caddy_type, caddy_admin_enabled)
 #
 # Bootstrap identity convention (bootstrap.yml derives everything from here):
@@ -21,16 +21,15 @@
 # ===== MANAGEMENT NODES =====
 [brain]
 # ansible_user is REQUIRED per host entry (see identity convention above) - set it to the real login
-# caddy_coraza_mode: On | DetectionOnly | Off
-brain-1 ansible_host=YOUR_BRAIN_PUBLIC_IP public_ip=YOUR_BRAIN_PUBLIC_IP node_role=management caddy_node_id=brain-1 caddy_coraza_mode=On
-# brain-2 ansible_host=SECOND_PUBLIC_IP public_ip=SECOND_PUBLIC_IP node_role=management caddy_node_id=brain-2 caddy_coraza_mode=DetectionOnly
+brain-1 ansible_host=YOUR_BRAIN_PUBLIC_IP public_ip=YOUR_BRAIN_PUBLIC_IP node_role=management caddy_node_id=brain-1
+# brain-2 ansible_host=SECOND_PUBLIC_IP public_ip=SECOND_PUBLIC_IP node_role=management caddy_node_id=brain-2
 
 # ===== WORKER NODES =====
 [muscle]
 # ansible_user is REQUIRED per host entry (see identity convention above) - set it to the real login
-# DetectionOnly is recommended before enabling On.
-muscle-1 ansible_host=YOUR_MUSCLE_PUBLIC_IP public_ip=YOUR_MUSCLE_PUBLIC_IP node_role=worker caddy_node_id=muscle-1 caddy_coraza_mode=DetectionOnly
-# muscle-2 ansible_host=ANOTHER_PUBLIC_IP public_ip=ANOTHER_PUBLIC_IP node_role=worker caddy_node_id=muscle-2 caddy_coraza_mode=DetectionOnly
+# WAF mode is per service (SOPS ingress_services.waf_mode), not per host.
+muscle-1 ansible_host=YOUR_MUSCLE_PUBLIC_IP public_ip=YOUR_MUSCLE_PUBLIC_IP node_role=worker caddy_node_id=muscle-1
+# muscle-2 ansible_host=ANOTHER_PUBLIC_IP public_ip=ANOTHER_PUBLIC_IP node_role=worker caddy_node_id=muscle-2
 
 # ===== LOCAL DEVICES =====
 # Personal machines connected through Tailscale.
