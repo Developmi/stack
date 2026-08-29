@@ -179,6 +179,18 @@ l2_tailscale_subnet_router: false
 # Future backends (traefik, nginx) share the same ingress_services schema.
 reverse_proxy_backend: caddy
 
+# Caddy WAF UI sidecar (loopback-only management interface).
+# Requires caddy_admin_enabled: true on the target node and caddy_ui_token in SOPS.
+caddy_ui_enabled: false
+caddy_ui_backup_keep: 10
+
+# Dedicated internal control-plane network for caddy-waf ⇄ caddy-waf-ui (bridge,
+# created by the role — same pattern as public_net). caddy-waf joins BOTH
+# public_net (data plane: 80/443, ACME, upstreams) and caddy-admin-net; the UI
+# joins ONLY caddy-admin-net — it is NOT on public_net, shrinking the admin trust
+# boundary (no public_net container can POST /load).
+caddy_admin_network_name: "caddy-admin-net"
+
 # Ingress routing catalog (single-tenant). Each entry maps a domain
 # to an upstream backend with WAF and cert isolation.
 # Defined in the SOPS file: inventory/group_vars/all/secrets.sops.yml.
