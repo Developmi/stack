@@ -74,6 +74,55 @@ become_user = root
 | muscle-1 | 100.00.00.00 |
 | muscle-2 | 100.00.00.00 |
 
+## Emergency IP Block (Caddy WAF UI)
+
+Blocking an attacker IP is an **emergency change** (SP 800-128 emergency changes; ITIL ECAB). It takes effect immediately through the UI — it must not wait for a pipeline.
+
+### Immediate action (≤5 minutes)
+
+```bash
+# 1. SSH to the node running caddy-waf-ui
+ssh user@<host>
+
+# 2. Block the IP via the UI API (loopback only)
+curl -X POST http://127.0.0.1:8080/api/sites/<slug>/iprules \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(docker inspect caddy-waf-ui --format '{{range .Config.Env}}{{println .}}{{end}}' | grep CADDY_UI_TOKEN | cut -d= -f2)" \
+  -d '{"denylist": ["<attacker-ip>/32"]}'
+
+# 3. Verify the block took effect (Caddy should return 403 for the blocked IP)
+curl -I https://<domain>/ -H "X-Forwarded-For: <attacker-ip>"
+```
+
+### Retrospective approval (≤24h)
+
+1. Document the emergency change in the incident log:
+   - Who made the change
+   - Which IP was blocked and why
+   - What service/domain was targeted
+   - Time of block and time of this documentation
+2. Obtain retrospective approval from the team lead or designated approver
+3. Complete a Post-Implementation Review (PIR):
+   - Was the block effective?
+   - Was the attacker mitigated?
+   - Should the block be permanent (promote to IaC) or temporary?
+
+### Promotion to IaC (if permanent)
+
+```bash
+# Add the IP deny rule to the Ansible overlay or ingress_services config
+# Create a reviewed PR to promote the emergency denylist entry
+# Review for removal once the threat is over
+```
+
+### Rollback
+
+```bash
+# Remove the IP from denylist via UI
+# Or revert the overlay file from a snapshot:
+# UI → Sites → select domain → History → select pre-block snapshot → Rollback
+```
+
 ## Related Documents
 
 - [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md) - Definitive operations runbook: commands, audit, deployment, restart, rotation, troubleshooting

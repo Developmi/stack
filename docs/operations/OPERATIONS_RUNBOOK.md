@@ -633,6 +633,131 @@ uv run ansible muscle -i inventory/hosts.ini -m shell -a "docker ps --filter nam
 curl -fsS https://<public-domain>/health 2>&1 | head -5
 ```
 
+### 4.6a Caddy WAF UI
+
+Loopback-only management interface for runtime WAF mode/exclusion tuning. Deployed alongside Caddy ONLY on nodes with real ingress domains (muscle — `caddy_admin_enabled: true` + `caddy_ui_enabled: true`). brain is a management node with NO domains: there are no sites for the UI to manage, so it keeps both OFF (upstream INTEGRATION.md §4: admin only on nodes running the UI).
+
+**Prerequisites:** L4 deployed with `caddy_admin_enabled: true`, `caddy_ui_token` in SOPS.
+
+**Network map (two planes):**
+
+| Network                                        | Plane         | Members                                  | Purpose                                                     |
+| ---------------------------------------------- | ------------- | ---------------------------------------- | ----------------------------------------------------------- |
+| `public_net` (`shared_network_name`)           | Data plane    | caddy-waf + L3/L6 stacks + app upstreams | 80/443, ACME, upstream traffic                              |
+| `caddy-admin-net` (`caddy_admin_network_name`) | Control plane | caddy-waf + caddy-waf-ui ONLY            | admin API (caddy ⇄ UI), internal bridge created by the role |
+
+The UI is NOT attached to `public_net` — it only sees `caddy-admin-net`. This shrinks the admin trust boundary: a compromised `public_net` container could previously POST /load to the admin API; now only caddy-waf and caddy-waf-ui share the control plane. `CADDY_ADMIN_URL=http://caddy-waf:2019` resolves via Docker DNS on the admin network.
+
+**Access:**
+
+```bash
+# UI is only reachable via loopback (127.0.0.1:8080)
+# Access via SSH tunnel:
+ssh -L 8080:127.0.0.1:8080 user@<host>
+# Then open http://127.0.0.1:8080 in your browser
+```
+
+**Access via Tailscale Serve:**
+
+The UI can also be exposed to the tailnet via `tailscale serve` (HTTPS with a MagicDNS certificate, tailnet-only, never Funnel). Tailnet ACLs still apply to the serve listener: when `tailscale_serve_enabled` is true, the L2 ACL template renders an accept rule (operator sources → `tag:muscle:<serve_port>`) and the host firewall (ufw/nftables) opens `<serve_port>` on `tailscale0` — both automatically.
+
+**Prerequisites (order matters):**
+
+1. Set `tailscale_node_attrs` in the **node's** group_vars/host_vars (e.g. `inventory/group_vars/muscle/tailscale.yml`) — never in role defaults. The L2 tailscale role renders it into the ACL policy file (`tailscale-acls.json.j2`). **Format is the native policy-file structure — a list of `{target: [...], attr: [...]}` objects** (a plain string list like `["https"]` is invalid and the ACL API rejects it with HTTP 400):
+   ```yaml
+   tailscale_node_attrs:
+     - target: ["tag:muscle"]
+       attr: ["https"]
+   ```
+2. Deploy the L2 tailscale role for that node once so the nodeattr lands in the policy (e.g. `make deploy-hardening ANSIBLE_LIMIT=<host>`).
+3. HTTPS must be enabled in the tailnet. Tailscale MFA recommended on the tailnet account.
+4. Tailnet ACLs apply to the serve listener. The UI session cookie is `Secure`, so plain-HTTP serve is not supported — HTTPS is mandatory.
+
+**Enable per node:**
+
+- Set `tailscale_serve_enabled: true` (optionally override `tailscale_serve_port`) in the node's vars, then re-run the L2 deploy for that host. Only enable AFTER the `https` nodeattr is in the policy (prereq step 2) — otherwise `tailscale serve --https` cannot obtain a certificate.
+
+**Access URL pattern:**
+
+- `https://<device>.<tailnet>.ts.net:8443` (e.g. muscle-1's tailnet name). Login uses the `caddy_ui_token` (field `token`).
+
+**Verify / revoke:**
+
+- Verify: `tailscale serve status` on the node.
+- Revoke: `tailscale serve --bg --https=8443 off` (or set `tailscale_serve_enabled: false` and re-deploy).
+
+> **Note:** Port 8443 is deliberate — 443 is already bound by the Caddy data plane on the host; the UI container publish stays loopback-only (`127.0.0.1:8080`), the serve proxy is host-level.
+
+**Token management:**
+
+```bash
+# Generate a new token (one-time, store in SOPS)
+openssl rand -hex 32
+# Edit SOPS and replace caddy_ui_token
+make sops-edit
+# Redeploy to apply the new token (edge-only, UI runs on muscle-1)
+make deploy-edge BACKEND=caddy TARGET=muscle-1
+```
+
+**Token rotation / reset:** rotation = `make sops-edit` → replace `caddy_ui_token` with a fresh `openssl rand -hex 32` → `make deploy-edge BACKEND=caddy TARGET=muscle-1` → old sessions are invalidated immediately (the token is checked per request). If the token is lost and no backup exists, do NOT attempt recovery — a bearer token cannot be recovered, only rotated (OWASP secrets management); run the same rotation procedure. **Docker socket access = UI token access** still applies: any process with Docker socket access can read `CADDY_UI_TOKEN` from the UI container environment.
+
+**Daily operations:**
+
+```bash
+# Toggle WAF mode (enforcement / detection_only) from the UI:
+# UI → Sites → select domain → Mode → Toggle
+# Or via API (from loopback):
+curl -X PUT http://127.0.0.1:8080/api/sites/<slug>/mode \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"mode": "On"}'
+
+# Block an IP (emergency — see §8 EMERGENCY_ACCESS.md for approval):
+curl -X POST http://127.0.0.1:8080/api/sites/<slug>/iprules \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"denylist": ["1.2.3.4/32"]}'
+
+# View snapshots / rollback from the UI:
+# UI → Sites → select domain → History → Rollback
+```
+
+**Snapshot management:**
+
+- Snapshots are stored at `<app_base_dir>/ingress/backups/<domain>/`
+- Retention: `caddy_ui_backup_keep` snapshots per domain (default: 10)
+- Rollback restores a previous snapshot and triggers Caddy reload via admin API
+- The pre-rollback state is itself snapshotted (rollback is reversible)
+
+**Healthcheck (on-demand):** `make verify-caddy` (optional `TARGET=<host>`) runs real runtime healthchecks for caddy-waf and caddy-waf-ui from the controller.
+
+**Admin trust notes:**
+
+- The admin API uses `origins http://caddy-waf:2019 http://localhost:2019` — NOT `enforce_origin`. This is a deliberate deviation from the upstream INTEGRATION.md §4 which mandates `enforce_origin`. Rationale: Caddy v2.11.4 rejects headerless machine clients under `enforce_origin` (returns 403), and the UI's Go HTTP client sends neither Origin nor Referer headers. The `origins` allow-list permits headerless requests while still rejecting cross-origin browser requests. The Host/DNS-rebinding check is disabled on the wildcard `0.0.0.0:2019` binding (Caddy `enforceHost = !isWildcardInterface()`); residual browser protection comes from Sec-Fetch-Mode triggering the origin check. The Docker network remains the sole trust boundary — port 2019 is never published to the host.
+- **Docker socket access = UI token access.** Any process that can reach the Docker socket can inspect the UI container's environment and extract `CADDY_UI_TOKEN`. The Docker socket is therefore equivalent to holding the UI token. Restrict socket access accordingly.
+- **UI action audit source:** `docker logs caddy-waf-ui` is the official source for UI action audit trail (structured JSON: actor, timestamp, action, domain).
+- **Caddyfile changes trigger container recreation.** The compose template fingerprints the host Caddyfile with `CADDYFILE_SHA256` in both services' `environment:` (bind mounts are inode-sticky — `recreate: auto` cannot detect content-only edits). A `make deploy-edge BACKEND=caddy TARGET=<host>` re-renders the file, re-computes the fingerprint and recreates the containers so they re-bind the fresh inode.
+
+**Drift detection:**
+
+```bash
+# Periodic drift check (base Caddyfile vs rendered config)
+make run CHECK=1 PLAYBOOK=playbooks/l4/edge.yml TAGS='l4-networking,caddy'
+# Alert on any 'changed' status — indicates divergence from IaC.
+# Per INTEGRATION.md §7: UI-owned overlays are expected to differ from the
+# baseline by design; drift review covers the base Caddyfile and vault-derived
+# settings only.
+```
+
+**Backup coverage:**
+
+The restic backup role covers `ui-managed/` and `backups/` directories (they are under `<app_base_dir>/ingress/`). These hold the only runtime WAF state copies — ensure restic backup targets include the full ingress directory. Verify with:
+
+```bash
+# Check restic snapshot contents
+restic -r <repo> ls latest --path /srv/app/ingress/
+```
+
 ### 4.7 L5 - App Profiles
 
 Backup and application reference layer. Runs database dumps and Restic backups for app data. The suite does NOT deploy applications - it provides reference profiles under `apps/` for operator-managed deployment.
