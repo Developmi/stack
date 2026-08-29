@@ -1,0 +1,38 @@
+# Gitleaks ignore list (gitleaks.gitignore style)
+# ---------------------------------------------------------------------------
+# These findings are verified FALSE POSITIVES — no real secrets in history.
+#
+# 1) `.secrets.baseline` (detect-secrets control file): contains the sha256
+#    hashes of already-known secrets, NOT plaintext secrets. The generic-api-key
+#    rule flags the 64-char hex strings purely by entropy. This file must stay
+#    in the repo so `detect-secrets scan --baseline .secrets.baseline` works.
+# 2) `inventory/group_vars/all/secrets.yml.example`: placeholder PEM keys
+#    (`REPLACE_WITH_PRIVATE_KEY`) from the retired vault template; the file is
+#    now a 22-line pointer to secrets.sops.yml.example (decouple-manager-sops).
+#
+# Regenerate (only if findings change): gitleaks git --log-opts="--all" --report-path report.json .
+# Then copy each new fingerprint below.
+
+ed6e489bd29f6b7a3d95a4356c5828b51c179208:.secrets.baseline:generic-api-key:134
+ed6e489bd29f6b7a3d95a4356c5828b51c179208:.secrets.baseline:generic-api-key:141
+ed6e489bd29f6b7a3d95a4356c5828b51c179208:.secrets.baseline:generic-api-key:148
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:134
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:144
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:152
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:160
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:168
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:176
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:184
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:192
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:200
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:208
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:218
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:228
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:238
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:248
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:258
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:266
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:276
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:.secrets.baseline:generic-api-key:284
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:inventory/group_vars/all/secrets.yml.example:private-key:96
+47964450b8259dcf28c2b5ca1d4a6ea28325eb36:inventory/group_vars/all/secrets.yml.example:private-key:107
