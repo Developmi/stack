@@ -219,7 +219,7 @@
   ansible.builtin.file:
     path: "{{ app_base_dir }}/ingress/caddy-data/logs/coraza-audit.log"
     state: touch
-    mode: "0640"
+    mode: "0644"
     owner: "{{ _caddy_effective_uid | int }}"
     group: "{{ _caddy_effective_gid | int }}"
     modification_time: preserve
@@ -433,15 +433,14 @@
         driver: bridge
         state: present
 
-    - name: Create Docker Compose file for Caddy ingress
-      ansible.builtin.template:
-        src: docker-compose.yml.j2
-        dest: "{{ app_base_dir }}/ingress/docker-compose.yml"
-        mode: "0644"
-        owner: root
-        group: root
+    - name: Ensure {{ caddy_admin_network_name }} Docker network exists (control plane)
+      community.docker.docker_network:
+        name: "{{ caddy_admin_network_name }}"
+        driver: bridge
+        state: present
 
-    # GHCR login + verify image
+    # GHCR login + verify image (BEFORE the fmt runner so `docker run` can pull
+    # the pinned image with registry credentials on a first deploy)
     - name: Login to GitHub Container Registry (GHCR)
       community.docker.docker_login:
         registry_url: ghcr.io
@@ -463,6 +462,82 @@
         - caddy_image_digest is defined
         - caddy_image_info.image.Digest is defined
         - caddy_image_info.image.Digest != caddy_image_digest
+
+    # --------------------------------------------------------------------------
+    # CANONICAL CADDYFILE FORMATTING (must run BEFORE the compose render)
+    # --------------------------------------------------------------------------
+    # The rendered Caddyfile uses 4/8/12-space indentation (template readability),
+    # while `caddy fmt` canonicalizes to tabs. The caddy-waf-ui reads this file and
+    # POSTs it to the admin API (/load); an unformatted file makes Caddy answer with
+    # a formatting warning on every reload. Normalize the on-disk file with the same
+    # image (pulled/authenticated above) so the UI reloads stay clean.
+    # `caddy fmt --overwrite` exits 0 even when the file was already canonical, so
+    # rc alone proves nothing: the follow-up `fmt --diff` assert (empty output) is
+    # the proof, run on the HOST file via the same ephemeral runner so it verifies
+    # exactly the bytes the containers will bind after recreation.
+    # Running before the render also lets the CADDYFILE_SHA256 env fingerprint
+    # below reflect the FINAL canonical bytes: recreate:auto then re-creates the
+    # containers (re-binding the fresh inode) whenever the file bytes change.
+    - name: Canonicalize Caddyfile formatting with caddy fmt
+      ansible.builtin.command:
+        cmd: >-
+          docker run --rm --entrypoint caddy
+          -v {{ app_base_dir }}/ingress/Caddyfile:/etc/caddy/Caddyfile:rw
+          {{ caddy_image }} fmt --overwrite /etc/caddy/Caddyfile
+      register: caddyfile_fmt
+      changed_when: false
+      failed_when: caddyfile_fmt.rc != 0
+      # noqa: command-instead-of-module
+
+    - name: Verify Caddyfile is canonical after fmt (fmt --diff rc is the proof)
+      ansible.builtin.command:
+        cmd: >-
+          docker run --rm --entrypoint caddy
+          -v {{ app_base_dir }}/ingress/Caddyfile:/etc/caddy/Caddyfile:rw
+          {{ caddy_image }} fmt --diff /etc/caddy/Caddyfile
+      register: caddyfile_fmt_diff
+      changed_when: false
+      failed_when: caddyfile_fmt_diff.rc != 0
+      # noqa: command-instead-of-module
+      # `fmt --overwrite` rc=0 is meaningless: it also succeeds when the file was
+      # already canonical. `fmt --diff` is the real check: Caddy's cmdFmt always
+      # runs FormattingDifference() at the end and exits rc!=0 ("Caddyfile input
+      # is not formatted") when the on-disk bytes are NOT the canonical fixed
+      # point of Format(). NOTE: when the file IS canonical, `fmt --diff` still
+      # prints every line (difflib Common lines with a prefix) — stdout is NEVER
+      # empty, so rc is the only reliable signal; never assert on stdout length.
+      # The check runs on the HOST file via the same ephemeral runner, so it
+      # verifies exactly the bytes the containers will mount after recreation.
+
+    - name: Compute Caddyfile sha256 fingerprint from the remote file (compose env)
+      ansible.builtin.stat:
+        path: "{{ app_base_dir }}/ingress/Caddyfile"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: caddyfile_stat
+      changed_when: false
+      # Computed AFTER fmt + fmt-diff so it fingerprints the final canonical
+      # bytes ON THE HOST. stat is a module: it runs on the target node. The
+      # `file` lookup CANNOT be used here - it only reads the Ansible
+      # controller's filesystem (docs.ansible.com: "returns the contents from a
+      # file on the Ansible controller's file system"), so /srv/app/ingress/
+      # Caddyfile is not found, and it would rstrip trailing whitespace before
+      # hashing anyway. The CADDYFILE_SHA256 env var in docker-compose.yml.j2
+      # forces recreate:auto to re-create the caddy/caddy-waf-ui containers
+      # (re-binding the fresh inode) when the file changes - bind mounts are
+      # inode-sticky, so content-only edits are otherwise invisible to compose.
+
+    - name: Set Caddyfile sha256 for compose env
+      ansible.builtin.set_fact:
+        caddyfile_sha256: "{{ caddyfile_stat.checksum | default('') }}"
+
+    - name: Create Docker Compose file for Caddy ingress
+      ansible.builtin.template:
+        src: docker-compose.yml.j2
+        dest: "{{ app_base_dir }}/ingress/docker-compose.yml"
+        mode: "0644"
+        owner: root
+        group: root
 
     # Clean stale container from previous failed deploy (bind mount directory artifact)
     - name: Remove stale Caddy container with broken bind mount
@@ -520,7 +595,7 @@
         - name: Fail with deployment context
           ansible.builtin.fail:
             msg: >-
-              Caddy stack deployment failed - see 'Show Caddy startup logs for diagnosis'
+              Caddy stack deployment failed - see 'Show Caddy container startup logs'
               above for the root cause.
 
     # --------------------------------------------------------------------------
@@ -567,3 +642,107 @@
           - "🏷️  Container Status: {{ caddy_container_info.container.State.Status | default('unknown') }}"
           - "👤 Runtime User: {{ caddy_container_info.container.Config.User | default('unset') }}"
           - "========================================="
+
+    # --------------------------------------------------------------------------
+    # CADDY WAF UI - Digest verify, deploy, health, runtime asserts
+    # --------------------------------------------------------------------------
+    - name: Verify UI image digest if specified
+      community.docker.docker_image_info:
+        name: "{{ caddy_ui_image }}"
+      register: caddy_ui_image_info
+      when:
+        - caddy_ui_enabled | default(false) | bool
+        - caddy_ui_image_digest is defined
+
+    - name: Fail if UI image digest mismatch
+      ansible.builtin.fail:
+        msg: >-
+          Caddy WAF UI image digest mismatch.
+          Expected {{ caddy_ui_image_digest }}, got {{ caddy_ui_image_info.image.Digest }}.
+      when:
+        - caddy_ui_enabled | default(false) | bool
+        - caddy_ui_image_digest is defined
+        - caddy_ui_image_info.image.Digest is defined
+        - caddy_ui_image_info.image.Digest != caddy_ui_image_digest
+
+    - name: Deploy Caddy WAF UI service
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_base_dir }}/ingress"
+        services:
+          - caddy-waf-ui
+        state: present
+        pull: "{{ ingress_compose_pull_policy }}"
+        recreate: "{{ ingress_compose_recreate_policy }}"
+      register: ui_deploy
+      when:
+        - caddy_ui_enabled | default(false) | bool
+
+    - name: Wait until Docker reports Caddy WAF UI container as healthy
+      community.docker.docker_container_info:
+        name: caddy-waf-ui
+      register: caddy_ui_health
+      changed_when: false
+      retries: "{{ ((ingress_compose_wait_timeout | int) + 4) // 5 }}"
+      delay: 5
+      until:
+        - caddy_ui_health.exists | default(false)
+        - caddy_ui_health.container.State.Status == 'running'
+        - caddy_ui_health.container.State.Health is defined
+        - caddy_ui_health.container.State.Health.Status == 'healthy'
+      when:
+        - caddy_ui_enabled | default(false) | bool
+
+    - name: Get Caddy WAF UI container info
+      community.docker.docker_container_info:
+        name: caddy-waf-ui
+      register: caddy_ui_container_info
+      when:
+        - caddy_ui_enabled | default(false) | bool
+
+    - name: Assert UI container is running
+      ansible.builtin.assert:
+        that:
+          - caddy_ui_container_info.exists | default(false)
+          - caddy_ui_container_info.container.State.Status == 'running'
+        fail_msg: >-
+          Caddy WAF UI container is not running. Current state:
+          {{ caddy_ui_container_info.container.State.Status | default('missing') }}.
+      when:
+        - caddy_ui_enabled | default(false) | bool
+
+    - name: Assert UI container user is pinned to expected UID/GID
+      ansible.builtin.assert:
+        that:
+          - caddy_ui_container_info.container.Config.User == (caddy_user_uid | string ~ ':' ~ caddy_user_gid | string)
+        fail_msg: >-
+          Caddy WAF UI runtime user mismatch. Expected {{ caddy_user_uid }}:{{ caddy_user_gid }},
+          got {{ caddy_ui_container_info.container.Config.User | default('unset') }}.
+      when:
+        - caddy_ui_enabled | default(false) | bool
+
+    - name: Assert UI container only publishes 127.0.0.1:8080
+      ansible.builtin.assert:
+        that:
+          - caddy_ui_container_info.container.NetworkSettings.Ports['8080/tcp'] | length == 1
+          - caddy_ui_container_info.container.NetworkSettings.Ports['8080/tcp'][0].HostIp == '127.0.0.1'
+        fail_msg: >-
+          Caddy WAF UI must only publish 127.0.0.1:8080.
+          Found ports: {{ caddy_ui_container_info.container.NetworkSettings.Ports | default({}) }}.
+      when:
+        - caddy_ui_enabled | default(false) | bool
+
+    - name: Assert port 2019 is never published on either container
+      ansible.builtin.assert:
+        that:
+          # '2019/tcp' may appear in NetworkSettings.Ports with value null: the
+          # official caddy base image EXPOSEs 2019 (inherited by layer) and
+          # Docker lists exposed ports even when unpublished. Only non-null
+          # bindings (HostIp/HostPort) mean it is published to the host.
+          - (caddy_container_info.container.NetworkSettings.Ports | default({})).get('2019/tcp') is none
+          - (caddy_ui_container_info.container.NetworkSettings.Ports | default({})).get('2019/tcp') is none
+        fail_msg: >-
+          Port 2019 must NEVER be published to the host. Found on:
+          caddy-waf: {{ caddy_container_info.container.NetworkSettings.Ports | default({}) }},
+          caddy-waf-ui: {{ caddy_ui_container_info.container.NetworkSettings.Ports | default({}) }}.
+      when:
+        - caddy_ui_enabled | default(false) | bool

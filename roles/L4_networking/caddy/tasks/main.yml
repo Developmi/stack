@@ -65,6 +65,46 @@
     success_msg: "caddy_type is valid: {{ caddy_type }}."
   tags: [l4-networking]
 
+# --- Caddy WAF UI preflight (WAF-UI-003-01, threat row) ---
+- name: Preflight | Assert UI requires admin API enabled
+  ansible.builtin.assert:
+    that:
+      - not (caddy_ui_enabled | default(false)) or (caddy_admin_enabled | default(false))
+    fail_msg: >-
+      caddy_ui_enabled is true but caddy_admin_enabled is false.
+      The UI requires the admin API (POST /load) to hot-reload Caddy config.
+      Set caddy_admin_enabled: true in inventory/group_vars/{{ caddy_type }}/caddy.yml.
+    success_msg: "UI preflight: admin API is enabled when UI is active."
+  when: caddy_ui_enabled | default(false) | bool
+  tags: [l4-networking]
+
+- name: Preflight | Assert caddy_ui_token is defined when UI is enabled
+  ansible.builtin.assert:
+    that:
+      - caddy_ui_token is defined
+      - caddy_ui_token | length > 0
+    fail_msg: >-
+      caddy_ui_enabled is true but caddy_ui_token is not defined or empty.
+      Set caddy_ui_token in inventory/group_vars/all/secrets.sops.yml
+      (generate with: openssl rand -hex 32).
+    success_msg: "UI preflight: caddy_ui_token is defined."
+  when: caddy_ui_enabled | default(false) | bool
+  tags: [l4-networking]
+
+- name: Preflight | Assert ingress service domain slugs are safe for filesystem paths
+  ansible.builtin.assert:
+    that:
+      - item.domain | lower | regex_replace('[a-z0-9.*-]', '') | length == 0
+    fail_msg: >-
+      Ingress service '{{ item.name | default('unnamed') }}' has domain '{{ item.domain }}'
+      containing characters outside the allowed set [a-z0-9.*-].
+      Domains are used in filesystem paths (ui-managed/waf-{slug}.conf) and
+      must not contain characters that break path construction.
+  loop: "{{ ingress_services | default([]) }}"
+  loop_control:
+    label: "{{ item.domain | default('unknown-domain') }}"
+  tags: [l4-networking]
+
 # --- cert_name backward compatibility ---
 # cert_name is REMOVED in favor of client-based cert derivation.
 # Services still using cert_name will get a deprecation warning but deployment

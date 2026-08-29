@@ -13,6 +13,7 @@ services:
       - "443:443/udp"
     networks:
       - {{ shared_network_name }}
+      - {{ caddy_admin_network_name }}
     volumes:
       - {{ app_base_dir }}/ingress/caddy-data:/data
       - {{ app_base_dir }}/ingress/caddy-config:/config
@@ -41,13 +42,72 @@ services:
           memory: "1G"
         reservations:
           memory: "512M"
+    # CADDYFILE_SHA256 is a content fingerprint of the host Caddyfile. Bind
+    # mounts are inode-sticky, so `recreate: auto` only reacts to config/env
+    # changes, never to content-only edits. Changing this env var forces Compose
+    # to recreate the container and re-bind the fresh inode whenever the file
+    # bytes change (caddy fmt or template re-render).
+    environment:
+      CADDYFILE_SHA256: "{{ caddyfile_sha256 | default('') }}"
     healthcheck:
       test: ["CMD-SHELL", "pgrep caddy || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+{% if caddy_ui_enabled | default(false) %}
+  caddy-waf-ui:
+    image: {{ caddy_ui_image }}
+    container_name: caddy-waf-ui
+    user: "{{ caddy_user_uid }}:{{ caddy_user_gid }}"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - {{ caddy_admin_network_name }}
+    volumes:
+      - {{ app_base_dir }}/ingress/ui-managed:/ui-managed:rw
+      - {{ app_base_dir }}/ingress/backups:/backups:rw
+      - {{ app_base_dir }}/ingress/caddy-data:/data:ro
+      - {{ app_base_dir }}/ingress/Caddyfile:/etc/caddy/Caddyfile:ro
+    environment:
+      CADDY_UI_TOKEN: "{{ caddy_ui_token }}"
+      CADDY_ADMIN_URL: http://caddy-waf:2019
+      CADDY_UI_CADDYFILE: /etc/caddy/Caddyfile
+      CADDY_UI_MANAGED_DIR: /ui-managed
+      CADDY_UI_INCLUDE_DIR: /etc/caddy/ui-managed
+      CADDY_UI_BACKUP_DIR: /backups
+      CADDY_UI_BACKUP_KEEP: "{{ caddy_ui_backup_keep | default(10) }}"
+      CADDY_UI_BIND: 0.0.0.0:8080
+      CADDY_UI_LOG_LEVEL: info
+      CADDY_UI_AUDIT_LOG: /data/logs/coraza-audit.log
+      # Content fingerprint of the host Caddyfile (same mechanism as the caddy
+      # service): bind mounts are inode-sticky and `recreate: auto` only reacts
+      # to config/env changes, so this env forces a re-bind of the fresh inode
+      # when the file bytes change - otherwise the UI POSTs stale bytes to /load.
+      CADDYFILE_SHA256: "{{ caddyfile_sha256 | default('') }}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      # Compose depends_on resolves by SERVICE name; the caddy service key is
+      # `caddy` (its container_name is caddy-waf, reachable via Docker DNS).
+      caddy:
+        condition: service_healthy
+{% endif %}
 
 networks:
   {{ shared_network_name }}:
+    external: true
+  {{ caddy_admin_network_name }}:
     external: true

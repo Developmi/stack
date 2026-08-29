@@ -43,6 +43,14 @@
     src: Caddyfile.j2
     dest: "{{ app_base_dir }}/ingress/Caddyfile"
     mode: "0644"
+    # Effective uid/gid (1337, or 1337 + subuid offset under dockremap userns):
+    # Caddy only reads this file (ro bind), but the ephemeral `caddy fmt` runner
+    # (same image, USER 1337) must be able to OVERWRITE it in place. Under
+    # userns-remap, container root != host root, so a root-owned file is not
+    # writable by any remapped container user (docker docs + forums: ownership
+    # of bind-mount sources must match the remapped uid).
+    owner: "{{ _caddy_effective_uid | int }}"
+    group: "{{ _caddy_effective_gid | int }}"
   tags: [l4-networking, ingress]
 
 # ------------------------------------------------------------------------------

@@ -13,13 +13,23 @@
 caddy_type: "muscle"
 
 # --- Admin API ---
-# NIST AC-3 / IA-2 | Disabled in production (default).
-# Contract M1 (§6): enable ONLY when the caddy-waf-ui is deployed. When enabled,
-# Caddyfile renders `admin 0.0.0.0:2019 { enforce_origin }` — container-network
-# binding so the UI (caddy-waf:2019) and VictoriaMetrics reach it; port 2019 is
-# NEVER published to the host (compose publishes 80/443 only; L2 firewall also
-# denies 2019 on tailscale0). mTLS (identity + client certs) is the §6 target.
-caddy_admin_enabled: false
+# NIST AC-3 / IA-2 | Disabled by default; enabled on nodes running caddy-waf-ui.
+# Contract M1 (§6): when caddy_admin_enabled AND caddy_ui_enabled are true,
+# Caddyfile renders `admin 0.0.0.0:2019 { origins http://caddy-waf:2019 http://localhost:2019 }`
+# (explicit origins allow-list, NOT enforce_origin — enforce_origin 403s headerless
+# machine clients like the UI Go HTTP client which sends no Origin/Referer headers,
+# breaking hot-reload) — container-network binding so the UI (caddy-waf:2019)
+# and VictoriaMetrics can reach it; port 2019 is NEVER published to the host
+# (compose publishes 80/443 only; L2 firewall also denies 2019 on tailscale0).
+# The Host/DNS-rebinding check is DISABLED on wildcard 0.0.0.0:2019 binding;
+# residual browser protection comes from Sec-Fetch-Mode triggering the origin check.
+# mTLS (identity + client certs) is the §6 target state.
+caddy_admin_enabled: true
+
+# --- Caddy WAF UI ---
+# Loopback-only management interface for runtime WAF mode/exclusion tuning.
+# Requires caddy_admin_enabled: true and caddy_ui_token in SOPS.
+caddy_ui_enabled: true
 
 # --- WAF (Coraza) Enforcement Mode ---
 # WAF mode is per SERVICE, defined in the SOPS routing catalog

@@ -17,8 +17,8 @@
 #           | /data/logs (single writer per stream, native rotation).
 #           | Consumers: CrowdSec (access.log) + promtail → Loki (all three).
 #           | SI-4   | OWASP CRS via Coraza WAF; per-service enforcement mode (waf_mode).
-#   AC-3   | Admin API off by default; when the caddy-waf-ui is deployed it must
-#           | be enabled with enforce_origin + container-network binding (M1, §6).
+    #   AC-3   | Admin API off by default; when the caddy-waf-ui is deployed it must
+    #           | be enabled with origins allow-list + container-network binding (M1, §6).
 #
 # ROUTING: for-loop iterates ingress_services, skipping entries whose target_group
 # does not intersect with the current node's group_names OR match caddy_node_id.
@@ -45,10 +45,17 @@
     #   - binds 0.0.0.0:2019 INSIDE the container so the UI (caddy-waf:2019)
     #     and VictoriaMetrics scraping can reach it over the internal network;
     #   - NEVER published to the host (compose publishes only 80/443);
-    #   - enforce_origin rejects cross-origin browser requests;
+    #   - origins allow-list permits headerless machine clients (the UI's Go HTTP
+    #     client sends no Origin/Referer headers) while rejecting cross-origin
+    #     browser requests; enforce_origin is intentionally NOT used because
+    #     Caddy v2.11.4 rejects headerless requests under enforce_origin, which
+    #     would break UI hot-reload (POST /load always 403s);
+    #   - the Host/DNS-rebinding check is DISABLED on the wildcard 0.0.0.0:2019
+    #     binding (Caddy enforceHost = !isWildcardInterface()); residual browser
+    #     protection comes from Sec-Fetch-Mode triggering the origin check;
     #   - mTLS (identity + client certs) is the contract §6 target state.
     admin 0.0.0.0:2019 {
-        enforce_origin
+        origins http://caddy-waf:2019 http://localhost:2019
     }
     {% else %}
     # AC-3 | Admin API disabled in production (default; no UI deployed)
