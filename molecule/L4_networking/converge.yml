@@ -61,6 +61,14 @@
         - "{{ app_base_dir }}/ingress/caddy-data"
         - "{{ app_base_dir }}/ingress/caddy-config"
 
+    # Render compose OUTSIDE the _molecule_testing gate (deploy stays gated)
+    # so verify.yml can assert on the rendered compose + Caddyfile content.
+    - name: Molecule | Render docker-compose.yml.j2 for contract assertions
+      ansible.builtin.template:
+        src: ../../roles/L4_networking/caddy/templates/docker-compose.yml.j2
+        dest: "{{ app_base_dir }}/ingress/docker-compose.yml"
+        mode: "0644"
+
   roles:
     - role: L4_networking/caddy
       tags: [l4-networking]

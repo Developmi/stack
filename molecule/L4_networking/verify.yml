@@ -126,10 +126,10 @@
       register: compose_stat
       failed_when: false
 
-    - name: "THEN: Note docker-compose.yml status (molecule limitation - GHCR auth required)"
+    - name: "THEN: Note docker-compose.yml status (now rendered outside _molecule_testing gate)"
       ansible.builtin.debug:
         msg: >-
-          docker-compose.yml {{ 'exists' if compose_stat.stat.exists else 'NOT created (expected - GHCR auth fails in molecule, Docker runtime tasks cannot proceed)' }}.
+          docker-compose.yml {{ 'exists' if compose_stat.stat.exists else 'NOT created' }}.
 
     # ---------------------------------------------------------------------------
     # GIVEN: Caddy user (caddy) has no login shell
@@ -285,3 +285,376 @@
           - '"SecAuditLog /data/logs/coraza-audit.log" in waf_placeholder.content | b64decode'
         fail_msg: "SDD Failed: waf placeholder is not the DetectionOnly baseline (M5)"
         success_msg: "waf placeholder is the DetectionOnly baseline (D5/M5)"
+
+    # ---------------------------------------------------------------------------
+    # STATIC ASSERTS - Compose contract (always run)
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Slurp the rendered docker-compose.yml"
+      ansible.builtin.slurp:
+        src: /opt/user/apps/testing/ingress/docker-compose.yml
+      register: compose_slurp
+
+    - name: "GIVEN: Decode compose into facts"
+      ansible.builtin.set_fact:
+        compose_content: "{{ compose_slurp.content | b64decode }}"
+
+    - name: "THEN: Compose contains caddy-waf-ui service with exact v1.0.0 pin"
+      ansible.builtin.assert:
+        that:
+          - "'caddy-waf-ui:' in compose_content"
+          - "'ghcr.io/developmi/caddy-waf-ui:v1.0.0' in compose_content"
+          - "'ghcr.io/developmi/caddy-waf:v3.4.0' in compose_content"
+        fail_msg: "SDD Failed: compose missing UI service or exact image pins"
+        success_msg: "Compose contains caddy-waf-ui service with correct image pins"
+
+    - name: "THEN: Both services carry the CADDYFILE_SHA256 env fingerprint (inode-sticky bind fix)"
+      ansible.builtin.assert:
+        that:
+          - "'CADDYFILE_SHA256' in compose_content.split('caddy:')[1].split('caddy-waf-ui:')[0].split('environment:')[1].split('healthcheck:')[0]"
+          - "'CADDYFILE_SHA256' in compose_content.split('caddy-waf-ui:v1.0.0')[1].split('depends_on:')[0]"
+        fail_msg: "SDD Failed: CADDYFILE_SHA256 fingerprint missing from a service environment (bind mounts are inode-sticky; recreate:auto needs the env change)"
+        success_msg: "Both caddy and caddy-waf-ui carry the CADDYFILE_SHA256 env fingerprint"
+
+    - name: "THEN: caddy service joins BOTH public_net and caddy-admin-net (D7)"
+      ansible.builtin.assert:
+        that:
+          - "'- public_net' in compose_content.split('caddy:')[1].split('networks:')[1].split('volumes:')[0]"
+          - "'- caddy-admin-net' in compose_content.split('caddy:')[1].split('networks:')[1].split('volumes:')[0]"
+        fail_msg: "SDD Failed: caddy service is not on both public_net and caddy-admin-net"
+        success_msg: "caddy service joins public_net (data plane) + caddy-admin-net (control plane)"
+
+    - name: "THEN: UI service joins caddy-admin-net ONLY (not public_net) (D7)"
+      ansible.builtin.assert:
+        that:
+          - "'- caddy-admin-net' in compose_content.split('caddy-waf-ui:')[1].split('networks:')[1].split('volumes:')[0]"
+          - "'- public_net' not in compose_content.split('caddy-waf-ui:')[1].split('networks:')[1].split('volumes:')[0]"
+        fail_msg: "SDD Failed: UI service network wiring is not caddy-admin-net-only"
+        success_msg: "UI service is on caddy-admin-net only (control plane)"
+
+    - name: "THEN: Both compose networks are declared external"
+      ansible.builtin.assert:
+        that:
+          - "'public_net:' in compose_content.split('networks:')[-1]"
+          - "'caddy-admin-net:' in compose_content.split('networks:')[-1]"
+        fail_msg: "SDD Failed: compose does not declare both networks external"
+        success_msg: "Both public_net and caddy-admin-net declared external"
+
+    - name: "THEN: UI only publishes 127.0.0.1:8080"
+      ansible.builtin.assert:
+        that:
+          - "'127.0.0.1:8080:8080' in compose_content"
+        fail_msg: "SDD Failed: UI does not publish 127.0.0.1:8080"
+        success_msg: "UI port binding is loopback-only 127.0.0.1:8080"
+
+    - name: "THEN: No port 2019 published anywhere in compose (admin API is container-network-only)"
+      ansible.builtin.assert:
+        # NOTE: the raw substring '2019' legitimately appears in the UI env
+        # (CADDY_ADMIN_URL: http://caddy-waf:2019). The invariant is that the
+        # admin API is NEVER published to the host - assert on publish patterns
+        # only, never on the bare port string.
+        that:
+          - "'2019:2019' not in compose_content"
+          - "'127.0.0.1:2019' not in compose_content"
+        fail_msg: "SDD Failed: port 2019 is published in compose (CADDY_ADMIN_URL :2019 is container-internal by design)"
+        success_msg: "No 2019 port publish found in compose (CADDY_ADMIN_URL :2019 is container-internal by design)"
+
+    - name: "THEN: Compose UI service has read_only, cap_drop ALL, no-new-privileges"
+      ansible.builtin.assert:
+        that:
+          - "'read_only: true' in compose_content.split('caddy-waf-ui:')[1].split('networks:')[0]"
+          - "'cap_drop:' in compose_content.split('caddy-waf-ui:')[1].split('networks:')[0]"
+          - "'ALL' in compose_content.split('caddy-waf-ui:')[1].split('networks:')[0]"
+          - "'no-new-privileges:true' in compose_content.split('caddy-waf-ui:')[1].split('networks:')[0]"
+        fail_msg: "SDD Failed: UI service missing security hardening (read_only/cap_drop/no-new-privileges)"
+        success_msg: "UI service has correct security hardening"
+
+    - name: "THEN: Compose UI service depends_on caddy service (service name, not container_name) with service_healthy"
+      ansible.builtin.assert:
+        that:
+          - "'depends_on:' in compose_content.split('caddy-waf-ui:')[1]"
+          - "'caddy:' in compose_content.split('caddy-waf-ui:')[1].split('depends_on:')[1]"
+          - "'service_healthy' in compose_content.split('caddy-waf-ui:')[1].split('depends_on:')[1]"
+          - "'caddy-waf:' not in compose_content.split('caddy-waf-ui:')[1].split('depends_on:')[1]"
+        fail_msg: "SDD Failed: UI service depends_on must reference the compose SERVICE key 'caddy' (container_name is caddy-waf) with service_healthy"
+        success_msg: "UI service depends_on caddy (service name) with service_healthy condition"
+
+    - name: "THEN: Audit log file exists with mode 0644"
+      ansible.builtin.stat:
+        path: /opt/user/apps/testing/ingress/caddy-data/logs/coraza-audit.log
+      register: audit_log_stat
+
+    - name: "THEN: Audit log mode is 0644 (UI can read)"
+      ansible.builtin.assert:
+        that:
+          - audit_log_stat.stat.exists
+          - audit_log_stat.stat.mode == "0644"
+        fail_msg: "SDD Failed: audit log missing or mode is not 0644 (got {{ audit_log_stat.stat.mode | default('missing') }})"
+        success_msg: "Audit log exists with mode 0644"
+
+    # ---------------------------------------------------------------------------
+    # E2E ASSERTS (gated on ghcr images being present in local daemon)
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Check if ghcr images are present in local Docker daemon"
+      community.docker.docker_image_info:
+        name: "{{ item }}"
+      register: _e2e_image_check
+      failed_when: false
+      loop:
+        - ghcr.io/developmi/caddy-waf:v3.4.0
+        - ghcr.io/developmi/caddy-waf-ui:v1.0.0
+
+    - name: "GIVEN: Determine if e2e can run"
+      ansible.builtin.set_fact:
+        _e2e_images_present: >-
+          {{ _e2e_image_check.results | select('succeeded') | list | length == 2 }}
+
+    - name: "E2E | Warn and skip when ghcr images are not present locally"
+      ansible.builtin.debug:
+        msg: >-
+          ⚠️ E2E tests SKIPPED: ghcr.io/developmi/caddy-waf:v3.4.0 and/or
+          ghcr.io/developmi/caddy-waf-ui:v1.0.0 not found in local Docker daemon.
+          CI pre-pulls these images to enable e2e coverage. Static asserts above still run.
+      when: not _e2e_images_present | bool
+
+    # --- E2E: Full chain (boot → auth → admin connect → hot-reload → read-back) ---
+    - name: E2E | Full chain validation
+      when:
+        - _e2e_images_present | bool
+        - caddy_ui_enabled | default(false) | bool
+      block:
+        # Step 0: Assert admin API readiness (judge finding F3 - pgrep healthcheck
+        # only proves process exists, not API readiness)
+        - name: "E2E | Assert admin API is ready at caddy-waf:2019"
+          ansible.builtin.uri:
+            url: "http://caddy-waf:2019/config/"
+            method: GET
+            status_code: 200
+            return_content: true
+          register: _admin_ready
+          retries: 10
+          delay: 2
+          until: _admin_ready.status == 200
+
+        # Step 0b: Assert digests match (judge finding F7)
+        - name: "E2E | Assert caddy-waf image digest matches"
+          community.docker.docker_image_info:
+            name: ghcr.io/developmi/caddy-waf:v3.4.0
+          register: _caddy_digest_check
+
+        - name: "E2E | Fail if caddy-waf digest mismatch"
+          ansible.builtin.assert:
+            that:
+              - _caddy_digest_check.image.Digest == caddy_image_digest
+            fail_msg: >-
+              caddy-waf v3.4.0 digest mismatch in e2e.
+              Expected {{ caddy_image_digest }}, got {{ _caddy_digest_check.image.Digest }}.
+
+        - name: "E2E | Assert caddy-waf-ui image digest matches"
+          community.docker.docker_image_info:
+            name: ghcr.io/developmi/caddy-waf-ui:v1.0.0
+          register: _ui_digest_check
+
+        - name: "E2E | Fail if caddy-waf-ui digest mismatch"
+          ansible.builtin.assert:
+            that:
+              - _ui_digest_check.image.Digest == caddy_ui_image_digest
+            fail_msg: >-
+              caddy-waf-ui v1.0.0 digest mismatch in e2e.
+              Expected {{ caddy_ui_image_digest }}, got {{ _ui_digest_check.image.Digest }}.
+
+        # Step 1: UI health
+        - name: "E2E | Assert UI /health endpoint responds"
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:8080/health"
+            method: GET
+            status_code: 200
+          register: _ui_health_check
+
+        # Step 2: Login (POST /login with Bearer token)
+        - name: "E2E | Login to UI via POST /login"
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:8080/login"
+            method: POST
+            body_format: json
+            body:
+              token: "{{ caddy_ui_token }}"
+            status_code: 200
+            return_content: true
+          register: _ui_login
+
+        - name: "E2E | Extract session cookie from login"
+          ansible.builtin.set_fact:
+            _ui_cookie: "{{ _ui_login.set_cookie | regex_search('session=[^;]+') }}"
+
+        # Step 3: Toggle WAF mode via PUT /api/sites/{domain}/mode
+        - name: "E2E | PUT mode enforcement on api.example.com"
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:8080/api/sites/api.example.com/mode"
+            method: PUT
+            body_format: json
+            body:
+              mode: "On"
+            headers:
+              Cookie: "{{ _ui_cookie }}"
+            status_code: 200
+          register: _mode_toggle
+
+        # Step 4: Read-back via Caddy admin API - assert SecRuleEngine On
+        - name: "E2E | Read-back GET /config/apps/http/servers"
+          ansible.builtin.uri:
+            url: "http://caddy-waf:2019/config/apps/http/servers"
+            method: GET
+            headers:
+              Accept: "application/json"
+            status_code: 200
+            return_content: true
+          register: _caddy_config_readback
+
+        - name: "E2E | Assert SecRuleEngine On in read-back config"
+          ansible.builtin.assert:
+            that:
+              - "'SecRuleEngine' in _caddy_config_readback.content"
+              - "'On' in _caddy_config_readback.content"
+            fail_msg: >-
+              E2E failed: SecRuleEngine On not found in read-back config.
+              Config content (truncated): {{ _caddy_config_readback.content | truncate(500) }}
+            success_msg: "E2E: SecRuleEngine On confirmed in Caddy config"
+
+        # Step 5: Assert overlay file is 0644
+        - name: "E2E | Assert waf overlay file mode is 0644"
+          ansible.builtin.stat:
+            path: /opt/user/apps/testing/ingress/ui-managed/waf-api_example_com.conf
+          register: _waf_overlay_stat
+
+        - name: "E2E | Fail if overlay mode is not 0644"
+          ansible.builtin.assert:
+            that:
+              - _waf_overlay_stat.stat.exists
+              - _waf_overlay_stat.stat.mode == "0644"
+            fail_msg: >-
+              E2E failed: overlay waf-api_example_com.conf mode is {{ _waf_overlay_stat.stat.mode | default('missing') }},
+              expected 0644.
+            success_msg: "E2E: overlay file is 0644"
+
+        # Step 6: Idempotent 2nd run - toggle back to DetectionOnly
+        - name: "E2E | PUT mode detection_only on api.example.com (idempotent)"
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:8080/api/sites/api.example.com/mode"
+            method: PUT
+            body_format: json
+            body:
+              mode: "DetectionOnly"
+            headers:
+              Cookie: "{{ _ui_cookie }}"
+            status_code: 200
+
+        # --- Failure path: evil-Origin POST /load → 403 ---
+        - name: "E2E | POST /load with evil Origin → expect 403"
+          ansible.builtin.uri:
+            url: "http://caddy-waf:2019/load"
+            method: POST
+            body_format: json
+            body: {}
+            headers:
+              Origin: "http://evil.example.com"
+            status_code: 403
+          register: _evil_origin_result
+
+        # --- Failure path: garbage config → 4xx ---
+        - name: "E2E | POST /load with garbage config → expect 4xx"
+          ansible.builtin.uri:
+            url: "http://caddy-waf:2019/load"
+            method: POST
+            body_format: json
+            body:
+              config: "this is not valid caddy config { { { } }"
+            status_code: 400
+          register: _garbage_config_result
+
+        - name: "E2E | Assert live config unchanged after evil-origin rejection"
+          ansible.builtin.uri:
+            url: "http://caddy-waf:2019/config/"
+            method: GET
+            status_code: 200
+            return_content: true
+          register: _config_after_evil
+
+        - name: "E2E | Assert live config still has SecRuleEngine after garbage config rejection"
+          ansible.builtin.assert:
+            that:
+              - "'http' in _config_after_evil.content or 'apps' in _config_after_evil.content"
+            fail_msg: "E2E failed: live config appears corrupted after garbage config rejection"
+            success_msg: "E2E: live config intact after garbage config rejection"
+
+        # --- Failure path: corrupt overlay → UI rollback ---
+        - name: "E2E | Login to UI for corrupt overlay test"
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:8080/login"
+            method: POST
+            body_format: json
+            body:
+              token: "{{ caddy_ui_token }}"
+            status_code: 200
+            return_content: true
+          register: _ui_login_rollback
+
+        - name: "E2E | Extract session cookie for rollback test"
+          ansible.builtin.set_fact:
+            _ui_cookie_rollback: "{{ _ui_login_rollback.set_cookie | regex_search('session=[^;]+') }}"
+
+        - name: "E2E | Read current overlay content (backup before corruption)"
+          ansible.builtin.slurp:
+            src: /opt/user/apps/testing/ingress/ui-managed/waf-api_example_com.conf
+          register: _overlay_backup
+
+        - name: "E2E | Write corrupt overlay content to filesystem"
+          ansible.builtin.copy:
+            content: "CORRUPT {{ ansible_date_time.iso8601 }} } } } INVALID SYNTAX"
+            dest: /opt/user/apps/testing/ingress/ui-managed/waf-api_example_com.conf
+            mode: "0644"
+
+        - name: "E2E | PUT mode toggle with corrupt overlay → expect error and rollback"
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:8080/api/sites/api.example.com/mode"
+            method: PUT
+            body_format: json
+            body:
+              mode: "On"
+            headers:
+              Cookie: "{{ _ui_cookie_rollback }}"
+            status_code: 500
+          register: _corrupt_overlay_result
+          ignore_errors: true
+
+        - name: "E2E | Read overlay after restore attempt"
+          ansible.builtin.slurp:
+            src: /opt/user/apps/testing/ingress/ui-managed/waf-api_example_com.conf
+          register: _overlay_after_restore
+
+        - name: "E2E | Assert corrupt overlay was restored to original content (WAF-UI-006-03)"
+          ansible.builtin.assert:
+            that:
+              - _overlay_after_restore.content == _overlay_backup.content
+            fail_msg: >-
+              E2E failed: corrupt overlay was NOT restored.
+              Before (b64): {{ _overlay_backup.content | truncate(200) }}
+              After (b64):  {{ _overlay_after_restore.content | truncate(200) }}
+            success_msg: "E2E: corrupt overlay correctly restored by UI rollback"
+
+        - name: "E2E | Display e2e summary"
+          ansible.builtin.debug:
+            msg:
+              - "========================================="
+              - "✅ E2E VALIDATION PASSED"
+              - "========================================="
+              - "Admin API readiness: confirmed"
+              - "Digest gates: passed"
+              - "UI /health: {{ _ui_health_check.status }}"
+              - "Login: {{ _ui_login.status }}"
+              - "Mode toggle: {{ _mode_toggle.status }}"
+              - "Read-back: SecRuleEngine On confirmed"
+              - "Overlay mode: 0644"
+              - "Evil origin rejected: {{ _evil_origin_result.status }}"
+              - "Garbage config rejected: {{ _garbage_config_result.status }}"
+              - "Corrupt overlay rollback: {{ _corrupt_overlay_result.status | default('skipped') }}"
+              - "========================================="

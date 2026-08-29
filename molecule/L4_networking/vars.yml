@@ -21,7 +21,16 @@ caddy_user_gid: 1337
 # ------------------------------------------------------------------------------
 # Container image
 # ------------------------------------------------------------------------------
-caddy_image: ghcr.io/developmi/caddy-waf:v3.3.1
+caddy_image: ghcr.io/developmi/caddy-waf:v3.4.0
+caddy_ui_image: ghcr.io/developmi/caddy-waf-ui:v1.0.0
+
+# Admin API + UI (required for e2e testing)
+caddy_admin_enabled: true
+caddy_ui_enabled: true
+caddy_ui_token: molecule-test-token
+
+# Dedicated control-plane network (caddy + UI only; UI NOT on public_net)
+caddy_admin_network_name: "caddy-admin-net"
 
 # ------------------------------------------------------------------------------
 # Paths
