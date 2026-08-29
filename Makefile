@@ -215,6 +215,28 @@ deploy-edge: ## L4: Deploy edge proxy (BACKEND=caddy, TARGET=<host>)
 	@echo "=== L4: Edge Proxy ($(BACKEND) on $(TARGET)) ==="
 	$(ANSIBLE_RUN) playbooks/l4/edge.yml $(ANSIBLE_FLAGS) --limit "$(TARGET)" -e reverse_proxy_backend=$(BACKEND) -e target_group=$(TARGET)
 
+verify-caddy: ## L4: Verify Caddy + UI health (optional TARGET=<host>)
+	@echo "=== L4: Caddy Health Verification ==="
+	$(ANSIBLE_RUN) playbooks/l4/verify-caddy.yml $(ANSIBLE_FLAGS) \
+		$(if $(TARGET),--limit "$(TARGET)" -e target_group=$(TARGET),)
+
+heal-caddy: ## L4: Heal Caddy + UI: verify -> deploy-edge -> re-verify (TARGET=<host>, max 1 attempt)
+	@test -n "$(TARGET)" || (echo "ERROR: TARGET is required. Usage: make heal-caddy TARGET=muscle-1"; exit 1)
+	@echo "=== L4: Caddy Heal (verify -> remediate -> re-verify) on $(TARGET) ==="
+	@if $(MAKE) verify-caddy TARGET=$(TARGET); then \
+		echo "=== L4 heal: all healthy on $(TARGET) - nothing to do ==="; \
+	else \
+		echo "=== L4 heal: UNHEALTHY on $(TARGET) - taking down and redeploying... ==="; \
+		$(MAKE) deploy-edge BACKEND=caddy TARGET=$(TARGET) || exit 1; \
+		echo "=== L4 heal: redeployed - re-verifying $(TARGET) ==="; \
+		if $(MAKE) verify-caddy TARGET=$(TARGET); then \
+			echo "=== L4 heal: DOWN + REDEPLOYED, now healthy on $(TARGET) ==="; \
+		else \
+			echo "=== L4 heal: STILL FAILING on $(TARGET) - ESCALATE (no loop, max 1 attempt) ==="; \
+			exit 1; \
+		fi; \
+	fi
+
 ## L6
 
 deploy-engine: ## L6: Deploy Docker Engine + compose plugin on all hosts
@@ -354,6 +376,17 @@ monitor-crowdsec: ## Verify: Run local CrowdSec monitor script
 	@echo "Running CrowdSec monitor script..."
 	./scripts/monitor-crowdsec.sh
 
+## Docker Maintenance
+
+docker-prune-caddy: ## Docker Maintenance: Prune idle caddy containers + unused developmi images (>30d, ingress)
+	@echo "=== Docker Maintenance: Caddy Artifact Prune (ingress hosts) ==="
+	$(PKG) run ansible ingress -i $(ANSIBLE_INVENTORY) -m shell -a \
+		"echo 'Scope: ONLY stopped caddy containers idle >30d and ghcr.io/developmi images >30d with zero container refs; in-use images/containers are NEVER touched'; \
+		docker ps -aq --filter name=caddy --filter status=exited --filter until=720h | xargs -r docker rm -f; \
+		for img in $$(docker image ls --filter until=720h --format '{{.Repository}}:{{.Tag}}' | grep '^ghcr.io/developmi/' || true); do \
+			if [ -z \"$$(docker ps -aq --filter ancestor=$$img)\" ]; then echo \"removing unused image: $$img\"; docker image rm $$img || true; fi; \
+		done" $(ANSIBLE_FLAGS)
+
 ## Meta
 
 deploy-platform: ## Meta: Deploy complete platform (hardening → engine → monitoring → portainer → backups). L4 edge requires explicit parameters and is NOT included
@@ -404,11 +437,12 @@ test-layer: ## Test: Run a specific Molecule layer (make test-layer LAYER=L1_os_
 	deploy deploy-bootstrap deploy-compliance deploy-first deploy-hardening \
 	deploy-l1 deploy-lockdown reconnect-tailscale validate-l1 validate-l2 \
 	deploy-exporters deploy-monitoring deploy-monitoring-stack \
-	deploy-edge \
+	deploy-edge heal-caddy \
 	backup-now deploy-backup-appdata deploy-backup-databases deploy-backup-stack \
 	deploy-backup-timers deploy-backups deploy-engine deploy-portainer \
 	audit-full deploy-local gate-lockdown nuke provision-host \
-	monitor-crowdsec verify-auditd verify-crowdsec verify-lockdown \
+	monitor-crowdsec verify-auditd verify-caddy verify-crowdsec verify-lockdown \
 	verify-observability verify-tailscale verify-timers \
+	docker-prune-caddy \
 	check deploy-platform deploy-tags dry-run run \
 	test test-layer

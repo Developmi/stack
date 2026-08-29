@@ -1,0 +1,337 @@
+---
+# ==============================================================================
+# Developmi Stack | L4 Networking & Edge - Caddy + WAF UI Health Verification
+# ==============================================================================
+# Purpose: On-demand runtime health verification for caddy-waf and caddy-waf-ui.
+# Read-only checks: container state, host-side health endpoint, admin API
+# readiness, published ports, network attachments and file permissions.
+#
+# Targets the [ingress] group by default (brain + muscle). Conditional checks
+# are driven by group_vars: caddy_ui_enabled / caddy_admin_enabled.
+# Uses shell + assert only (no community.docker modules) - consistent with the
+# role's runtime assert style.
+#
+# Run via make:
+#   make verify-caddy                  # all ingress hosts
+#   make verify-caddy TARGET=muscle-1  # single host
+# ==============================================================================
+
+- name: "L4 | Verify - Caddy + WAF UI health checks"
+  hosts: "{{ target_group | default('ingress') }}"
+  gather_facts: false
+  become: true
+  tags: [l4-networking, caddy, waf, verify]
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. caddy-waf container state
+    # --------------------------------------------------------------------------
+    - name: "L4 verify | Probe caddy-waf container state"
+      ansible.builtin.shell:
+        cmd: docker inspect -f '{{ '{{' }}.State.Running{{ '}}' }}' caddy-waf
+      changed_when: false
+      ignore_errors: true
+      register: _caddy_waf_running
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert caddy-waf container is running"
+      ansible.builtin.assert:
+        that:
+          - _caddy_waf_running.rc == 0
+          - _caddy_waf_running.stdout | trim == 'true'
+        fail_msg: >-
+          L4 verify: caddy-waf is not running (docker inspect rc={{ _caddy_waf_running.rc }}).
+          Redeploy with: make deploy-edge BACKEND=caddy TARGET=<host>
+        success_msg: "L4 verify: caddy-waf container is running"
+      tags: [l4-networking, caddy, waf, verify]
+
+    # --------------------------------------------------------------------------
+    # 2. caddy-waf-ui container state + host health (UI enabled only)
+    # --------------------------------------------------------------------------
+    - name: "L4 verify | Probe caddy-waf-ui container state"
+      ansible.builtin.shell:
+        cmd: docker inspect -f '{{ '{{' }}.State.Running{{ '}}' }}' caddy-waf-ui
+      changed_when: false
+      ignore_errors: true
+      register: _caddy_ui_running
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert caddy-waf-ui container is running"
+      ansible.builtin.assert:
+        that:
+          - _caddy_ui_running.rc == 0
+          - _caddy_ui_running.stdout | trim == 'true'
+        fail_msg: >-
+          L4 verify: caddy-waf-ui is not running (docker inspect rc={{ _caddy_ui_running.rc }}).
+          The UI is enabled via caddy_ui_enabled but the container is missing or stopped.
+        success_msg: "L4 verify: caddy-waf-ui container is running"
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Probe caddy-waf-ui host health endpoint"
+      ansible.builtin.shell:
+        cmd: curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health
+      changed_when: false
+      ignore_errors: true
+      register: _ui_health
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert caddy-waf-ui health endpoint returns 200"
+      ansible.builtin.assert:
+        that:
+          - _ui_health.rc == 0
+          - _ui_health.stdout | trim == '200'
+        fail_msg: >-
+          L4 verify: caddy-waf-ui /health not OK (rc={{ _ui_health.rc }},
+          stdout={{ _ui_health.stdout | default('') }}). Check the UI container logs.
+        success_msg: "L4 verify: caddy-waf-ui /health returns 200"
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Probe caddy-waf-ui runtime user"
+      ansible.builtin.command:
+        cmd: docker exec caddy-waf-ui id -u
+      changed_when: false
+      ignore_errors: true
+      register: _ui_uid
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert caddy-waf-ui runs as UID 1337"
+      ansible.builtin.assert:
+        that:
+          - _ui_uid.rc == 0
+          - _ui_uid.stdout | trim == '1337'
+        fail_msg: >-
+          L4 verify: caddy-waf-ui runtime user is not 1337
+          (got '{{ _ui_uid.stdout | default('') }}', rc={{ _ui_uid.rc }}).
+          The UI contract pins UID/GID 1337 so it can write ui-managed overlays.
+        success_msg: "L4 verify: caddy-waf-ui runs as UID 1337"
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    # --------------------------------------------------------------------------
+    # 3. Caddy admin API readiness (open when enabled, closed when disabled)
+    # --------------------------------------------------------------------------
+    - name: "L4 verify | Probe Caddy admin API readiness from inside caddy-waf"
+      ansible.builtin.shell:
+        cmd: docker exec caddy-waf curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:2019/config/
+      changed_when: false
+      ignore_errors: true
+      register: _admin_api
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert Caddy admin API is ready"
+      ansible.builtin.assert:
+        that:
+          - _admin_api.rc == 0
+          - _admin_api.stdout | trim == '200'
+        fail_msg: >-
+          L4 verify: Caddy admin API not ready (rc={{ _admin_api.rc }},
+          stdout={{ _admin_api.stdout | default('') }}). Check caddy-waf logs.
+        success_msg: "L4 verify: Caddy admin API ready (HTTP 200)"
+      when: caddy_admin_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert Caddy admin API is closed when admin is disabled"
+      ansible.builtin.assert:
+        that:
+          - _admin_api.rc != 0
+        fail_msg: >-
+          L4 verify: Caddy admin API is unexpectedly reachable although
+          caddy_admin_enabled=false. Port 2019 must stay closed on this node.
+        success_msg: "L4 verify: Caddy admin API closed as expected (admin disabled)"
+      when: not (caddy_admin_enabled | default(false) | bool)
+      tags: [l4-networking, caddy, waf, verify]
+
+    # --------------------------------------------------------------------------
+    # 4. Published ports (admin 2019 must never be host-published)
+    # --------------------------------------------------------------------------
+    - name: "L4 verify | Probe caddy-waf published ports"
+      ansible.builtin.command:
+        cmd: docker port caddy-waf
+      changed_when: false
+      ignore_errors: true
+      register: _caddy_waf_ports
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert caddy-waf publishes 80/tcp and 443/tcp, never 2019"
+      ansible.builtin.assert:
+        that:
+          - _caddy_waf_ports.rc == 0
+          - "'80/tcp' in _caddy_waf_ports.stdout"
+          - "'443/tcp' in _caddy_waf_ports.stdout"
+          - "'2019' not in _caddy_waf_ports.stdout"
+        fail_msg: >-
+          L4 verify: unexpected caddy-waf port mapping.
+          Expected 80/tcp + 443/tcp published and admin port 2019 NEVER published.
+          Got: {{ _caddy_waf_ports.stdout | default('') }}
+        success_msg: "L4 verify: caddy-waf publishes 80/tcp + 443/tcp only"
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Probe caddy-waf-ui published ports"
+      ansible.builtin.command:
+        cmd: docker port caddy-waf-ui
+      changed_when: false
+      ignore_errors: true
+      register: _caddy_ui_ports
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert caddy-waf-ui binds 127.0.0.1:8080 only"
+      ansible.builtin.assert:
+        that:
+          - _caddy_ui_ports.rc == 0
+          - "'127.0.0.1:8080' in _caddy_ui_ports.stdout"
+          - "'0.0.0.0:8080' not in _caddy_ui_ports.stdout"
+        fail_msg: >-
+          L4 verify: caddy-waf-ui must publish ONLY 127.0.0.1:8080 (loopback).
+          Got: {{ _caddy_ui_ports.stdout | default('') }}
+        success_msg: "L4 verify: caddy-waf-ui binds 127.0.0.1:8080 only"
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    # --------------------------------------------------------------------------
+    # 5. Network attachments (data plane vs control plane)
+    # --------------------------------------------------------------------------
+    - name: "L4 verify | Probe caddy-waf network attachments"
+      ansible.builtin.shell:
+        cmd: docker inspect -f '{{ '{{' }}.NetworkSettings.Networks{{ '}}' }}' caddy-waf
+      changed_when: false
+      ignore_errors: true
+      register: _caddy_waf_networks
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert caddy-waf is on data plane and control plane networks"
+      ansible.builtin.assert:
+        that:
+          - _caddy_waf_networks.rc == 0
+          - shared_network_name in _caddy_waf_networks.stdout
+          - caddy_admin_network_name in _caddy_waf_networks.stdout
+        fail_msg: >-
+          L4 verify: caddy-waf missing expected network attachments.
+          Expected '{{ shared_network_name }}' (data plane) and
+          '{{ caddy_admin_network_name }}' (control plane).
+          Got: {{ _caddy_waf_networks.stdout | default('') }}
+        success_msg: >-
+          L4 verify: caddy-waf attached to {{ shared_network_name }}
+          + {{ caddy_admin_network_name }}
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Probe caddy-waf-ui network attachments"
+      ansible.builtin.shell:
+        cmd: docker inspect -f '{{ '{{' }}.NetworkSettings.Networks{{ '}}' }}' caddy-waf-ui
+      changed_when: false
+      ignore_errors: true
+      register: _caddy_ui_networks
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert caddy-waf-ui is control-plane only (no data plane)"
+      ansible.builtin.assert:
+        that:
+          - _caddy_ui_networks.rc == 0
+          - caddy_admin_network_name in _caddy_ui_networks.stdout
+          - shared_network_name not in _caddy_ui_networks.stdout
+        fail_msg: >-
+          L4 verify: caddy-waf-ui must be attached ONLY to {{ caddy_admin_network_name }}
+          (control plane), never {{ shared_network_name }} (data plane).
+          Got: {{ _caddy_ui_networks.stdout | default('') }}
+        success_msg: "L4 verify: caddy-waf-ui is control-plane only"
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    # --------------------------------------------------------------------------
+    # 6. File permissions (Coraza audit log + ui-managed overlay directory)
+    # --------------------------------------------------------------------------
+    - name: "L4 verify | Probe Coraza audit log mode"
+      ansible.builtin.command:
+        cmd: stat -c '0%a' {{ app_base_dir }}/ingress/caddy-data/logs/coraza-audit.log
+      changed_when: false
+      ignore_errors: true
+      register: _audit_log_mode
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert Coraza audit log mode is 0644"
+      ansible.builtin.assert:
+        that:
+          - _audit_log_mode.rc == 0
+          - _audit_log_mode.stdout | trim == '0644'
+        fail_msg: >-
+          L4 verify: Coraza audit log missing or wrong mode (rc={{ _audit_log_mode.rc }}).
+          If the file is missing, the WAF audit trail never materialized: check that
+          caddy-waf is serving traffic and that
+          {{ app_base_dir }}/ingress/caddy-data/logs/coraza-audit.log exists.
+          Expected mode 0644, got: {{ _audit_log_mode.stdout | default('n/a') }}
+        success_msg: "L4 verify: Coraza audit log present with mode 0644"
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Detect Docker userns-remap for bind-mount ownership"
+      # Shared SSOT include (same file the L4 role uses). Resolves the HOST-side
+      # ownership pair for bind mounts: without userns-remap it stays 1337:1337;
+      # with it (e.g. dockremap, subuid base 100000) it becomes 101337:101337.
+      # Verify must assert against the EFFECTIVE pair, not the container pair.
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../roles/_shared/userns_detect.yml"
+      vars:
+        userns_container_uid: "{{ caddy_user_uid }}"
+        userns_container_gid: "{{ caddy_user_gid }}"
+        userns_output_prefix: _caddy
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Probe ui-managed directory ownership"
+      ansible.builtin.command:
+        # Numeric uid:gid (not %U:%G names) — NSS name resolution is not
+        # guaranteed on all hosts (e.g. userns-remapped Docker daemons).
+        # The invariant is the EFFECTIVE numeric pair (userns_detect.yml):
+        # container 1337:1337 shifted by the daemon's subuid/subgid offset
+        # (e.g. 101337:101337 with dockremap base 100000).
+        cmd: stat -c '%a:%u:%g' {{ app_base_dir }}/ingress/ui-managed
+      changed_when: false
+      ignore_errors: true
+      register: _ui_managed_ownership
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    - name: "L4 verify | Assert ui-managed directory is owned by effective caddy uid/gid"
+      ansible.builtin.assert:
+        that:
+          - _ui_managed_ownership.rc == 0
+          - _ui_managed_ownership.stdout | trim == '755:' ~ (_caddy_effective_uid | int) ~ ':' ~ (_caddy_effective_gid | int)
+        fail_msg: >-
+          L4 verify: {{ app_base_dir }}/ingress/ui-managed must be owned by the
+          effective caddy pair (numeric {{ _caddy_effective_uid }}:{{ _caddy_effective_gid }}
+          on the host — container pair {{ caddy_user_uid }}:{{ caddy_user_gid }} shifted
+          by the Docker userns-remap offset when enabled) so the UI can write overlay files.
+          Expected 755:{{ _caddy_effective_uid }}:{{ _caddy_effective_gid }}, got:
+          {{ _ui_managed_ownership.stdout | default('n/a') }} (rc={{ _ui_managed_ownership.rc }})
+        success_msg: >-
+          L4 verify: ui-managed owned by effective caddy pair
+          ({{ _caddy_effective_uid }}:{{ _caddy_effective_gid }})
+      when: caddy_ui_enabled | default(false) | bool
+      tags: [l4-networking, caddy, waf, verify]
+
+    # --------------------------------------------------------------------------
+    # Summary
+    # --------------------------------------------------------------------------
+    - name: "L4 verify | Display verification summary"
+      ansible.builtin.debug:
+        msg:
+          - "========================================="
+          - "✅ L4 CADDY HEALTH VERIFICATION"
+          - "========================================="
+          - "Hosts: {{ ansible_play_hosts | join(', ') }}"
+          - "caddy-waf running:  {{ _caddy_waf_running.stdout | default('missing') | trim }}"
+          - "caddy-waf ports:    {{ _caddy_waf_ports.stdout | default('n/a') | replace('\n', '; ') }}"
+          - "caddy-waf networks: {{ _caddy_waf_networks.stdout | default('n/a') | replace('\n', '; ') }}"
+          - "admin API:          {{ _admin_api.stdout | default('n/a') }} (rc={{ _admin_api.rc | default('n/a') }})"
+          - "audit log mode:     {{ _audit_log_mode.stdout | default('n/a') }}"
+          - "UI enabled:         {{ caddy_ui_enabled | default(false) }}"
+          - "  ui running:       {{ _caddy_ui_running.stdout | default('skipped') | trim }}"
+          - "  ui /health:       {{ _ui_health.stdout | default('skipped') }}"
+          - "  ui uid:           {{ _ui_uid.stdout | default('skipped') }}"
+          - "  ui ports:         {{ _caddy_ui_ports.stdout | default('skipped') | replace('\n', '; ') }}"
+          - "  ui networks:      {{ _caddy_ui_networks.stdout | default('skipped') | replace('\n', '; ') }}"
+          - "  ui-managed dir:   {{ _ui_managed_ownership.stdout | default('skipped') }}"
+          - "========================================="
+      tags: [l4-networking, caddy, waf, verify]
