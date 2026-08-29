@@ -207,6 +207,18 @@
   notify: Reload UFW
   tags: [firewall, l2-compliance, nist, sc-7]
 
+# ─── Tailscale Serve (caddy-waf-ui control plane) ─────────────────────────
+- name: "SC-7 | Allow Tailscale Serve on tailscale0"
+  community.general.ufw:
+    rule: allow
+    port: "{{ tailscale_serve_port | default('8443') }}"
+    proto: tcp
+    interface: tailscale0
+    direction: in
+  when: tailscale_serve_enabled | default(false)
+  notify: Reload UFW
+  tags: [firewall, l2-compliance, nist, sc-7]
+
 # ─── Caddy HTTP/HTTPS (brain nodes) ──────────────────────────────────────
 - name: "SC-7 | Allow Caddy HTTP (brain nodes)"
   community.general.ufw:

@@ -492,3 +492,57 @@
 # wins over task keywords (see ansible.cfg [privilege_escalation]).
 # local-devices.yml applies the same chain from its own PHASE 0.1 play.
 # ------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
+# Tailscale Serve — opt-in HTTPS exposure of a loopback service to the tailnet
+# (e.g. the caddy-waf-ui on nodes that run it). Gated by
+# tailscale_serve_enabled (default: false). First run also enables HTTPS on
+# the tailnet if not already enabled. There is no official Ansible module for
+# tailscale serve; the idempotent command probe pattern below is the de-facto
+# standard and matches the auth-status probes above.
+# ------------------------------------------------------------------------------
+
+- name: Probe Tailscale Serve status  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - serve
+      - status
+  register: _ts_serve_status
+  changed_when: false
+  failed_when: false
+  tags: [tailscale, l2-compliance, security]
+
+- name: Enable Tailscale Serve (HTTPS via tailscale serve)  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - serve
+      - --bg
+      - "--https={{ tailscale_serve_port | default('8443') }}"
+      - "{{ tailscale_serve_target | default('8080') }}"
+  register: _ts_serve_enable
+  changed_when: _ts_serve_enable.rc == 0
+  when:
+    - tailscale_serve_enabled | default(false)
+    - >-
+      _ts_serve_status.rc != 0 or
+      (tailscale_serve_port | default('8443')) not in (_ts_serve_status.stdout | default(''))
+  tags: [tailscale, l2-compliance, security]
+
+- name: Disable Tailscale Serve (HTTPS via tailscale serve)  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - serve
+      - --bg
+      - "--https={{ tailscale_serve_port | default('8443') }}"
+      - off
+  register: _ts_serve_disable
+  changed_when: _ts_serve_disable.rc == 0
+  when:
+    - not (tailscale_serve_enabled | default(false))
+    - _ts_serve_status.rc == 0
+    - >-
+      tailscale_serve_port in (_ts_serve_status.stdout | default(''))
+  tags: [tailscale, l2-compliance, security]

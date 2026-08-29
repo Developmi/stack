@@ -105,6 +105,11 @@
               iifname tailscale0 tcp dport 18080 accept  # cAdvisor
               {% endif %}
 
+              {% if tailscale_serve_enabled | default(false) %}
+              # Tailscale Serve (caddy-waf-ui control plane via L2 tailscale role)
+              iifname tailscale0 tcp dport {{ tailscale_serve_port | default('8443') }} accept
+              {% endif %}
+
               {% if 'brain' in group_names %}
               # Caddy HTTP/HTTPS (brain nodes)
               tcp dport { 80, 443 } accept

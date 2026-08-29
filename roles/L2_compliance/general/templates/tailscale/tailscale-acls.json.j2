@@ -39,6 +39,20 @@
       'dst': ['tag:muscle:22', 'tag:muscle:9100', 'tag:muscle:' ~ (observability_cadvisor_port | string), 'tag:muscle:' ~ (tailscale_metrics_port | string)]
     })
 %}
+{# Tailscale Serve: operator sources reach the serve listener on muscle
+   (caddy-waf-ui control plane). Rendered only when serve is enabled; the
+   host firewall (ufw/nftables) also opens this port on tailscale0. #}
+{% if tailscale_serve_enabled | default(false) %}
+{%   set acl_serve_sources = ((tailscale_acl_serve_sources | default(acl_operator_sources)) + (tailscale_acl_serve_sources_extra | default([]))) | unique %}
+{%   if acl_serve_sources | length > 0 %}
+{%     set _ = acl_rules.append({
+        'action': 'accept',
+        'src': acl_serve_sources,
+        'dst': ['tag:muscle:' ~ (tailscale_serve_port | default('8443'))]
+      })
+%}
+{%   endif %}
+{% endif %}
 {% set _ = acl_rules.append({
       'action': 'accept',
       'src': ['tag:muscle'],

@@ -1,0 +1,26 @@
+---
+# ==============================================================================
+# Tailscale — caddy-waf-ui control-plane access (muscle nodes)
+# ==============================================================================
+# The `https` nodeattr is required by the tailnet policy for Tailscale Serve
+# to obtain a MagicDNS certificate. It is rendered into the ACL policy file by
+# the L2 tailscale role template (tailscale-acls.json.j2).
+#
+# FORMAT: tailscale_node_attrs mirrors the Tailscale policy-file `nodeAttrs`
+# section natively — a list of {target: [...], attr: [...]} objects. A plain
+# list of strings (e.g. ["https"]) is INVALID and the ACL API rejects it with
+# HTTP 400 Bad Request. Ref: https://tailscale.com/docs/reference/syntax/policy-file
+#
+# NOTE: the L2 role deploy order matters — land the nodeattr in the policy
+# FIRST (one deploy), then enable Serve (second deploy). The `tailscale serve`
+# task below only starts when tailscale_serve_enabled is true.
+
+tailscale_node_attrs:
+  - target: ["tag:muscle"]
+    attr: ["https"]
+
+# Expose the loopback-only caddy-waf-ui (127.0.0.1:8080) to the tailnet at
+# https://muscle-1.<tailnet>.ts.net:8443. The UI container binding stays
+# loopback-only (spec WAF-UI-002); Serve proxies from the host. HTTPS is
+# mandatory (UI session cookie is Secure). ACLs of the tailnet still apply.
+tailscale_serve_enabled: true

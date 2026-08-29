@@ -2,13 +2,53 @@
 # ==============================================================================
 # Tailscale Client Role - Default Variables
 # ==============================================================================
+# NOTE: Ansible only auto-loads `defaults/main.yml` for a role; this file is the
+# DOCUMENTED safe-defaults reference for all tailscale vars. Tasks consume them
+# with inline `| default(...)` so the role stays functional for adopters who
+# never set these vars (see tasks/tailscale/main.yml and the ACL template).
 
 # Set to true on hosts where Tailscale auth is handled manually
 # (e.g., local workstation devices). When true, the auth key
 # validation guard is skipped and node enrollment is deferred.
 tailscale_manual_auth: false
 
-# Tailscale node attributes for ACL policy
+# Tailscale node attributes for ACL policy.
 # Ref: https://tailscale.com/docs/reference/syntax/policy-file#nodeattrs
-# Examples: funnel, https, nextdns, disable-ipv4
+# FORMAT: native policy-file structure — a list of {target: [...], attr: [...]}
+# objects. A plain list of strings (e.g. ["https"]) is INVALID and the Tailscale
+# ACL API rejects it with HTTP 400 Bad Request.
+# Example (https enables MagicDNS certs for `tailscale serve`):
+#   tailscale_node_attrs:
+#     - target: ["tag:muscle"]
+#       attr: ["https"]
 tailscale_node_attrs: []
+
+# Tailscale Serve — expose a local TCP service to the tailnet via HTTPS
+# (MagicDNS certificate). Tailnet-only (never Funnel). ACLs of the tailnet
+# still apply to the serve listener. Served over HTTPS only (the caddy-waf-ui
+# session cookie is Secure and does not work over plain HTTP), so the `https`
+# nodeattr must be present in the tailnet policy for this node.
+#
+# IMPORTANT — per-node activation (never in defaults):
+#   1. Set `tailscale_node_attrs: ["https"]` in the node's group_vars/host_vars
+#      (NOT here). The L2 tailscale role renders it into the ACL policy file
+#      (see templates/tailscale/tailscale-acls.json.j2).
+#   2. Deploy the L2 tailscale role once so the nodeattr lands in the policy.
+#   3. Then set `tailscale_serve_enabled: true` for that node and re-deploy.
+# Used to reach the caddy-waf-ui on nodes that run it: the UI container
+# binding stays loopback-only (127.0.0.1:8080:8080); serve proxies from
+# the host. Disabled by default — opt-in per node.
+tailscale_serve_enabled: false
+# Local target to proxy: the loopback-only publish of the caddy-waf-ui.
+tailscale_serve_target: "8080"
+# Tailnet-facing HTTPS port. NOT 443: the Caddy data plane already binds
+# 0.0.0.0:443 on the host (conflict on tailscale0).
+tailscale_serve_port: "8443"
+
+# ACL sources allowed to reach the serve listener
+# (tag:muscle:<tailscale_serve_port>). Deliberately NOT defined here:
+# the ACL template falls back to acl_operator_sources (autogroup:admin) when
+# this var is absent, so the rule renders whenever tailscale_serve_enabled
+# is true. Set it per tailnet only to narrow the audience, e.g.:
+#   tailscale_acl_serve_sources: ["user@example.com"]
+#   tailscale_acl_serve_sources_extra: ["user2@example.com"]

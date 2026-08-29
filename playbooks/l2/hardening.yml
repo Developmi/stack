@@ -97,6 +97,21 @@
           ansible.builtin.set_fact:
             tailscale_acl_policy: "{{ lookup('template', playbook_dir + '/../../roles/L2_compliance/general/templates/tailscale/tailscale-acls.json.j2') | from_json }}"
 
+        - name: Assert tailscale_node_attrs uses the native policy-file structure
+          ansible.builtin.assert:
+            that:
+              - item is mapping
+              - item.target is defined
+              - item.target | length > 0
+              - item.attr is defined
+              - item.attr | length > 0
+            fail_msg: >-
+              tailscale_node_attrs entries must be {target: [...], attr: [...]}
+              objects (Tailscale policy-file format). A plain string list
+              (e.g. ["https"]) makes the ACL API return HTTP 400. Got: {{ item }}
+            success_msg: "tailscale_node_attrs entry is a valid {target, attr} object"
+          loop: "{{ tailscale_node_attrs | default([]) }}"
+
         - name: Determine tailnet selector for ACL API
           ansible.builtin.set_fact:
             tailscale_acl_tailnet_selector: >-
