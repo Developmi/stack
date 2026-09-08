@@ -1,0 +1,16 @@
+# gitleaks config (8.23.3). Loaded via: gitleaks git --config .gitleaks.toml
+# Version MUST remain 8.23.3: v8.24+ requires a license for organization
+# domains. Recompute sha256 on any bump (see ci.yml download step).
+[extend]
+useDefault = true
+
+# Structural allowlist replacing the deleted commit-keyed .gitleaksignore:
+# .secrets.baseline is the detect-secrets control file (sha256 hashes, not
+# secrets); secrets.yml.example holds placeholder PEM values. Both were
+# verified false positives. The list is deliberately minimal: any real
+# secret at any other path IS reported.
+[allowlist]
+paths = [
+    '\.secrets\.baseline$',
+    'secrets\.yml\.example$',
+]

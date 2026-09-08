@@ -94,21 +94,33 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Run gitleaks (license-free CLI)
+      - name: Download and verify gitleaks (sha256)
         run: |
+          set -eo pipefail
           GITLEAKS_VERSION="8.23.3"
+          # Version MUST remain 8.23.3: gitleaks v8.24+ requires a license for
+          # organization domains. Recompute the sha256 on any version bump.
           curl -sSfL -o /tmp/gitleaks.tar.gz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          printf '%s  %s\n' \
+            "73a35edc2285afd689e712b8e0ebad3f2eaf94b0d67cd6e1f0ec693ac751bb4a" \
+            "/tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           chmod +x /tmp/gitleaks
-          /tmp/gitleaks git --redact --log-opts="--all" .
-        # Scan the full commit history with the open-source gitleaks CLI (MIT).
-        # Command syntax is `git [flags] [repo]`: v8 has NO `git log`
-        # subcommand, so `git log` treated "log" as the repo path and failed
-        # with "FTL stat log: no such file or directory". `--log-opts="--all"`
-        # scans every ref; `--redact` masks secrets in the output; fetch-depth: 0
-        # above makes the full history available. No license required — works in
-        # forks, organizations, and personal accounts without any secrets.
+
+      # gitleaks v8 syntax is `git [flags] [repo]` (no `git log` subcommand);
+      # `--log-opts` is passed to git log; `--redact` masks secrets in output;
+      # `--config` loads .gitleaks.toml (extends defaults + path allowlist).
+      - name: Scan PR commits (gitleaks)
+        if: github.event_name == 'pull_request'
+        run: |
+          MERGE_BASE=$(git merge-base "$GITHUB_BASE_SHA" HEAD)
+          /tmp/gitleaks git --redact --config .gitleaks.toml --log-opts="${MERGE_BASE}..HEAD" .
+
+      - name: Scan full history (gitleaks)
+        if: github.event_name != 'pull_request'
+        run: |
+          /tmp/gitleaks git --redact --config .gitleaks.toml --log-opts="--all" .
 
   validate-roles:
     name: Validate Role Structure
