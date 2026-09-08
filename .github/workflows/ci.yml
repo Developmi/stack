@@ -188,3 +188,28 @@ jobs:
             -i inventory/hosts.ini.example \
             playbooks/site.yml playbooks/l6/engine.yml playbooks/l6/portainer.yml playbooks/l6/backup-stack.yml playbooks/l4/edge.yml playbooks/l3/exporters.yml playbooks/l3/stack.yml playbooks/ops/nuke.yml
           echo "✅ Convergence test passed"
+
+  workflow-security-audit:
+    name: Workflow Security Audit (zizmor)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4.4.0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # actions/setup-python@v5.6.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # astral-sh/setup-uv@v4.2.0
+        with:
+          enable-cache: false
+
+      - name: Sync toolchain
+        run: |
+          uv sync
+
+      - name: Audit workflows (zizmor)
+        run: |
+          uv run zizmor .github/workflows
