@@ -10,6 +10,10 @@ permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: ansible-lint-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -92,7 +96,7 @@ jobs:
 
             body += '**Security Note:** This project enforces NIST 800-53 compliance\n';
             body += '- All code changes are subject to security audit\n';
-            body += '- See [CONTRIBUTING.md](docs/project/CONTRIBUTING.md) for guidelines\n';
+            body += '- See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines\n';
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
