@@ -419,7 +419,7 @@ check: dry-run ## Meta: Alias for dry-run (compatibility)
 
 test: ## Test: Run the whole Molecule suite (all layers)
 	@echo "=> Executing The Whole Molecule Suite..."
-	uv run molecule test --all
+	uv run --group test molecule test --all
 
 test-layer: ## Test: Run a specific Molecule layer (make test-layer LAYER=L1_os_baseline)
 	@if [ -z "$(LAYER)" ]; then \
@@ -427,7 +427,7 @@ test-layer: ## Test: Run a specific Molecule layer (make test-layer LAYER=L1_os_
 		exit 1; \
 	fi
 	@echo "=> Executing test layer for: $(LAYER)"
-	uv run molecule test -s $(LAYER)
+	uv run --group test molecule test -s $(LAYER)
 
 # Unified .PHONY - all targets sorted by section then alphabetically
 
