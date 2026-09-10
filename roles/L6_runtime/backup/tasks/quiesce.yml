@@ -1,0 +1,45 @@
+---
+# =============================================================================
+# Unified backup engine - ordered quiesce helper (D12/TIER-003)
+# =============================================================================
+# The engine MUST dump the logical database first, then quiesce the container,
+# then tar the volume, then unpause. This helper is sourced by every rendered
+# per-app runner and guarantees the unpause with an EXIT trap, so an aborted
+# tar never leaves the container paused (TIER-003 "Unpause guaranteed").
+# Live tarballs (consistency != quiesce) are crash-consistent only and MUST NOT
+# be described as application-consistent.
+# =============================================================================
+
+- name: "Engine | Deploy quiesce library (D12/TIER-003)"
+  ansible.builtin.copy:
+    dest: "{{ backup_engine_quiesce_lib }}"
+    mode: "0755"
+    owner: root
+    group: root
+    content: |
+      #!/usr/bin/env bash
+      # backup-engine-quiesce.sh - ordered quiesce for Tier2 volume backups.
+      # Managed by Ansible: roles/L6_runtime/backup/tasks/quiesce.yml
+      # Order (TIER-003): dump (caller) -> pause -> tar -> unpause.
+      # The unpause is guaranteed by an EXIT trap.
+
+      backup_volume_quiesced() {
+        local container="$1" volume="$2" app="$3" timestamp="$4"
+        local paused=0
+        quiesce_cleanup() {
+          if [ "$paused" -eq 1 ]; then
+            docker unpause "$container" >/dev/null 2>&1 || true
+          fi
+        }
+        trap quiesce_cleanup EXIT
+        docker pause "$container"
+        paused=1
+        docker run --rm -v "${volume}:/data:ro" alpine tar czf - -C /data . \
+          | restic backup --stdin \
+              --stdin-filename "${app}_${volume}_${timestamp}.tar.gz" \
+              --tag "volume,${app}" --host "$(hostname -s)"
+        docker unpause "$container"
+        paused=0
+        trap - EXIT
+      }
+  tags: [l6-runtime, backup, backup_engine]

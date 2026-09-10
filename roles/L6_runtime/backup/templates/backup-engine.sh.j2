@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# Unified backup engine - per-app runner for "{{ _app_name }}".
+# Managed by Ansible: roles/L6_runtime/backup/templates/backup-engine.sh.j2
+# DO NOT EDIT. Redeploy with `make deploy-backup-engine`.
+#
+# Runtime contract (design D5/D6/D12, ENGINE-003/004/005, TIER-003):
+#   * resolve the real container and volume at runtime via `docker inspect`;
+#     never string-build a volume name (literal external vs project-prefixed);
+#   * absent container -> exit 0 (host affinity, D6);
+#   * unmatched mount_path -> skip + log, never fail (D5);
+#   * dump -> docker pause -> tar -> docker unpause via the quiesce library
+#     (D12), with an EXIT trap guaranteeing the unpause;
+#   * stream payloads into restic (`--stdin`); never `aws s3 cp` (ENGINE-005).
+# All shell interpolations are quoted (ENGINE-005, shell threat boundary).
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+readonly APP="{{ _app_name }}"
+readonly CONTAINER="{{ _p.backup.db_container | default(_app_name) }}"
+readonly RESTIC_ENV="/etc/restic/env"
+readonly QUIESCE_LIB="{{ backup_engine_quiesce_lib }}"
+
+log() { printf '%s backup-engine[%s]: %s\n' "$(date -Is)" "$APP" "$*" >&2; }
+
+if [ ! -r "$RESTIC_ENV" ]; then
+  log "FATAL: $RESTIC_ENV not readable - run deploy-backup-engine first"
+  exit 1
+fi
+# shellcheck source=/dev/null
+set -a; . "$RESTIC_ENV"; set +a
+
+# App-data repository owns app snapshots (D9); override the stack-config default
+# inherited from /etc/restic/env.
+export RESTIC_REPOSITORY="{{ restic_appdata_repo_url }}"
+
+if [ -r "$QUIESCE_LIB" ]; then
+  # shellcheck source=/dev/null
+  . "$QUIESCE_LIB"
+fi
+
+# D6 host affinity: a host that does not run the container exits cleanly.
+if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  log "container '$CONTAINER' absent on $(hostname -s); nothing to do"
+  exit 0
+fi
+
+readonly TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+readonly HOST="$(hostname -s)"
+
+# D5 runtime volume resolution: match the declared mount_path against the real
+# container mounts. Never string-build the volume name.
+resolve_volume() {
+  local container="$1" mount_path="$2" line name dest
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    name="${line%% *}"
+    dest="${line#* }"
+    if [ "$dest" = "$mount_path" ]; then
+      printf '%s' "$name"
+      return 0
+    fi
+  done < <(docker inspect "$container" \
+      --format '{% raw %}{{range .Mounts}}{{.Name}} {{.Destination}}{{end}}{% endraw %}' \
+      2>/dev/null | tr -d '\r')
+  return 1
+}
+
+backup_db() {
+  local engine="$1" db_name="$2" user="$3"
+  case "$engine" in
+    pg_dump)
+      docker exec -i "$CONTAINER" pg_dump -U "$user" "$db_name" \
+        | gzip --rsyncable \
+        | restic backup --stdin \
+            --stdin-filename "${APP}_${db_name}_${TIMESTAMP}.sql.gz" \
+            --tag "db,postgresql,${APP}" --host "$HOST"
+      ;;
+    mysqldump)
+      docker exec -i "$CONTAINER" mysqldump -u "$user" "$db_name" \
+        | gzip --rsyncable \
+        | restic backup --stdin \
+            --stdin-filename "${APP}_${db_name}_${TIMESTAMP}.sql.gz" \
+            --tag "db,mysql,${APP}" --host "$HOST"
+      ;;
+    clickhouse-backup)
+      docker exec -i "$CONTAINER" clickhouse-client --query \
+        "BACKUP DATABASE ${db_name} TO Disk('backups', '${APP}_${TIMESTAMP}')"
+      ;;
+    *)
+      log "skip: unsupported backup engine '$engine' for database '$db_name'"
+      ;;
+  esac
+}
+
+backup_volume_live() {
+  local volume="$1"
+  docker run --rm -v "${volume}:/data:ro" alpine tar czf - -C /data . \
+    | restic backup --stdin \
+        --stdin-filename "${APP}_${volume}_${TIMESTAMP}.tar.gz" \
+        --tag "volume,${APP}" --host "$HOST"
+}
+
+backup_volume() {
+  local mount_path="$1" consistency="$2" volume
+  if ! volume="$(resolve_volume "$CONTAINER" "$mount_path")"; then
+    log "skip: no volume mounted at '$mount_path' on '$CONTAINER'"
+    return 0
+  fi
+  log "volume '$volume' mounted at '$mount_path' (consistency=$consistency)"
+  if [ "$consistency" = "quiesce" ] && declare -F backup_volume_quiesced >/dev/null 2>&1; then
+    backup_volume_quiesced "$CONTAINER" "$volume" "$APP" "$TIMESTAMP"
+  else
+    backup_volume_live "$volume"
+  fi
+}
+
+# ── Dispatch (rendered from the profile declaration) ──
+{% if _p.backup.databases is defined %}
+{% for db in _p.backup.databases %}
+backup_db "{{ _p.backup.method | default('pg_dump') }}" "{{ db.db_name }}" "{{ db.user | default('postgres') }}"
+{% endfor %}
+{% elif _p.backup.db_type | default('') in ['postgres', 'mysql', 'clickhouse'] %}
+backup_db "{{ _p.backup.method | default(_p.backup.db_type) }}" "{{ _p.backup.db_name }}" "{{ _p.backup.db_user | default('postgres') }}"
+{% endif %}
+{% if _p.backup.volumes is defined %}
+{% for vol in _p.backup.volumes %}
+backup_volume "{{ vol.mount_path }}" "{{ vol.consistency | default('live') }}"
+{% endfor %}
+{% elif _p.backup.volume_name is defined and _p.backup.volume_name | length > 0 %}
+backup_volume_live "{{ _p.backup.volume_name }}"
+{% endif %}
+
+log "completed"

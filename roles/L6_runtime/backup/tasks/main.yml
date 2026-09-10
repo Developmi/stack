@@ -2,8 +2,9 @@
 # L6 Runtime Backup - Consolidated dispatcher
 # Source selector via backup_role_source variable:
 #   "stack" (default) - host-level stack backups (Restic → R2 stack-restic/)
+#   "engine"          - unified profile-declarative backup engine (all apps)
 #   "app-data"        - app database dumps + Restic → R2 restic/
-#   "timers"          - systemd timer deployment for DB backups
+#   "timers"          - legacy systemd timer deployment for DB backups
 # Tags preserved for backward compatibility.
 
 # Credentials and /etc/restic/env are provisioned for EVERY backup host,
@@ -28,3 +29,8 @@
   ansible.builtin.include_tasks: timers.yml
   tags: [backup-timers]
   when: backup_role_source is defined and backup_role_source == "timers"
+
+- name: "Include unified engine tasks (D11/ENGINE-001)"
+  ansible.builtin.include_tasks: engine.yml
+  tags: [l6-runtime, backup, backup_engine]
+  when: backup_role_source is defined and backup_role_source == "engine"

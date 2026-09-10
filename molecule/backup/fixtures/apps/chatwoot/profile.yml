@@ -30,3 +30,10 @@ backup:
   verification: monthly-restore-test
   db_type: postgres
   db_name: chatwoot
+  volumes:
+    # Declared Tier2 volume (Phase 4 schema). The engine resolves the real
+    # Docker volume name at runtime by matching this mount_path (D5); the
+    # Molecule stub reports a different destination to exercise skip+log.
+    - name: chatwoot_storage
+      mount_path: /app/data
+      consistency: live

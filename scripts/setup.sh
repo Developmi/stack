@@ -180,10 +180,8 @@ validate_playbooks() {
         playbooks/l3/exporters.yml \
         playbooks/l3/stack.yml \
         playbooks/l4/edge.yml \
-        playbooks/l6/backup-appdata.yml \
-        playbooks/l6/backup-databases.yml \
+        playbooks/l6/backup-engine.yml \
         playbooks/l6/backup-stack.yml \
-        playbooks/l6/backup-timers.yml \
         playbooks/l6/engine.yml \
         playbooks/l6/portainer.yml \
         playbooks/ops/bootstrap.yml \

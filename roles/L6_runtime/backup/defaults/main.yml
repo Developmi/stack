@@ -5,8 +5,8 @@
 
 # ── stack_backup defaults ──
 # Single restic pin (D3/STORAGE-001): one version, one binary path, one image
-# tag. Do NOT declare a second pin in any other role - the backup-db role is
-# retired in the unified-engine follow-up and consumes this same pin.
+# tag. Do NOT declare a second pin in any other role - the retired `backup-db`
+# role no longer exists; the unified engine consumes this same pin.
 restic_version: "0.19.1"
 restic_install_path: "/usr/local/bin/restic"
 restic_arch: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
@@ -49,6 +49,15 @@ restic_local_repo_path: "/var/backups/restic/{{ inventory_hostname }}"
 
 # ── backup/ (app-data backup) defaults ──
 restic_image: "restic/restic:0.19.1"
+
+# ── Unified engine (D11/ENGINE-001) ──
+# Shared ordered-quiesce helper sourced by every rendered per-app runner
+# (D12/TIER-003: dump -> docker pause -> tar -> docker unpause, EXIT trap).
+backup_engine_quiesce_lib: "/usr/local/bin/backup-engine-quiesce.sh"
+# The restic binary is installed by the stack path (backup-stack.yml). The
+# engine playbook opts in explicitly so offline scenarios (Molecule) skip the
+# GitHub download.
+backup_engine_install_restic: false
 
 # Retention policy (app-data backup)
 backup_keep_daily: 7

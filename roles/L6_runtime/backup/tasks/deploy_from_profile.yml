@@ -1,25 +1,24 @@
 ---
-# Sub-task: process one profile file for backup timers
-# Included by timers.yml via a loop over the controller-side profile files.
-# Loads profile vars, derives the app name from the profile PATH (not from
-# profile content - the reduced schema dropped the `name` field), deploys DB
-# timer+service when backup key is defined, and enables/starts the timer.
+# Sub-task: render the unified engine unit pair for one app profile.
+# Included by engine.yml over the controller-side profile scan.
+#
+# App identity comes from the profile DIRECTORY (apps/<app>/profile.yml ->
+# <app>), never from a `name` field (BPI-001). The reduced schema dropped
+# `name`; a stale `name` must NOT be used. `db_type: none|custom` apps deploy no
+# unit and raise no error (BPI-003). The derived name is asserted against
+# ^[a-z0-9_-]+$ before ANY template render (doc-like-path threat).
 
 - name: "Load profile variables"
   ansible.builtin.include_vars:
     file: "{{ item }}"
     name: _p
-  tags: [l6-runtime, backup-timers]
-  # ponytail: systemd validates OnCalendar itself, regex assert was too restrictive
+  tags: [l6-runtime, backup, backup_engine]
 
 - name: "Derive app name from profile path"
   ansible.builtin.set_fact:
     _app_name: "{{ item | dirname | basename }}"
   when: enable_backups | default(false) | bool
-  tags: [l6-runtime, backup-timers]
-  # SDD backup-profile-integration: the app name comes from the directory
-  # holding profile.yml (apps/<app>/profile.yml -> <app>). The `name` field
-  # was dropped from the reduced schema; a stale `name` must NOT be used.
+  tags: [l6-runtime, backup, backup_engine]
 
 - name: "Validate derived app name (systemd unit safety)"
   ansible.builtin.assert:
@@ -31,38 +30,59 @@
       (systemd unit-name safety).
     quiet: true
   when: enable_backups | default(false) | bool
-  tags: [l6-runtime, backup-timers]
+  tags: [l6-runtime, backup, backup_engine]
   # Threat matrix: shell metacharacters in profile paths are rejected before
   # any template render (ExecStart interpolation), so no unit is written.
 
-- name: "Deploy backup-db-{{ _app_name }}.timer"
-  ansible.builtin.template:
-    src: backup-db.timer.j2
-    dest: "/etc/systemd/system/backup-db-{{ _app_name }}.timer"
-    mode: "0644"
-  notify: reload systemd
-  # skip none/custom - these apps don't have a dump-able DB engine
+- name: "Resolve container/volume identity at runtime (D5)"
+  ansible.builtin.include_tasks: resolve.yml
   when:
     - enable_backups | default(false) | bool
     - _p.backup is defined
     - _p.backup.db_type | default('') not in ['none', 'custom']
-  tags: [l6-runtime, backup-timers]
+  tags: [l6-runtime, backup, backup_engine]
 
-- name: "Deploy backup-db-{{ _app_name }}.service"
+- name: "Deploy backup-engine-{{ _app_name }}.sh"
   ansible.builtin.template:
-    src: backup-db.service.j2
-    dest: "/etc/systemd/system/backup-db-{{ _app_name }}.service"
+    src: backup-engine.sh.j2
+    dest: "/usr/local/bin/backup-engine-{{ _app_name }}.sh"
+    mode: "0755"
+    owner: root
+    group: root
+  # skip none/custom - these apps have no engine-dumpable DB/volume
+  when:
+    - enable_backups | default(false) | bool
+    - _p.backup is defined
+    - _p.backup.db_type | default('') not in ['none', 'custom']
+  tags: [l6-runtime, backup, backup_engine]
+
+- name: "Deploy backup-engine-{{ _app_name }}.service"
+  ansible.builtin.template:
+    src: backup-engine.service.j2
+    dest: "/etc/systemd/system/backup-engine-{{ _app_name }}.service"
     mode: "0644"
   notify: reload systemd
   when:
     - enable_backups | default(false) | bool
     - _p.backup is defined
     - _p.backup.db_type | default('') not in ['none', 'custom']
-  tags: [l6-runtime, backup-timers]
+  tags: [l6-runtime, backup, backup_engine]
 
-- name: "Enable and start backup-db-{{ _app_name }}.timer"
+- name: "Deploy backup-engine-{{ _app_name }}.timer"
+  ansible.builtin.template:
+    src: backup-engine.timer.j2
+    dest: "/etc/systemd/system/backup-engine-{{ _app_name }}.timer"
+    mode: "0644"
+  notify: reload systemd
+  when:
+    - enable_backups | default(false) | bool
+    - _p.backup is defined
+    - _p.backup.db_type | default('') not in ['none', 'custom']
+  tags: [l6-runtime, backup, backup_engine]
+
+- name: "Enable and start backup-engine-{{ _app_name }}.timer"
   ansible.builtin.systemd:
-    name: "backup-db-{{ _app_name }}.timer"
+    name: "backup-engine-{{ _app_name }}.timer"
     enabled: true
     state: started
     daemon_reload: true
@@ -70,4 +90,4 @@
     - enable_backups | default(false) | bool
     - _p.backup is defined
     - _p.backup.db_type | default('') not in ['none', 'custom']
-  tags: [l6-runtime, backup-timers]
+  tags: [l6-runtime, backup, backup_engine]
