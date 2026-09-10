@@ -1,0 +1,16 @@
+# Jinja2 template: systemd timer unit for restore verification.
+# Generates: backup-restore-verify-{{ _app_name }}.timer
+# Cadence derives from the profile's `backup.verification` policy (VERIFY-003):
+# Tier1 monthly, Tier2 quarterly.
+
+[Unit]
+Description=Restore verification timer for {{ _app_name }}
+Requires=backup-restore-verify-{{ _app_name }}.service
+
+[Timer]
+OnCalendar={{ _verify_schedule }}
+Persistent=true
+RandomizedDelaySec={{ backup_restore_verify_random_delay }}
+
+[Install]
+WantedBy=timers.target

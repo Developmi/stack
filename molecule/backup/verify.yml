@@ -329,8 +329,51 @@
         mode: "0755"
         content: |
           #!/usr/bin/env bash
-          printf 'restic %s\n' "$*" >> "{{ shim_dir }}/restic.log"
-          cat >/dev/null || true
+          # Stub restic for the engine tests. Records argv and drains stdin (the
+          # backup runners stream payloads with `--stdin`). The restore
+          # verification runner is exercised for real: `snapshots --json`
+          # reports one snapshot, `restore` writes a valid gzip payload into the
+          # requested --target, and a `restore-fail` marker forces a non-zero
+          # restore so the failure path can be proven (VERIFY-001/004).
+          log_dir="{{ shim_dir }}"
+          printf 'restic %s\n' "$*" >> "$log_dir/restic.log"
+          cat >/dev/null 2>&1 || true
+          case "$1" in
+            snapshots)
+              printf '[{"short_id":"abc12345","id":"abc12345","time":"2026-09-10T00:00:00Z"}]\n'
+              exit 0
+              ;;
+            restore)
+              if [ -f "$log_dir/restore-fail" ]; then
+                printf 'stub restic: restore failed\n' >&2
+                exit 1
+              fi
+              target=""; prev=""
+              for arg in "$@"; do
+                if [ "$prev" = "--target" ]; then target="$arg"; fi
+                prev="$arg"
+              done
+              if [ -n "$target" ]; then
+                mkdir -p "$target"
+                printf 'restored-payload\n' | gzip > "$target/app_restored.sql.gz"
+              fi
+              exit 0
+              ;;
+          esac
+          exit 0
+
+    - name: "GIVEN: Write the curl stub (records the notification, no network)"
+      ansible.builtin.copy:
+        dest: "{{ shim_dir }}/curl"
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          # Stub curl for the restore-verification notification test. It records
+          # argv (to prove no secret is on the command line, CRED-003) and the
+          # stdin config (the Telegram payload travels via `-K -`).
+          log_dir="{{ shim_dir }}"
+          printf 'curl %s\n' "$*" >> "$log_dir/curl.log"
+          cat >> "$log_dir/curl-stdin.log" 2>/dev/null || true
           exit 0
 
     - name: "GIVEN: Ensure the absent-container marker is removed"
@@ -861,3 +904,196 @@
               - not bad_consistency_timer.stat.exists
             fail_msg: "A unit was deployed despite consistency: eventual - 004-05 violated"
             success_msg: "consistency: eventual rejected before any unit render (004-05)"
+
+    # ---------------------------------------------------------------------------
+    # VERIFY-001 / task 5.4 (RED gate): a completed restore MUST persist an
+    # evidence JSON. RED before the runner exists: the runner is absent, no
+    # evidence is written and the evidence assertion fails. GREEN after the
+    # runner writes success/failure evidence.
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Mark the app container present for the restore drill"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/container-present"
+        state: touch
+        mode: "0644"
+
+    - name: "GIVEN: Ensure no restore-fail marker and clear any prior evidence"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ shim_dir }}/restore-fail"
+        - /var/lib/backup-restore-verify/evidence/chatwoot.json
+
+    - name: "WHEN: The restore-verification runner completes a restore (VERIFY-001)"
+      ansible.builtin.command:
+        cmd: /usr/local/bin/backup-restore-verify-chatwoot.sh
+      environment:
+        PATH: "{{ shim_dir }}:{{ ansible_env.PATH }}"
+      register: restore_verify_success
+      changed_when: false
+      failed_when: false
+
+    - name: "GIVEN: Stat the success restore evidence JSON (VERIFY-001)"
+      ansible.builtin.stat:
+        path: /var/lib/backup-restore-verify/evidence/chatwoot.json
+      register: restore_evidence_success
+
+    - name: "THEN: A completed restore writes an evidence JSON (VERIFY-001/5.4)"
+      ansible.builtin.assert:
+        that:
+          - restore_evidence_success.stat.exists
+        fail_msg: >-
+          No restore evidence JSON was written after a completed restore
+          (VERIFY-001). runner_rc={{ restore_verify_success.rc | default('?') }}
+          stderr={{ restore_verify_success.stderr | default('') }}
+        success_msg: "Restore evidence JSON written after a completed restore"
+
+    - name: "THEN: The successful restore exits 0 (VERIFY-001)"
+      ansible.builtin.assert:
+        that:
+          - restore_verify_success.rc == 0
+        fail_msg: "Restore-verification runner failed on the success path (rc={{ restore_verify_success.rc }})"
+        success_msg: "Restore-verification runner completed a restore successfully"
+
+    - name: "GIVEN: Read the success evidence JSON"
+      ansible.builtin.slurp:
+        path: /var/lib/backup-restore-verify/evidence/chatwoot.json
+      register: restore_evidence_success_content
+
+    - name: "THEN: The success evidence records app + policy + result=success (VERIFY-001)"
+      ansible.builtin.assert:
+        that:
+          - "'\"app\":\"chatwoot\"' in (restore_evidence_success_content.content | b64decode)"
+          - "'\"verification\":\"monthly-restore-test\"' in (restore_evidence_success_content.content | b64decode)"
+          - "'\"result\":\"success\"' in (restore_evidence_success_content.content | b64decode)"
+        fail_msg: "Success evidence JSON is missing required fields (VERIFY-001)"
+        success_msg: "Success evidence JSON records app + policy + result=success"
+
+    # ---------------------------------------------------------------------------
+    # VERIFY-004 (task 5.3): a failed verification propagates a non-zero exit,
+    # writes failure evidence and notifies the operator.
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Force the stub restore to fail and clear the prior evidence"
+      ansible.builtin.copy:
+        dest: "{{ shim_dir }}/restore-fail"
+        content: "fail\n"
+        mode: "0644"
+
+    - name: "GIVEN: Remove the success evidence so the failure write is isolated"
+      ansible.builtin.file:
+        path: /var/lib/backup-restore-verify/evidence/chatwoot.json
+        state: absent
+
+    - name: "GIVEN: Reset the curl notification logs"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ shim_dir }}/curl.log"
+        - "{{ shim_dir }}/curl-stdin.log"
+
+    - name: "WHEN: The restore-verification runner hits a failed restore (VERIFY-004)"
+      ansible.builtin.command:
+        cmd: /usr/local/bin/backup-restore-verify-chatwoot.sh
+      environment:
+        PATH: "{{ shim_dir }}:{{ ansible_env.PATH }}"
+      register: restore_verify_failure
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: A failed restore propagates a non-zero exit (VERIFY-004)"
+      ansible.builtin.assert:
+        that:
+          - restore_verify_failure.rc != 0
+        fail_msg: "A failed restore did not propagate a non-zero exit (VERIFY-004)"
+        success_msg: "Failed restore propagated a non-zero exit"
+
+    - name: "GIVEN: Read the failure evidence JSON"
+      ansible.builtin.slurp:
+        path: /var/lib/backup-restore-verify/evidence/chatwoot.json
+      register: restore_evidence_failure_content
+
+    - name: "THEN: The failure writes result=failure evidence (VERIFY-001/5.4)"
+      ansible.builtin.assert:
+        that:
+          - "'\"result\":\"failure\"' in (restore_evidence_failure_content.content | b64decode)"
+        fail_msg: "A failed restore did not write failure evidence (VERIFY-001)"
+        success_msg: "Failure evidence JSON written with result=failure"
+
+    - name: "GIVEN: Read the curl notification config"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/curl-stdin.log"
+      register: restore_notify_config
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: A failed verification emits an operator notification (VERIFY-004)"
+      ansible.builtin.assert:
+        that:
+          - "'sendMessage' in (restore_notify_config.stdout | default(''))"
+        fail_msg: "No operator notification was emitted on verification failure (VERIFY-004)"
+        success_msg: "Operator notification emitted on verification failure"
+
+    - name: "GIVEN: Read the curl argv log"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/curl.log"
+      register: restore_notify_argv
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: The Telegram token is never placed on the curl command line (CRED-003)"
+      ansible.builtin.assert:
+        that:
+          - "'molecule-test-bot-token' not in (restore_notify_argv.stdout | default(''))"
+        fail_msg: "The Telegram token appeared on the curl command line (CRED-003)"
+        success_msg: "Telegram token passed via stdin config, never on argv"
+
+    - name: "GIVEN: Remove the restore-fail marker"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restore-fail"
+        state: absent
+
+    # ---------------------------------------------------------------------------
+    # VERIFY-003 (task 5.2): verification frequency follows the asset tier. The
+    # restore-verification timer is derived from the profile's declared
+    # `backup.verification` policy: monthly for Tier1, quarterly for Tier2, and
+    # no unit at all for `none` (Tier3).
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Stat the Tier1 monthly / Tier2 quarterly / none restore-verification timers (VERIFY-003)"
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/backup-restore-verify-{{ item.app }}.timer"
+      loop:
+        - { app: chatwoot, tier: tier1 }
+        - { app: uptime-kuma, tier: tier2 }
+        - { app: openlit, tier: tier3 }
+      register: verify_timer_stats
+
+    - name: "THEN: Tier1 + Tier2 get a verification timer, verification: none gets none (VERIFY-003)"
+      ansible.builtin.assert:
+        that:
+          - verify_timer_stats.results[0].stat.exists
+          - verify_timer_stats.results[1].stat.exists
+          - not verify_timer_stats.results[2].stat.exists
+        fail_msg: >-
+          Restore-verification timers do not follow the tier policy:
+          tier1={{ verify_timer_stats.results[0].stat.exists }}
+          tier2={{ verify_timer_stats.results[1].stat.exists }}
+          tier3={{ verify_timer_stats.results[2].stat.exists }}
+        success_msg: "Tier1 monthly + Tier2 quarterly verification timers deployed; none skipped"
+
+    - name: "GIVEN: Slurp the monthly and quarterly restore-verification timers (VERIFY-003)"
+      ansible.builtin.slurp:
+        path: "/etc/systemd/system/backup-restore-verify-{{ item }}.timer"
+      loop:
+        - chatwoot
+        - uptime-kuma
+      register: verify_timer_contents
+
+    - name: "THEN: The timer cadence matches the declared tier policy (VERIFY-003)"
+      ansible.builtin.assert:
+        that:
+          - "'OnCalendar=*-*-01 04:00:00' in (verify_timer_contents.results[0].content | b64decode)"
+          - "'OnCalendar=*-01,04,07,10-01 04:00:00' in (verify_timer_contents.results[1].content | b64decode)"
+        fail_msg: "Restore-verification timers do not encode the tier cadence (VERIFY-003)"
+        success_msg: "Monthly + quarterly restore-verification cadences rendered (VERIFY-003)"

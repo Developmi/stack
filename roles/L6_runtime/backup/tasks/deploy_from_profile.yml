@@ -75,6 +75,16 @@
     - (_p.backup.method | default(_p.backup.db_type)) in ['pg_dump', 'postgres', 'mysqldump', 'mysql']
   tags: [l6-runtime, backup, backup_engine, backup_creds]
 
+- name: "Deploy restore-verification runner + units (D13/VERIFY-001..004)"
+  ansible.builtin.include_tasks: restore_verify.yml
+  # Only assets with a declared restore-test policy get a verification unit;
+  # `none` (Tier3) deploys nothing (VERIFY-003).
+  when:
+    - enable_backups | default(false) | bool
+    - _p.backup is defined
+    - _p.backup.verification | default('none') in ['monthly-restore-test', 'quarterly-restore-test']
+  tags: [l6-runtime, backup, backup_engine, backup_restore_verify]
+
 - name: "Deploy backup-engine-{{ _app_name }}.sh"
   ansible.builtin.template:
     src: backup-engine.sh.j2
