@@ -9,21 +9,30 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint-and-validate:
     name: Lint, Validate & Security
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # actions/setup-python@v5.6.0
         with:
           python-version: "3.14"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # astral-sh/setup-uv@v4.2.0
 
       - name: Sync toolchain
         run: |
@@ -82,26 +91,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Run gitleaks (license-free CLI)
+      - name: Download and verify gitleaks (sha256)
         run: |
+          set -eo pipefail
           GITLEAKS_VERSION="8.23.3"
+          # Version MUST remain 8.23.3: gitleaks v8.24+ requires a license for
+          # organization domains. Recompute the sha256 on any version bump.
           curl -sSfL -o /tmp/gitleaks.tar.gz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          printf '%s  %s\n' \
+            "73a35edc2285afd689e712b8e0ebad3f2eaf94b0d67cd6e1f0ec693ac751bb4a" \
+            "/tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           chmod +x /tmp/gitleaks
-          /tmp/gitleaks git --redact --log-opts="--all" .
-        # Scan the full commit history with the open-source gitleaks CLI (MIT).
-        # Command syntax is `git [flags] [repo]`: v8 has NO `git log`
-        # subcommand, so `git log` treated "log" as the repo path and failed
-        # with "FTL stat log: no such file or directory". `--log-opts="--all"`
-        # scans every ref; `--redact` masks secrets in the output; fetch-depth: 0
-        # above makes the full history available. No license required — works in
-        # forks, organizations, and personal accounts without any secrets.
+
+      # gitleaks v8 syntax is `git [flags] [repo]` (no `git log` subcommand);
+      # `--log-opts` is passed to git log; `--redact` masks secrets in output;
+      # `--config` loads .gitleaks.toml (extends defaults + path allowlist).
+      - name: Scan PR commits (gitleaks)
+        if: github.event_name == 'pull_request'
+        env:
+          # GITHUB_BASE_SHA is not a default Actions variable; expose the PR base.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          MERGE_BASE=$(git merge-base "$BASE_SHA" HEAD)
+          /tmp/gitleaks git --redact --config .gitleaks.toml --log-opts="${MERGE_BASE}..HEAD" .
+
+      - name: Scan full history (gitleaks)
+        if: github.event_name != 'pull_request'
+        run: |
+          /tmp/gitleaks git --redact --config .gitleaks.toml --log-opts="--all" .
 
   validate-roles:
     name: Validate Role Structure
@@ -111,15 +135,17 @@ jobs:
         role: [L1_os_baseline, L2_compliance, L3_observability, L4_networking, L6_runtime]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # actions/setup-python@v5.6.0
         with:
           python-version: "3.14"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # astral-sh/setup-uv@v4.2.0
 
       - name: Sync toolchain
         run: |
@@ -144,15 +170,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # actions/setup-python@v5.6.0
         with:
           python-version: "3.14"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # astral-sh/setup-uv@v4.2.0
 
       - name: Sync toolchain
         run: |
@@ -169,3 +197,30 @@ jobs:
             -i inventory/hosts.ini.example \
             playbooks/site.yml playbooks/l6/engine.yml playbooks/l6/portainer.yml playbooks/l6/backup-stack.yml playbooks/l4/edge.yml playbooks/l3/exporters.yml playbooks/l3/stack.yml playbooks/ops/nuke.yml
           echo "✅ Convergence test passed"
+
+  workflow-security-audit:
+    name: Workflow Security Audit (zizmor)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # actions/setup-python@v5.6.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # astral-sh/setup-uv@v4.2.0
+        with:
+          enable-cache: false
+
+      - name: Sync toolchain
+        run: |
+          uv sync
+
+      - name: Audit workflows (zizmor)
+        run: |
+          uv run zizmor .github/workflows

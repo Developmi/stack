@@ -8,25 +8,32 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
+
+concurrency:
+  group: ansible-lint-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # actions/setup-python@v5.6.0
         with:
           python-version: "3.14"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # astral-sh/setup-uv@v4.2.0
 
       - name: Sync toolchain
         run: |
@@ -70,21 +77,24 @@ jobs:
 
       - name: Report results to PR
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # actions/github-script@v7.1.0
+        env:
+          ANSIBLE_OUTCOME: ${{ steps.ansible-lint.outcome }}
+          YAMLLINT_OUTCOME: ${{ steps.yamllint.outcome }}
         with:
           script: |
             const fs = require('fs');
             let body = '## 🔍 Code Quality Report\n\n';
 
             body += '### Ansible Lint\n';
-            if ('${{ steps.ansible-lint.outcome }}' === 'success') {
+            if (process.env.ANSIBLE_OUTCOME === 'success') {
               body += '✅ All playbooks passed linting\n\n';
             } else {
               body += '⚠️ Ansible Lint issues detected (see logs)\n\n';
             }
 
             body += '### YAML Validation\n';
-            if ('${{ steps.yamllint.outcome }}' === 'success') {
+            if (process.env.YAMLLINT_OUTCOME === 'success') {
               body += '✅ All YAML files valid\n\n';
             } else {
               body += '⚠️ YAML validation warnings (see logs)\n\n';
@@ -92,7 +102,7 @@ jobs:
 
             body += '**Security Note:** This project enforces NIST 800-53 compliance\n';
             body += '- All code changes are subject to security audit\n';
-            body += '- See [CONTRIBUTING.md](docs/project/CONTRIBUTING.md) for guidelines\n';
+            body += '- See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines\n';
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -110,7 +120,7 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # actions/upload-artifact@v4.6.2
         with:
           name: lint-reports
           path: |
@@ -120,15 +130,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # actions/setup-python@v5.6.0
         with:
           python-version: "3.14"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # astral-sh/setup-uv@v4.2.0
 
       - name: Sync toolchain
         run: |
@@ -159,15 +171,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # actions/setup-python@v5.6.0
         with:
           python-version: "3.14"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # astral-sh/setup-uv@v4.2.0
 
       - name: Sync toolchain
         run: |
