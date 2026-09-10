@@ -326,8 +326,8 @@
     - name: "THEN: UI service joins caddy-admin-net ONLY (not public_net) (D7)"
       ansible.builtin.assert:
         that:
-          - "'- caddy-admin-net' in compose_content.split('caddy-waf-ui:')[1].split('networks:')[1].split('volumes:')[0]"
-          - "'- public_net' not in compose_content.split('caddy-waf-ui:')[1].split('networks:')[1].split('volumes:')[0]"
+          - "'- caddy-admin-net' in compose_content.split('  caddy-waf-ui:')[1].split('networks:')[1].split('volumes:')[0]"
+          - "'- public_net' not in compose_content.split('  caddy-waf-ui:')[1].split('networks:')[1].split('volumes:')[0]"
         fail_msg: "SDD Failed: UI service network wiring is not caddy-admin-net-only"
         success_msg: "UI service is on caddy-admin-net only (control plane)"
 
@@ -361,20 +361,20 @@
     - name: "THEN: Compose UI service has read_only, cap_drop ALL, no-new-privileges"
       ansible.builtin.assert:
         that:
-          - "'read_only: true' in compose_content.split('caddy-waf-ui:')[1].split('networks:')[0]"
-          - "'cap_drop:' in compose_content.split('caddy-waf-ui:')[1].split('networks:')[0]"
-          - "'ALL' in compose_content.split('caddy-waf-ui:')[1].split('networks:')[0]"
-          - "'no-new-privileges:true' in compose_content.split('caddy-waf-ui:')[1].split('networks:')[0]"
+          - "'read_only: true' in compose_content.split('  caddy-waf-ui:')[1].split('networks:')[0]"
+          - "'cap_drop:' in compose_content.split('  caddy-waf-ui:')[1].split('networks:')[0]"
+          - "'ALL' in compose_content.split('  caddy-waf-ui:')[1].split('networks:')[0]"
+          - "'no-new-privileges:true' in compose_content.split('  caddy-waf-ui:')[1].split('networks:')[0]"
         fail_msg: "SDD Failed: UI service missing security hardening (read_only/cap_drop/no-new-privileges)"
         success_msg: "UI service has correct security hardening"
 
     - name: "THEN: Compose UI service depends_on caddy service (service name, not container_name) with service_healthy"
       ansible.builtin.assert:
         that:
-          - "'depends_on:' in compose_content.split('caddy-waf-ui:')[1]"
-          - "'caddy:' in compose_content.split('caddy-waf-ui:')[1].split('depends_on:')[1]"
-          - "'service_healthy' in compose_content.split('caddy-waf-ui:')[1].split('depends_on:')[1]"
-          - "'caddy-waf:' not in compose_content.split('caddy-waf-ui:')[1].split('depends_on:')[1]"
+          - "'depends_on:' in compose_content.split('  caddy-waf-ui:')[1]"
+          - "'caddy:' in compose_content.split('  caddy-waf-ui:')[1].split('depends_on:')[1]"
+          - "'service_healthy' in compose_content.split('  caddy-waf-ui:')[1].split('depends_on:')[1]"
+          - "'caddy-waf:' not in compose_content.split('  caddy-waf-ui:')[1].split('depends_on:')[1]"
         fail_msg: "SDD Failed: UI service depends_on must reference the compose SERVICE key 'caddy' (container_name is caddy-waf) with service_healthy"
         success_msg: "UI service depends_on caddy (service name) with service_healthy condition"
 
