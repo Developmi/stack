@@ -6,6 +6,14 @@
 #   "timers"          - systemd timer deployment for DB backups
 # Tags preserved for backward compatibility.
 
+# Credentials and /etc/restic/env are provisioned for EVERY backup host,
+# regardless of the source path (D7/STORAGE-003). Previously this only ran in
+# the stack path, which left muscle-class hosts without /etc/restic/env.
+- name: "Include credential and environment file deployment (all backup hosts, D7)"
+  ansible.builtin.include_tasks: credentials.yml
+  tags: [l6-runtime, stack_backup, restic, restic_creds]
+  when: enable_backups | default(false) | bool
+
 - name: "Include stack backup tasks"
   ansible.builtin.include_tasks: stack_backup.yml
   tags: [l6-runtime, stack_backup, restic]
