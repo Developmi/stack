@@ -2,7 +2,7 @@
 # COMPLIANCE WARNING:
 # Restic binary is downloaded from GitHub releases with SHA256 verification.
 # Do NOT bypass checksum verification or change the pinned version without
-# security review. The binary is placed at /usr/local/bin/restic (0755 root).
+# security review. The binary is placed at {{ restic_install_path }} (0755 root).
 # ---
 ---
 - name: "Ensure /usr/local/bin exists"
@@ -16,7 +16,7 @@
 
 - name: "Check if Restic is already installed"
   ansible.builtin.stat:
-    path: /usr/local/bin/restic
+    path: "{{ restic_install_path }}"
   register: restic_binary_stat
   tags: [l6-runtime, stack_backup, restic]
 
@@ -32,14 +32,14 @@
 
 - name: "Extract Restic binary (bz2 via shell - unarchive module lacks native bz2 support)"  # noqa: command-instead-of-shell
   ansible.builtin.shell:
-    cmd: "bunzip2 -c /tmp/restic_{{ restic_version }}_linux_{{ restic_arch }}.bz2 > /usr/local/bin/restic"
-    creates: /usr/local/bin/restic
+    cmd: "bunzip2 -c /tmp/restic_{{ restic_version }}_linux_{{ restic_arch }}.bz2 > {{ restic_install_path }}"
+    creates: "{{ restic_install_path }}"
   when: not restic_binary_stat.stat.exists
   tags: [l6-runtime, stack_backup, restic]
 
 - name: "Set Restic binary permissions"
   ansible.builtin.file:
-    path: /usr/local/bin/restic
+    path: "{{ restic_install_path }}"
     mode: "0755"
     owner: root
     group: root
@@ -47,7 +47,7 @@
   tags: [l6-runtime, stack_backup, restic]
 
 - name: "Verify Restic binary version"  # noqa: command-instead-of-module
-  ansible.builtin.command: /usr/local/bin/restic version
+  ansible.builtin.command: "{{ restic_install_path }} version"
   register: restic_version_check
   changed_when: false
   tags: [l6-runtime, stack_backup, restic]
