@@ -25,16 +25,19 @@
     suites: "{{ ansible_facts['distribution_release'] }}"
     components: universe
     state: present
+    install_python_debian: true
   when: _universe_check.rc != 0
   tags: [l1-os-baseline, ubuntu]
 
 # When universe is already present via the classic sources.list (rc == 0), any
 # leftover /etc/apt/sources.list.d/universe.sources is redundant — and on ARM
 # hosts it may carry the broken amd64 URI from previous runs, so it must be
-# cleaned. state: absent is idempotent (no-op if the file does not exist).
+# cleaned. This runs BEFORE python3-debian is guaranteed on the host, so it
+# removes the file directly instead of invoking deb822_repository (which needs
+# the Python `debian` library). state: absent is idempotent (no-op if missing).
 - name: "L1 | Remove stale deb822 universe source when already covered"
-  ansible.builtin.deb822_repository:
-    name: universe
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/universe.sources
     state: absent
   when: _universe_check.rc == 0
   tags: [l1-os-baseline, ubuntu]

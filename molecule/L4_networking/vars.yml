@@ -32,6 +32,9 @@ caddy_ui_token: molecule-test-token
 # Dedicated control-plane network (caddy + UI only; UI NOT on public_net)
 caddy_admin_network_name: "caddy-admin-net"
 
+# Shared data-plane network (SSOT: inventory/group_vars/all/main.yml)
+shared_network_name: "public_net"
+
 # ------------------------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------------------------
