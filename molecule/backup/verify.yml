@@ -261,15 +261,56 @@
         mode: "0755"
         content: |
           #!/usr/bin/env bash
-          # Stub docker: with the marker present the container is 'running' and
-          # exposes a volume at /app/storage (NOT chatwoot's declared /app/data).
-          if [ -f "{{ shim_dir }}/container-present" ]; then
-            case "$1" in
-              inspect) printf 'stubvol /app/storage\n'; exit 0 ;;
-              *) exit 0 ;;
-            esac
+          # Stub docker for the engine tests. It records its argv (so the
+          # credential-leak test can prove no secret reaches a command line) and
+          # simulates: container presence, `docker ps` Tier1 discovery,
+          # per-container mounts, pause/unpause tracking, and a failing
+          # `docker run` (tar abort) when the tar-abort marker is present.
+          log_dir="{{ shim_dir }}"
+          printf 'docker %s\n' "$*" >> "$log_dir/docker.log"
+          if [ ! -f "$log_dir/container-present" ]; then
+            exit 1
           fi
-          exit 1
+          case "$1" in
+            ps)
+              if [ -f "$log_dir/tier1-containers" ]; then
+                printf 'pg1 postgres:16\ncache1 redis:7-alpine\nch1 clickhouse/clickhouse-server:24.3\nweb nginx:latest\n'
+              fi
+              exit 0
+              ;;
+            inspect)
+              case "$2" in
+                chatwoot|chatwoot-db)
+                  printf 'chatwoot_storage /app/storage\nundeclared_vol /secret/data\n' ;;
+                quiesce-app|quiesce-app-db)
+                  printf 'qvol /app/qdata\n' ;;
+                *)
+                  printf 'stubvol /app/storage\n' ;;
+              esac
+              exit 0
+              ;;
+            pause)
+              printf 'pause %s\n' "$2" >> "$log_dir/quiesce.log"
+              exit 0
+              ;;
+            unpause)
+              printf 'unpause %s\n' "$2" >> "$log_dir/quiesce.log"
+              exit 0
+              ;;
+            run)
+              if [ -f "$log_dir/tar-abort" ]; then
+                exit 1
+              fi
+              exit 0
+              ;;
+            exec)
+              cat >/dev/null 2>&1 || true
+              exit 0
+              ;;
+            *)
+              exit 0
+              ;;
+          esac
 
     - name: "GIVEN: Write the restic stub (records invocations, drains stdin)"
       ansible.builtin.copy:
@@ -378,3 +419,246 @@
               - not metachar_timer_unit.stat.exists
             fail_msg: "A unit was deployed for a shell-metacharacter app name - FAIL"
             success_msg: "No unit deployed for shell-metacharacter app name"
+
+    # ---------------------------------------------------------------------------
+    # TIER-001 / D14 (task 3.1): Tier1 image-discovered database protection.
+    # The engine deploys a host-level Tier1 runner that discovers postgres /
+    # clickhouse / redis-valkey containers BY IMAGE (no app declaration) and
+    # streams logical dumps to restic.
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Stat the Tier1 discovery runner (TIER-001)"
+      ansible.builtin.stat:
+        path: /usr/local/bin/backup-tier1.sh
+      register: tier1_runner
+
+    - name: "THEN: The Tier1 runner is deployed 0755 root (TIER-001)"
+      ansible.builtin.assert:
+        that:
+          - tier1_runner.stat.exists
+          - tier1_runner.stat.mode == '0755'
+          - tier1_runner.stat.pw_name == 'root'
+        fail_msg: "Tier1 discovery runner /usr/local/bin/backup-tier1.sh missing or wrong mode"
+        success_msg: "Tier1 discovery runner deployed 0755 root"
+
+    - name: "GIVEN: Mark Tier1 containers present"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/tier1-containers"
+        state: touch
+        mode: "0644"
+
+    - name: "GIVEN: Reset the restic stub log for the Tier1 run"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restic.log"
+        state: absent
+
+    - name: "WHEN: Run the Tier1 discovery runner"
+      ansible.builtin.command:
+        cmd: /usr/local/bin/backup-tier1.sh
+      environment:
+        PATH: "{{ shim_dir }}:{{ ansible_env.PATH }}"
+      register: tier1_run
+      changed_when: false
+      failed_when: false
+
+    - name: "GIVEN: Read the restic stub log after the Tier1 run"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/restic.log"
+      register: tier1_restic_log
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: Tier1 discovery dumps postgres + valkey by image and ignores others (TIER-001)"
+      ansible.builtin.assert:
+        that:
+          - tier1_run.rc == 0
+          - "'tier1,postgresql,pg1' in tier1_restic_log.stdout"
+          - "'tier1,valkey,cache1' in tier1_restic_log.stdout"
+          - "'nginx' not in tier1_restic_log.stdout"
+        fail_msg: >-
+          Tier1 image discovery did not protect the declared engine families
+          (rc={{ tier1_run.rc }}). log={{ tier1_restic_log.stdout }}
+        success_msg: "Tier1 discovery dumped postgres + valkey and ignored nginx"
+
+    # ---------------------------------------------------------------------------
+    # TIER-002 (task 3.2): only declared volumes[] are backed up; an undeclared
+    # volume reported by docker inspect is never touched.
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Reset the restic stub log for the Tier2 opt-in run"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restic.log"
+        state: absent
+
+    - name: "WHEN: Run the chatwoot runner (declared mount mismatch + undeclared volume)"
+      ansible.builtin.command:
+        cmd: /usr/local/bin/backup-engine-chatwoot.sh
+      environment:
+        PATH: "{{ shim_dir }}:{{ ansible_env.PATH }}"
+      register: tier2_run
+      changed_when: false
+      failed_when: false
+
+    - name: "GIVEN: Read the restic stub log after the Tier2 run"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/restic.log"
+      register: tier2_restic_log
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: Undeclared and unmatched volumes are never tarred (TIER-002)"
+      ansible.builtin.assert:
+        that:
+          - tier2_run.rc == 0
+          - "'volume,chatwoot' not in tier2_restic_log.stdout"
+          - "'undeclared_vol' not in tier2_restic_log.stdout"
+        fail_msg: >-
+          The engine backed up a volume that was not declared with a matching
+          mount_path (TIER-002). log={{ tier2_restic_log.stdout }}
+        success_msg: "Only declared volumes are backed up; undeclared volume untouched"
+
+    # ---------------------------------------------------------------------------
+    # TIER-003 (task 3.3): a tar abort MUST still unpause the container.
+    # RED before the quiesce-library fix: the EXIT trap could not read the
+    # function-local `paused` flag under `set -u`, leaving the container paused.
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Enable the tar-abort marker"
+      ansible.builtin.copy:
+        dest: "{{ shim_dir }}/tar-abort"
+        content: "abort\n"
+        mode: "0644"
+
+    - name: "GIVEN: Remove any previous quiesce log"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/quiesce.log"
+        state: absent
+
+    - name: "WHEN: Run the quiesce-app runner and the volume tar aborts"
+      ansible.builtin.command:
+        cmd: /usr/local/bin/backup-engine-quiesce-app.sh
+      environment:
+        PATH: "{{ shim_dir }}:{{ ansible_env.PATH }}"
+      register: quiesce_run
+      changed_when: false
+      failed_when: false
+
+    - name: "GIVEN: Read the quiesce log"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/quiesce.log"
+      register: quiesce_log
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: The container is unpaused after a tar abort (TIER-003)"
+      ansible.builtin.assert:
+        that:
+          - "'pause quiesce-app' in quiesce_log.stdout"
+          - "'unpause quiesce-app' in quiesce_log.stdout"
+        fail_msg: >-
+          Container left PAUSED after the tar step aborted (TIER-003 violated).
+          quiesce.log={{ quiesce_log.stdout }}
+        success_msg: "Container unpaused after tar abort (TIER-003 satisfied)"
+
+    - name: "GIVEN: Remove the tar-abort marker"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/tar-abort"
+        state: absent
+
+    # ---------------------------------------------------------------------------
+    # CRED-003 (task 3.4): per-app DB EnvironmentFile, 0600 root.
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Stat the rendered per-app DB credential file"
+      ansible.builtin.stat:
+        path: /etc/restic/db-chatwoot.env
+      register: db_cred_file
+
+    - name: "THEN: The per-app DB credential file is root-owned 0600 (CRED-003)"
+      ansible.builtin.assert:
+        that:
+          - db_cred_file.stat.exists
+          - db_cred_file.stat.pw_name == 'root'
+          - db_cred_file.stat.mode == '0600'
+        fail_msg: "/etc/restic/db-chatwoot.env missing or wrong ownership/mode (CRED-003)"
+        success_msg: "/etc/restic/db-chatwoot.env is root-owned 0600"
+
+    - name: "GIVEN: Read the rendered DB credential file"
+      ansible.builtin.slurp:
+        path: /etc/restic/db-chatwoot.env
+      register: db_cred_content
+
+    - name: "THEN: The credential file exports PGPASSWORD from SOPS (CRED-003)"
+      ansible.builtin.assert:
+        that:
+          - "'PGPASSWORD=' in (db_cred_content.content | b64decode)"
+        fail_msg: "Rendered DB credential file does not export PGPASSWORD"
+        success_msg: "DB credential file exports PGPASSWORD"
+
+    # ---------------------------------------------------------------------------
+    # CRED-003/004 (task 3.5): the password never reaches a command line or
+    # `docker inspect` output, nor the rendered runner itself.
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Reset the docker argv log"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/docker.log"
+        state: absent
+
+    - name: "WHEN: Run the chatwoot runner with the sentinel password set"
+      ansible.builtin.command:
+        cmd: /usr/local/bin/backup-engine-chatwoot.sh
+      environment:
+        PATH: "{{ shim_dir }}:{{ ansible_env.PATH }}"
+      register: leak_run
+      changed_when: false
+      failed_when: false
+
+    - name: "GIVEN: Read the docker argv log"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/docker.log"
+      register: docker_argv_log
+      changed_when: false
+      failed_when: false
+
+    - name: "GIVEN: Read the rendered chatwoot runner"
+      ansible.builtin.slurp:
+        path: /usr/local/bin/backup-engine-chatwoot.sh
+      register: chatwoot_runner_content
+
+    - name: "THEN: The sentinel password never appears in any docker argv or the runner (CRED-003)"
+      ansible.builtin.assert:
+        that:
+          - "'LEAKCANARY_chatwoot_pw' not in docker_argv_log.stdout"
+          - "'LEAKCANARY_chatwoot_pw' not in (chatwoot_runner_content.content | b64decode)"
+        fail_msg: >-
+          The DB password leaked onto a docker command line or into the rendered
+          runner (CRED-003). argv={{ docker_argv_log.stdout }}
+        success_msg: "No password on any docker command line or in the runner"
+
+    - name: "WHEN: Inspect the container with docker inspect"
+      ansible.builtin.command:
+        cmd: docker inspect chatwoot
+      environment:
+        PATH: "{{ shim_dir }}:{{ ansible_env.PATH }}"
+      register: docker_inspect_out
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: docker inspect output carries no password (CRED-004)"
+      ansible.builtin.assert:
+        that:
+          - "'LEAKCANARY_chatwoot_pw' not in (docker_inspect_out.stdout | default(''))"
+        fail_msg: "The DB password appeared in docker inspect output (CRED-004)"
+        success_msg: "docker inspect output carries no password"
+
+    # ---------------------------------------------------------------------------
+    # CRED-005 (task 3.6): no secret is passed with `-e NAME="value"` on any
+    # ephemeral-container command line.
+    # ---------------------------------------------------------------------------
+    - name: "THEN: Assert no -e secret on the retention/backup command lines (CRED-005)"
+      ansible.builtin.assert:
+        that:
+          - (lookup('file', role_tasks_dir + '/retention.yml')) is not search('-e RESTIC_PASSWORD="')
+          - (lookup('file', role_tasks_dir + '/retention.yml')) is not search('-e AWS_SECRET_ACCESS_KEY="')
+          - (lookup('file', role_tasks_dir + '/retention.yml')) is not search('-e AWS_ACCESS_KEY_ID="')
+          - (lookup('file', role_tasks_dir + '/restic_backup.yml')) is not search('-e RESTIC_PASSWORD="')
+          - (lookup('file', role_tasks_dir + '/restic_backup.yml')) is not search('-e AWS_SECRET_ACCESS_KEY="')
+          - (lookup('file', role_tasks_dir + '/restic_backup.yml')) is not search('-e AWS_ACCESS_KEY_ID="')
+        fail_msg: "A backup password is still passed via -e on a command line (CRED-005)"
+        success_msg: "No secret passed via -e on any command line (CRED-005)"

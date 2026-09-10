@@ -1,0 +1,35 @@
+---
+# Quiesce-app fixture (TIER-003): a dump-able app declaring a Tier2 volume
+# with `consistency: quiesce`. The engine MUST dump the DB, pause the container,
+# tar the volume, then unpause - and MUST still unpause when the tar step aborts.
+supported_arch: [amd64]
+depends_on: []
+
+monitoring:
+  enabled: true
+  health_endpoint: "/"
+  health_port: 4000
+  scrape_port: 4000
+
+compliance_tags:
+  - cis-docker:4.1
+  - cis-docker:5.1
+  - cis-os:5.1.2
+  - soc2:cc6.1
+  - iso27001:a.8.2.3
+
+dr_tier: tier1
+
+backup:
+  method: pg_dump
+  schedule: "*-*-* 00/4:00:00"
+  retention_daily: 7
+  retention_weekly: 4
+  retention_monthly: 12
+  verification: monthly-restore-test
+  db_type: postgres
+  db_name: quiesce
+  volumes:
+    - name: quiesce_data
+      mount_path: /app/qdata
+      consistency: quiesce

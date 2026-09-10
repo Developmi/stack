@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# Unified backup engine - Tier1 image-discovered database protection.
+# Managed by Ansible: roles/L6_runtime/backup/templates/backup-tier1.sh.j2
+# DO NOT EDIT. Redeploy with `make deploy-backup-engine`.
+#
+# TIER-001/D14: PostgreSQL, ClickHouse and Redis/Valkey are protected with NO
+# app declaration. The runner discovers the containers BY IMAGE at backup time
+# and streams logical dumps into restic (ENGINE-005). A host without a matching
+# container exits 0 (host affinity, ENGINE-004).
+#
+# Tier1 runs the dump as the container-local database superuser via `docker
+# exec` (peer/trust auth inside the container), so no password ever crosses the
+# host command line (CRED-003/004).
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+readonly RESTIC_ENV="/etc/restic/env"
+readonly HOST="$(hostname -s)"
+
+log() { printf '%s backup-tier1[%s]: %s\n' "$(date -Is)" "$HOST" "$*" >&2; }
+
+if [ ! -r "$RESTIC_ENV" ]; then
+  log "FATAL: $RESTIC_ENV not readable - run deploy-backup-engine first"
+  exit 1
+fi
+# shellcheck source=/dev/null
+set -a; . "$RESTIC_ENV"; set +a
+
+# App-data repository owns app snapshots (D9); override the stack-config default
+# inherited from /etc/restic/env.
+export RESTIC_REPOSITORY="{{ restic_appdata_repo_url }}"
+
+readonly TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+
+# classify_image maps a container image reference to a Tier1 engine family.
+classify_image() {
+  local image="${1,,}"
+  case "$image" in
+    *postgres*)       printf 'postgres' ;;
+    *clickhouse*)     printf 'clickhouse' ;;
+    *redis*|*valkey*) printf 'valkey' ;;
+    *)                printf '' ;;
+  esac
+}
+
+dump_postgres() {
+  local container="$1"
+  docker exec -i "$container" pg_dumpall -U "${TIER1_PG_USER:-postgres}" \
+    | gzip --rsyncable \
+    | restic backup --stdin \
+        --stdin-filename "tier1_${container}_${TIMESTAMP}.sql.gz" \
+        --tag "tier1,postgresql,${container}" --host "$HOST"
+}
+
+dump_valkey() {
+  local container="$1"
+  docker exec "$container" sh -c \
+    'valkey-cli SAVE 2>/dev/null || redis-cli SAVE 2>/dev/null || true' || true
+  docker exec -i "$container" sh -c 'cat /data/dump.rdb' \
+    | restic backup --stdin \
+        --stdin-filename "tier1_${container}_${TIMESTAMP}.rdb" \
+        --tag "tier1,valkey,${container}" --host "$HOST"
+}
+
+dump_clickhouse() {
+  local container="$1"
+  if ! docker exec "$container" sh -c \
+      'command -v clickhouse-backup >/dev/null 2>&1'; then
+    log "skip: clickhouse container '$container' lacks clickhouse-backup (adapter gated in Phase 4)"
+    return 0
+  fi
+  docker exec "$container" clickhouse-backup create "tier1_${TIMESTAMP}"
+  docker exec -i "$container" sh -c \
+    "cat /var/lib/clickhouse/backups/tier1_${TIMESTAMP}.zip 2>/dev/null \
+     || tar -C /var/lib/clickhouse/backups -czf - ." \
+    | restic backup --stdin \
+        --stdin-filename "tier1_${container}_${TIMESTAMP}.tar.gz" \
+        --tag "tier1,clickhouse,${container}" --host "$HOST"
+}
+
+found=0
+# Discovery reads on FD 3 so the dump commands (which may inherit stdin, e.g.
+# `docker exec -i`) can never consume the discovery stream.
+while IFS=' ' read -r name image <&3; do
+  [ -n "${name:-}" ] || continue
+  engine="$(classify_image "$image")"
+  [ -n "$engine" ] || continue
+  found=$((found + 1))
+  log "Tier1 discovered container '$name' (image='$image', engine='$engine')"
+  case "$engine" in
+    postgres)   dump_postgres "$name" ;;
+    valkey)     dump_valkey "$name" ;;
+    clickhouse) dump_clickhouse "$name" ;;
+  esac
+done 3< <(docker ps --format '{% raw %}{{.Names}} {{.Image}}{% endraw %}' 2>/dev/null || true)
+
+if [ "$found" -eq 0 ]; then
+  log "no Tier1 database containers on $HOST; nothing to do"
+fi
+log "completed"

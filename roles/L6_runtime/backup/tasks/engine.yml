@@ -32,6 +32,75 @@
   when: backup_engine_install_restic | default(false) | bool
   tags: [l6-runtime, backup, backup_engine, restic_install]
 
+# ---------------------------------------------------------------------------
+# Tier1 guaranteed databases (TIER-001/D14): postgres / clickhouse / redis-valkey
+# are protected with NO app declaration. Discovery happens at backup time in
+# the host-level runner; this deploy-time probe records what is currently
+# running so an operator can see the protected set without a declaration.
+# ---------------------------------------------------------------------------
+- name: "Engine | Discover the docker CLI for Tier1 (D14)"
+  ansible.builtin.stat:
+    path: /usr/bin/docker
+  register: _engine_tier1_docker
+  changed_when: false
+  tags: [l6-runtime, backup, backup_engine, backup_tier1]
+
+- name: "Engine | Probe Tier1 database containers by image (TIER-001/D14)"
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/docker
+      - ps
+      - --format
+      - "{% raw %}{{.Names}} {{.Image}}{% endraw %}"
+  register: _engine_tier1_probe
+  changed_when: false
+  failed_when: false
+  when: _engine_tier1_docker.stat.exists | default(false)
+  tags: [l6-runtime, backup, backup_engine, backup_tier1]
+
+- name: "Engine | Report the deploy-time Tier1 discovery set (TIER-001)"
+  ansible.builtin.debug:
+    msg: >-
+      engine[tier1]: {{ inventory_hostname }} runs
+      {{ _engine_tier1_probe.stdout_lines | default([]) | length }} container(s);
+      the Tier1 runner re-discovers postgres/clickhouse/redis-valkey by image at
+      backup time.
+  when: _engine_tier1_docker.stat.exists | default(false)
+  tags: [l6-runtime, backup, backup_engine, backup_tier1]
+
+- name: "Engine | Deploy the Tier1 discovery runner (TIER-001/D14)"
+  ansible.builtin.template:
+    src: backup-tier1.sh.j2
+    dest: /usr/local/bin/backup-tier1.sh
+    mode: "0755"
+    owner: root
+    group: root
+  tags: [l6-runtime, backup, backup_engine, backup_tier1]
+
+- name: "Engine | Deploy the Tier1 service unit (TIER-001)"
+  ansible.builtin.template:
+    src: backup-tier1.service.j2
+    dest: /etc/systemd/system/backup-tier1.service
+    mode: "0644"
+  notify: reload systemd
+  tags: [l6-runtime, backup, backup_engine, backup_tier1]
+
+- name: "Engine | Deploy the Tier1 timer unit (TIER-001)"
+  ansible.builtin.template:
+    src: backup-tier1.timer.j2
+    dest: /etc/systemd/system/backup-tier1.timer
+    mode: "0644"
+  notify: reload systemd
+  tags: [l6-runtime, backup, backup_engine, backup_tier1]
+
+- name: "Engine | Enable and start the Tier1 timer (TIER-001)"
+  ansible.builtin.systemd:
+    name: backup-tier1.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: [l6-runtime, backup, backup_engine, backup_tier1]
+
 - name: "Engine | Collect app profile files (controller side)"
   ansible.builtin.set_fact:
     _app_profile_paths: >-

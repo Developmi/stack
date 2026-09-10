@@ -42,6 +42,14 @@
     - _p.backup.db_type | default('') not in ['none', 'custom']
   tags: [l6-runtime, backup, backup_engine]
 
+- name: "Render per-app DB credential EnvironmentFile (D8/CRED-001..004)"
+  ansible.builtin.include_tasks: db_credentials.yml
+  when:
+    - enable_backups | default(false) | bool
+    - _p.backup is defined
+    - (_p.backup.method | default(_p.backup.db_type)) in ['pg_dump', 'postgres', 'mysqldump', 'mysql']
+  tags: [l6-runtime, backup, backup_engine, backup_creds]
+
 - name: "Deploy backup-engine-{{ _app_name }}.sh"
   ansible.builtin.template:
     src: backup-engine.sh.j2

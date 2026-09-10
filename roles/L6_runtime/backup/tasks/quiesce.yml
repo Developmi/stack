@@ -22,24 +22,35 @@
       # Managed by Ansible: roles/L6_runtime/backup/tasks/quiesce.yml
       # Order (TIER-003): dump (caller) -> pause -> tar -> unpause.
       # The unpause is guaranteed by an EXIT trap.
+      #
+      # IMPORTANT: the EXIT trap runs AFTER the function frame unwinds, so it
+      # MUST read GLOBALS only. Function-locals are invisible to the trap and,
+      # under `set -u`, referencing them aborts the trap and leaves the
+      # container PAUSED (TIER-003 "Unpause guaranteed" regression guard).
+
+      _backup_quiesce_container=""
+      _backup_quiesce_paused=0
+
+      _backup_quiesce_cleanup() {
+        if [ "${_backup_quiesce_paused:-0}" -eq 1 ] \
+          && [ -n "${_backup_quiesce_container:-}" ]; then
+          docker unpause "$_backup_quiesce_container" >/dev/null 2>&1 || true
+        fi
+      }
 
       backup_volume_quiesced() {
         local container="$1" volume="$2" app="$3" timestamp="$4"
-        local paused=0
-        quiesce_cleanup() {
-          if [ "$paused" -eq 1 ]; then
-            docker unpause "$container" >/dev/null 2>&1 || true
-          fi
-        }
-        trap quiesce_cleanup EXIT
+        _backup_quiesce_container="$container"
+        _backup_quiesce_paused=0
+        trap _backup_quiesce_cleanup EXIT
         docker pause "$container"
-        paused=1
+        _backup_quiesce_paused=1
         docker run --rm -v "${volume}:/data:ro" alpine tar czf - -C /data . \
           | restic backup --stdin \
               --stdin-filename "${app}_${volume}_${timestamp}.tar.gz" \
               --tag "volume,${app}" --host "$(hostname -s)"
         docker unpause "$container"
-        paused=0
+        _backup_quiesce_paused=0
         trap - EXIT
       }
   tags: [l6-runtime, backup, backup_engine]

@@ -7,15 +7,13 @@
 # Conditional: only runs when backup succeeded (backup_restic_failed is false)
 # =============================================================================
 
+# CRED-005: secrets come from the 0600 EnvironmentFile via `--env-file`; they
+# are NEVER placed on the command line (which would leak through `ps`).
 - name: "Run Restic forget --prune per app profile (only if backup succeeded)"  # noqa: command-instead-of-shell
   ansible.builtin.shell:
     cmd: >
       docker run --rm
-      -e RESTIC_REPOSITORY="{{ restic_appdata_repo_url }}"
-      -e RESTIC_PASSWORD="{{ restic_password_brain_1 }}"
-      -e AWS_ACCESS_KEY_ID="{{ restic_r2_access_key_id }}"
-      -e AWS_SECRET_ACCESS_KEY="{{ restic_r2_secret_access_key }}"
-      -e AWS_DEFAULT_REGION="auto"
+      --env-file {{ restic_retention_env_file }}
       {{ restic_image }}
       forget
       --keep-daily {{ _p.backup.retention_daily | default(backup_keep_daily) }}

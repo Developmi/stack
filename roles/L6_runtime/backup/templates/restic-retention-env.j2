@@ -1,0 +1,12 @@
+# /etc/restic/restic-retention.env - Managed by Ansible. DO NOT EDIT.
+# EnvironmentFile for the `restic forget --prune` path only (D2/STORAGE-006).
+# Permissions: 0600 root. Passed to `docker run --env-file`, NEVER via
+# `-e NAME="value"` on the command line (the value would be visible in `ps`).
+# The retention token is delete-capable; routine backups use the append-only
+# restic-run.env token so uploads can never delete snapshots.
+
+RESTIC_REPOSITORY={{ restic_appdata_repo_url }}
+RESTIC_PASSWORD={{ lookup('vars', 'restic_password_' ~ ansible_hostname | replace('-', '_')) }}
+AWS_ACCESS_KEY_ID={{ restic_r2_retention_access_key_id | default(restic_r2_access_key_id) }}
+AWS_SECRET_ACCESS_KEY={{ restic_r2_retention_secret_access_key | default(restic_r2_secret_access_key) }}
+AWS_DEFAULT_REGION=auto
