@@ -209,6 +209,29 @@ backup_keep_daily: 7
 backup_keep_weekly: 4
 backup_keep_monthly: 12
 
+# ─── Backup storage provider (STORAGE-004/005, design D10) ───────────────────
+# Non-secret storage coordinates live here; secrets live in SOPS
+# (restic_r2_account_id / restic_r2_access_key_id / restic_r2_secret_access_key).
+#   r2 (default) - Cloudflare R2 via the S3-compatible endpoint
+#   s3           - AWS S3 (or any S3-compatible endpoint) via backup_s3_*
+backup_provider: r2
+restic_r2_bucket: "nist-backups-prod"
+restic_r2_endpoint: "https://{{ restic_r2_account_id }}.r2.cloudflarestorage.com"
+backup_s3_region: "us-east-1"
+backup_s3_bucket: "nist-backups-prod"
+backup_s3_endpoint: "https://s3.{{ backup_s3_region }}.amazonaws.com"
+
+# One base URL consumed by every backup template (design D10). The role
+# appends its retention-owner prefix (restic/ or stack-restic/).
+backup_repo_base_url: >-
+  {{ ('s3:' ~ restic_r2_endpoint ~ '/' ~ restic_r2_bucket) if backup_provider == 'r2'
+     else ('s3:' ~ backup_s3_endpoint ~ '/' ~ backup_s3_bucket) }}
+
+# Legacy alias retained only for the pre-engine backup-db timer path. It fixes
+# the previously undefined reference in the rendered backup-db units; the
+# unified engine (PR2) drops the S3 pipe and this alias (STORAGE-004).
+backup_r2_endpoint: "{{ restic_r2_endpoint }}"
+
 # =============================================================================
 # L6 RUNTIME ADAPTER
 # =============================================================================

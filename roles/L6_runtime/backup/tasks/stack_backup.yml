@@ -10,9 +10,8 @@
   ansible.builtin.include_tasks: install.yml
   tags: [l6-runtime, stack_backup, restic, restic_install]
 
-- name: "Include credential configuration"
-  ansible.builtin.include_tasks: credentials.yml
-  tags: [l6-runtime, stack_backup, restic, restic_creds]
+# Credential + /etc/restic/env deployment is owned by tasks/main.yml so it runs
+# for every backup host and source path (D7), not only the stack path.
 
 - name: "Include script deployment"
   ansible.builtin.include_tasks: scripts.yml

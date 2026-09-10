@@ -10,6 +10,15 @@
   tags: [l6-runtime, backup-db]
 
 # ── Phase 1: Restic Installation ──
+# Single restic pin (D3/STORAGE-001): version, checksum and download URL live
+# ONLY in roles/L6_runtime/backup/defaults/main.yml. This role consumes that
+# same pin instead of declaring a duplicate one; it is retired in the
+# unified-engine follow-up (PR2), so the two roles can never drift.
+
+- name: "Load the unified restic pin from roles/L6_runtime/backup (D3)"
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../backup/defaults/main.yml"
+  tags: [l6-runtime, backup-db, backup]
 
 - name: "Validate Docker daemon is accessible"
   ansible.builtin.command: docker info
@@ -44,8 +53,7 @@
   ansible.builtin.shell:
     cmd: echo "{{ sha256_lookup }} {{ restic_download_dir }}/restic.bz2" | sha256sum -c
   vars:
-    sha256_lookup: >-
-      {{ restic_sha256_linux_amd64 if restic_arch == 'amd64' else restic_sha256_linux_arm64 }}
+    sha256_lookup: "{{ restic_sha256 }}"
   changed_when: false
   when: >-
     not restic_binary.stat.exists

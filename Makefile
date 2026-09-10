@@ -251,6 +251,12 @@ deploy-backup-stack: ## L6: Deploy restic backup for Docker stacks (brain only)
 	@echo "=== L6: Stack Backup ==="
 	$(ANSIBLE_RUN) playbooks/l6/backup-stack.yml $(ANSIBLE_FLAGS) --limit brain
 
+deploy-backup-engine: ## L6: Deploy the unified backup engine (all backup hosts)
+	@echo "=== L6: Backup Engine ==="
+	# playbooks/l6/backup-engine.yml is created by the engine PR (PR2); the
+	# target is declared now so the umbrella order is fixed ahead of it.
+	$(ANSIBLE_RUN) playbooks/l6/backup-engine.yml $(BECOME_PROMPT_FLAG) $(ANSIBLE_OPTS)
+
 deploy-backup-appdata: ## L6: Deploy app data backup (PG/MySQL dumps to R2)
 	@echo "=== L6: App Data Backup ==="
 	$(ANSIBLE_RUN) playbooks/l6/backup-appdata.yml $(BECOME_PROMPT_FLAG) $(ANSIBLE_OPTS)
@@ -263,11 +269,13 @@ deploy-backup-databases: ## L6: Deploy DB auto-discovery backups (PG + MariaDB)
 	@echo "=== L6: Database Backup ==="
 	$(ANSIBLE_RUN) playbooks/l6/backup-databases.yml $(BECOME_PROMPT_FLAG) $(ANSIBLE_OPTS)
 
-deploy-backups: ## L6: Deploy all backup layers (umbrella: stack→appdata→timers→databases)
+deploy-backups: ## L6: Deploy all backup layers (umbrella: stack→timers→appdata→databases)
 	@echo "=== L6: All Backups ==="
+	# Env-provisioning layers first (stack on brain, timers on all hosts), then
+	# the consumers - so every host has /etc/restic/env before a backup runs (D7).
 	@$(MAKE) deploy-backup-stack
-	@$(MAKE) deploy-backup-appdata
 	@$(MAKE) deploy-backup-timers
+	@$(MAKE) deploy-backup-appdata
 	@$(MAKE) deploy-backup-databases
 	@echo "=== Backups: COMPLETE ==="
 
@@ -438,8 +446,8 @@ test-layer: ## Test: Run a specific Molecule layer (make test-layer LAYER=L1_os_
 	deploy-l1 deploy-lockdown reconnect-tailscale validate-l1 validate-l2 \
 	deploy-exporters deploy-monitoring deploy-monitoring-stack \
 	deploy-edge heal-caddy \
-	backup-now deploy-backup-appdata deploy-backup-databases deploy-backup-stack \
-	deploy-backup-timers deploy-backups deploy-engine deploy-portainer \
+	backup-now deploy-backup-appdata deploy-backup-databases deploy-backup-engine \
+	deploy-backup-stack deploy-backup-timers deploy-backups deploy-engine deploy-portainer \
 	audit-full deploy-local gate-lockdown nuke provision-host \
 	monitor-crowdsec verify-auditd verify-caddy verify-crowdsec verify-lockdown \
 	verify-observability verify-tailscale verify-timers \

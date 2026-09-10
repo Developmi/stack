@@ -284,10 +284,11 @@ The Makefile is the primary operational interface. All targets run through the `
 | `deploy-engine`                     | Deploy Docker Engine                                              | `playbooks/l6/engine.yml`                                         |
 | `deploy-portainer`                  | Deploy Portainer                                                  | `playbooks/l6/portainer.yml`                                      |
 | `deploy-backup-stack`               | Deploy Restic stack backup (brain only)                           | `playbooks/l6/backup-stack.yml`                                   |
+| `deploy-backup-engine`              | Deploy the unified backup engine (all backup hosts)               | `playbooks/l6/backup-engine.yml`                                  |
 | `deploy-backup-appdata`             | Deploy app data backup (DB dumps → R2)                            | `playbooks/l6/backup-appdata.yml`                                 |
 | `deploy-backup-timers`              | Deploy systemd backup timers                                      | `playbooks/l6/backup-timers.yml`                                  |
 | `deploy-backup-databases`           | Deploy DB auto-discovery backups                                  | `playbooks/l6/backup-databases.yml`                               |
-| `deploy-backups`                    | All backup layers (stack→appdata→timers→databases)                | umbrella target                                                   |
+| `deploy-backups`                    | All backup layers (stack→timers→appdata→databases)                | umbrella target                                                   |
 | `deploy-local`                      | Workstation hardening                                             | `playbooks/ops/local-devices.yml`                                 |
 | `run`                               | Generic runner (`PLAYBOOK=`, `TAGS=`, `SKIP_TAGS=`, `CHECK=1`)    | variable                                                          |
 | `nuke`                              | Destructive teardown (requires CONFIRM=)                          | `playbooks/ops/nuke.yml`                                          |

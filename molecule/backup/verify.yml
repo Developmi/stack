@@ -188,6 +188,28 @@
         success_msg: "Legacy profile deploys backup-db-legacy-app.timer; stale name field ignored"
 
     # ---------------------------------------------------------------------------
+    # STORAGE-003 / D7: /etc/restic/env MUST exist on every backup host
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Stat the restic environment file (STORAGE-003)"
+      ansible.builtin.stat:
+        path: /etc/restic/env
+      register: restic_env_file
+      when: enable_backups | default(false) | bool
+
+    - name: "THEN: /etc/restic/env is present, root-owned and 0600 on every backup host (STORAGE-003)"
+      ansible.builtin.assert:
+        that:
+          - restic_env_file.stat.exists
+          - restic_env_file.stat.pw_name == 'root'
+          - restic_env_file.stat.mode == '0600'
+        fail_msg: >-
+          /etc/restic/env is missing or has wrong ownership/mode on
+          {{ inventory_hostname }}. Every enable_backups: true host must ship
+          the restic environment file (D7/STORAGE-003).
+        success_msg: "/etc/restic/env present, root-owned and 0600 on {{ inventory_hostname }}"
+      when: enable_backups | default(false) | bool
+
+    # ---------------------------------------------------------------------------
     # THREAT MATRIX: shell metacharacters in profile paths fail before render
     # ---------------------------------------------------------------------------
     # The included task file (deploy_from_profile.yml) runs the REAL role logic:

@@ -98,11 +98,13 @@ if ! restic check >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ "$exit_code" -eq 0 ]; then
-  echo "All backups complete. Running retention..."
-  restic forget --keep-daily {{ backup_retention_days }} --prune
-else
-  echo "WARNING: Some backups failed with exit code $exit_code. Skipping retention." >&2
+# Retention is owned by the app-data (restic/<host>) and stack-config
+# (stack-restic/<host>) repositories, NEVER by this legacy discovery path.
+# The previous `restic forget --prune` here pruned the stack-config repo
+# sourced from /etc/restic/env, i.e. a cross-repo prune (D9/STORAGE-002).
+# This whole path is retired by the unified engine (PR2).
+if [ "$exit_code" -ne 0 ]; then
+  echo "WARNING: Some backups failed with exit code $exit_code." >&2
 fi
 
 exit "$exit_code"
