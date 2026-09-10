@@ -19,9 +19,24 @@ set -euo pipefail
 readonly APP="{{ _app_name }}"
 readonly CONTAINER="{{ _p.backup.db_container | default(_app_name) }}"
 readonly RESTIC_ENV="/etc/restic/env"
+readonly DB_ENV="/etc/restic/db-{{ _app_name }}.env"
 readonly QUIESCE_LIB="{{ backup_engine_quiesce_lib }}"
 
 log() { printf '%s backup-engine[%s]: %s\n' "$(date -Is)" "$APP" "$*" >&2; }
+
+# db_exec VAR CMD...: forward a credential env var from THIS process to the
+# container WITHOUT placing its value on the command line. `docker exec -e VAR`
+# (no '=') resolves the value from the client environment; the value never
+# appears in `ps` and `docker inspect` never exposes exec-time env
+# (CRED-003/004).
+db_exec() {
+  local var="$1"; shift
+  if [ -n "${!var:-}" ]; then
+    docker exec -i -e "$var" "$@"
+  else
+    docker exec -i "$@"
+  fi
+}
 
 if [ ! -r "$RESTIC_ENV" ]; then
   log "FATAL: $RESTIC_ENV not readable - run deploy-backup-engine first"
@@ -29,6 +44,14 @@ if [ ! -r "$RESTIC_ENV" ]; then
 fi
 # shellcheck source=/dev/null
 set -a; . "$RESTIC_ENV"; set +a
+
+# Per-app DB credential EnvironmentFile (0600 root, D8/CRED-003). Sourcing it
+# puts the credential in this process environment; db_exec forwards it to the
+# container without a command-line value.
+if [ -r "$DB_ENV" ]; then
+  # shellcheck source=/dev/null
+  set -a; . "$DB_ENV"; set +a
+fi
 
 # App-data repository owns app snapshots (D9); override the stack-config default
 # inherited from /etc/restic/env.
@@ -70,14 +93,14 @@ backup_db() {
   local engine="$1" db_name="$2" user="$3"
   case "$engine" in
     pg_dump)
-      docker exec -i "$CONTAINER" pg_dump -U "$user" "$db_name" \
+      db_exec PGPASSWORD "$CONTAINER" pg_dump -U "$user" "$db_name" \
         | gzip --rsyncable \
         | restic backup --stdin \
             --stdin-filename "${APP}_${db_name}_${TIMESTAMP}.sql.gz" \
             --tag "db,postgresql,${APP}" --host "$HOST"
       ;;
     mysqldump)
-      docker exec -i "$CONTAINER" mysqldump -u "$user" "$db_name" \
+      db_exec MYSQL_PWD "$CONTAINER" mysqldump -u "$user" "$db_name" \
         | gzip --rsyncable \
         | restic backup --stdin \
             --stdin-filename "${APP}_${db_name}_${TIMESTAMP}.sql.gz" \

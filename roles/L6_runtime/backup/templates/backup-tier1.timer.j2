@@ -1,0 +1,15 @@
+# Jinja2 template: systemd timer unit for Tier1 image-discovered backups.
+# Generates: backup-tier1.timer
+# Schedule is host-level (Tier1 has no app declaration); default 01:00 daily.
+
+[Unit]
+Description=Tier1 database backup timer
+Requires=backup-tier1.service
+
+[Timer]
+OnCalendar={{ backup_tier1_schedule | default('*-*-* 01:00:00') }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

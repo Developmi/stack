@@ -1,0 +1,10 @@
+# /etc/restic/restic-run.env - Managed by Ansible. DO NOT EDIT.
+# EnvironmentFile for ephemeral restic container runs (CRED-005).
+# Permissions: 0600 root. Passed to `docker run --env-file`, NEVER via
+# `-e NAME="value"` on the command line (the value would be visible in `ps`).
+
+RESTIC_REPOSITORY={{ restic_appdata_repo_url }}
+RESTIC_PASSWORD={{ lookup('vars', 'restic_password_' ~ ansible_hostname | replace('-', '_')) }}
+AWS_ACCESS_KEY_ID={{ restic_r2_access_key_id }}
+AWS_SECRET_ACCESS_KEY={{ restic_r2_secret_access_key }}
+AWS_DEFAULT_REGION=auto

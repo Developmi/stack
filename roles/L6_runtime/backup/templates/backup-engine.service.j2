@@ -11,6 +11,7 @@ Documentation=man:restic(1)
 Type=oneshot
 ExecStart=/usr/local/bin/backup-engine-{{ _app_name }}.sh
 EnvironmentFile=-/etc/restic/env
+EnvironmentFile=-/etc/restic/db-{{ _app_name }}.env
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6

@@ -16,6 +16,23 @@ Two-layer backup architecture for the Developmi Stack platform, covering applica
 
 **Source of truth caveat**: Tier-level backup policy - schedules, retention, and verification per DR tier - is the SSOT in §4 of this document (updated 2026-07-31 with the DR-tier model). Per-app values are declared in `apps/*/profile.yml` and MUST stay in sync with this document (SCE-BAK-006).
 
+> ## ⚠️ Tier3 is out of scope (TIER-004)
+>
+> The backup engine covers **Tier1** (guaranteed, image-discovered databases) and
+> **Tier2** (opt-in volumes declared in `backup.volumes[]`). **Tier3** is
+> explicitly **out of scope**: custom application configuration, arbitrary bind
+> mounts, and source/CI artifacts are **not** protected by the engine and it MUST
+> NOT claim to protect them. If an app's data is not a Tier1 database and not a
+> declared Tier2 volume, protecting it is the operator's responsibility.
+
+The backup subsystem has exactly **one** mechanism: the unified engine in
+`roles/L6_runtime/backup/`. It scans `apps/*/profile.yml` on the controller,
+resolves the real container/volume at runtime via `docker inspect`, and streams
+dumps and volume tarballs into restic. The retired `backup-db` role and the
+`aws s3 cp` transport no longer exist (ENGINE-001). See
+[ARCHITECTURE.md](../architecture/ARCHITECTURE.md) for the layer reference model;
+this document is the operator how-to and does not duplicate that reference.
+
 ---
 
 ## 1. Backup Architecture Overview
@@ -56,65 +73,69 @@ The separate prefixes prevent cross-contamination - an L5 retention policy never
 
 ## 2. L5 - Application Data Backup
 
-### 2.1 Two L5 Mechanisms
+### 2.1 Unified Engine
 
-L5 application data backup uses two separate mechanisms that serve different purposes:
+L5 application data is protected by the single unified engine. Each app's
+`apps/<app>/profile.yml` declares the databases and volumes to protect; the
+engine renders one `backup-engine-<app>.service` + `.timer` pair per dump-able
+app, plus one host-level `backup-tier1.service` + `.timer` pair for
+image-discovered Tier1 databases.
 
-| Aspect           | Playbook Restic Backup                             | Systemd Timer S3 Pipe          |
-| ---------------- | -------------------------------------------------- | ------------------------------ |
-| Entry point      | `ansible-playbook playbooks/l6/backup-appdata.yml` | systemd `backup-db-*.timer`    |
-| Orchestrator     | Ansible (playbook)                                 | systemd (independent per-host) |
-| Database dump    | `pre_dump.yml` (auto-detect containers)            | `docker exec` inline in unit   |
-| Upload mechanism | Restic `restic/restic:0.19.0` → R2                 | `aws s3 cp` pipe → R2          |
-| Restic retention | `forget --prune` (daily/weekly/monthly)            | NONE (raw dumps accumulate)    |
-| Notification     | Telegram on failure only                           | NONE                           |
-| Scope            | Inventory group `brain` only                       | All hosts with profiles        |
-| Invocation       | Manual / CI/CD                                     | Automatic on schedule          |
+| Aspect           | Unified Engine                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------ |
+| Entry point      | `ansible-playbook playbooks/l6/backup-engine.yml` (`make deploy-backup-engine`)      |
+| Orchestrator     | systemd, one unit pair per app + one Tier1 unit pair                                 |
+| Database dump    | `pg_dump` / `mysqldump` / `clickhouse-backup` executed inside the container          |
+| Upload mechanism | restic `restic/restic:0.19.1` streaming (`restic backup --stdin`) → R2               |
+| Restic retention | `forget --prune` per app profile (daily/weekly/monthly)                              |
+| Notification     | Telegram on failure only                                                             |
+| Scope            | All hosts with `enable_backups: true` (unit self-skips when the container is absent) |
+| Invocation       | Automatic on schedule                                                                |
 
-**Key difference**: The playbook provides full lifecycle backup (dump → Restic → retention → notify). The systemd timers provide **schedule-only** raw dump uploads - no Restic, no retention, no notification. Use the playbook for comprehensive protection; use timers for automated scheduled dumps between playbook runs.
+The retired `backup-db` role, the `aws s3 cp` transport, and the
+`backup-appdata`/`backup-timers`/`backup-databases` playbooks no longer exist
+(ENGINE-001).
 
-**Note on R2 endpoint**: The `aws s3 cp` commands in systemd timer units use `backup_r2_endpoint` from `roles/L6_runtime/backup/defaults/main.yml`, which **defaults to empty**. If not overridden, all `aws s3 cp` calls will fail. Set `backup_r2_endpoint` to the R2 endpoint URL (format: `https://<account-id>.r2.cloudflarestorage.com`) in `inventory/group_vars/all/vars.yml` before deploying timers.
+### Per-App Flow
 
-### Playbook-Based Restic Backup (Recommended)
+1. **Deploy**: `make deploy-backup-engine` renders the engine units from
+   `apps/*/profile.yml` and the host-level Tier1 runner.
+2. **Run**: the timer fires `backup-engine-<app>.sh`. The runner resolves the
+   real container and volume at runtime via `docker inspect`; an absent
+   container exits 0 (host affinity).
+3. **Dump → upload**: the logical dump (or volume tarball) is streamed into
+   restic (`restic backup --stdin`) at the `restic/<host>` app-data prefix.
+4. **Credentials**: DB passwords are consumed from a root-owned `0600`
+   EnvironmentFile (`/etc/restic/db-<app>.env`); they are never passed on a
+   command line and never read from `docker inspect`.
+5. **Retention**: `restic forget --prune` runs with the delete-capable token
+   from a separate `0600` EnvironmentFile.
+6. **Notification** (`notify.yml`): Telegram on failure only (silent on success).
 
-The L5 playbook backup flow is orchestrated by `playbooks/l6/backup-appdata.yml` and follows this sequence:
+Apps with `db_type: none` or `db_type: custom` deploy no unit and raise no error.
+The app name is **derived from the profile directory path**
+(`apps/<name>/profile.yml` → `<name>`), validated against `^[a-z0-9_-]+$` before
+render; a legacy `name` field is ignored.
 
-1. **Gate check**: `enable_backups` must be `true`. If disabled, the playbook ends immediately.
-2. **Phase 02 deactivation**: Temporarily pauses Phase 02 timers on all hosts in the `brain` inventory group to prevent conflicts.
-3. **Pre-dump** (`roles/L6_runtime/backup/tasks/pre_dump.yml`): Auto-discovers database containers by Docker labels and creates dumps:
-   - **PostgreSQL**: Containers with label `com.nist.type=postgresql` → `pg_dump -Fc` (custom format)
-   - **MySQL**: Containers with label `com.nist.type=mysql` → `mysqldump`
-   - **SQLite**: Resolved via `docker inspect` of known containers → `sqlite3 .backup`
-   - **Valkey**: Containers with label `com.nist.type=valkey` → `SAVE` + copy `dump.rdb`
-4. **Restic backup** (`roles/L6_runtime/backup/tasks/restic_backup.yml`): Ephemeral `restic/restic:0.19.0` container runs `restic backup /data` with the dump directory bind-mounted read-only, pushing to R2 at the `restic/` prefix.
-5. **Retention** (`roles/L6_runtime/backup/tasks/retention.yml`): `restic forget --prune` via ephemeral container. Non-critical failure - backup is still reported as successful per ADR-07.
-6. **Notification** (`roles/L6_runtime/backup/tasks/notify.yml`): Telegram notification on failure only (silent on success).
+### Tier1 Image Discovery
 
-### Systemd Timer S3 Pipe (Schedule-Only)
-
-The systemd timers deployed by `roles/L6_runtime/backup/` run independently on each host, executing per-app `docker exec` + `aws s3 cp` pipes without Restic, retention, or notification:
-
-- Each app profile with a supported `db_type` (`postgres`, `mariadb`, `mysql`, `mongodb`, `sqlite`) generates a `backup-db-<app>.timer` unit. The app name is **derived from the profile directory path** (`apps/<name>/profile.yml` → `<name>`), validated against `^[a-z0-9_-]+$` before render; a legacy `name` field (pre-2026-07-31) is ignored.
-- The timer's `ExecStart` runs: `docker exec <container> pg_dump ... | aws s3 cp - s3://<bucket>/db/<app>/<timestamp>.dump`
-- Raw dump files accumulate in the R2 bucket under the `db/<app>/` prefix - **no retention**.
-- **No Telegram notification** on failure. Failures are silent unless the operator monitors `systemctl` or `journalctl`.
-- Apps with `db_type: none` or `db_type: custom` produce `ExecStart=/bin/false` - the timer fires but does nothing (openlit, `db_type: none`, renders no unit at all).
-
-> **Declared, not executed (2026-07-31)**: `clickhouse-backup` and `file-volume` backup methods are **declared** in profiles but **not yet executed** by the role (it executes pg/mysql/mariadb/mongodb/sqlite today). clickhouse renders an `ExecStart=/bin/false` unit; uptime-kuma keeps an executable sqlite volume-tar with `volume_name: uptime-kuma_data` (its compose MUST name the volume exactly that). Execution support is future work (change `apps-stack-standardization`, Out of Scope).
-
-The systemd timers are intended as scheduled dump automation **between** playbook-based Restic runs, not as a replacement for full-lifecycle backup.
+PostgreSQL, ClickHouse, and Redis/Valkey are protected with **no app
+declaration**: the host-level `backup-tier1.sh` runner discovers matching
+containers by image at backup time and streams logical dumps into restic. A host
+without a matching container exits 0.
 
 ### Target
 
-L5 backup targets the **brain** host exclusively. All database containers live on the brain host, so L5 does not run on `muscle` or `local` nodes.
+L5 backup targets **every host with `enable_backups: true`**. The engine is
+deployed with `hosts: all`; each unit self-checks for its container and exits 0
+when it is absent, so the schedule is safe to deploy everywhere.
 
 ### Application Data Backup Scope
 
 The suite provides backup for:
 
-- **Database backup (L6_runtime/backup-db)** - SUPPORTED. Automated PostgreSQL dumps via playbook-based Restic (recommended) or systemd timer S3 pipes (schedule-only). See §2.1 for mechanisms.
-- **Stack config backup (L6_runtime/backup)** - SUPPORTED. Caddy, Portainer, and monitoring stack state backed up via Restic binary (stack-restic prefix).
-- **App data backup (L6_runtime/backup, app-data mode)** - EXPERIMENTAL. Database dumps and app file data via ephemeral Restic container. Not 100% tested in all scenarios.
+- **Application data backup (L6_runtime/backup, engine mode)** - SUPPORTED. Per-app database dumps and declared volume tarballs via the unified engine. See §2.1 for the flow.
+- **Stack config backup (L6_runtime/backup, stack mode)** - SUPPORTED. Caddy, Portainer, and monitoring stack state backed up via the installed Restic binary (stack-restic prefix).
 
 > **Application data backup is the operator's responsibility.** The stack provides database backup and stack config backup as supported features. Per-app backup scope (uploads, file volumes, custom data directories) must be configured by the operator. The [INCIDENT_RESPONSE_DR.md](INCIDENT_RESPONSE_DR.md) document provides restore procedures for reference.
 
@@ -128,7 +149,7 @@ The suite provides backup for:
 
 The L6 runtime backup is orchestrated by `roles/L6_runtime/backup/` and runs as a set of independent systemd timers:
 
-1. **Binary installation**: Downloads and verifies `restic v0.19.0` binary (SHA256 verified per architecture).
+1. **Binary installation**: Downloads and verifies the `restic v0.19.1` binary (SHA256 verified per architecture).
 2. **Credential configuration**: Deploys R2 API keys and Restic repository password via SOPS (`no_log: true`).
 3. **Repository initialization**: Initializes the Restic repository at `stack-restic/` prefix if not already initialized.
 4. **Backup script**: Deploys `/usr/local/bin/restic-backup-all.sh` that backs up Docker volumes to R2.
@@ -174,11 +195,11 @@ This prevents running `restic check` or `restic forget --prune` against an empty
 
 ### L5 - Per-App Schedule (DR-Tier SSOT)
 
-L5 backup timers are deployed by `roles/L6_runtime/backup/` from `apps/*/profile.yml`. Each dump-able profile generates a `backup-db-<app>.timer` + `backup-db-<app>.service` pair:
+L5 backup timers are deployed by `roles/L6_runtime/backup/` from `apps/*/profile.yml`. Each dump-able profile generates a `backup-engine-<app>.timer` + `backup-engine-<app>.service` pair; Tier1 databases additionally get a host-level `backup-tier1.timer`:
 
 ```bash
 # List all L5 backup timers
-systemctl list-timers "backup-db-*"
+systemctl list-timers "backup-engine-*" "backup-tier1.timer"
 ```
 
 | Tier      | Apps                                                    | Schedule (systemd OnCalendar)           | Retention (daily/weekly/monthly) | Verification           |
@@ -206,10 +227,11 @@ L6 backup uses a global schedule per host, managed independently from app profil
 
 ### Timer Deployment Summary
 
-| Role                       | Timer Format                | Deploys                               | Source of Schedule                     |
-| -------------------------- | --------------------------- | ------------------------------------- | -------------------------------------- |
-| `roles/L6_runtime/backup/` | `backup-db-<appname>.timer` | Systemd timers from profile schedules | `apps/*/profile.yml → backup.schedule` |
-| `roles/L6_runtime/backup/` | `restic-backup-all.timer`   | Single global systemd timer per host  | `stack_backup_schedule` default        |
+| Role                       | Timer Format                    | Deploys                                  | Source of Schedule                     |
+| -------------------------- | ------------------------------- | ---------------------------------------- | -------------------------------------- |
+| `roles/L6_runtime/backup/` | `backup-engine-<appname>.timer` | Systemd timers from profile schedules    | `apps/*/profile.yml → backup.schedule` |
+| `roles/L6_runtime/backup/` | `backup-tier1.timer`            | One Tier1 image-discovery timer per host | `backup_tier1_schedule` default        |
+| `roles/L6_runtime/backup/` | `restic-backup-all.timer`       | Single global systemd timer per host     | `stack_backup_schedule` default        |
 
 > **Note**: Both rows reference the same consolidated `roles/L6_runtime/backup/` role. L5 vs L6 behavior is selected via the `backup_role_source` variable at the playbook level.
 
@@ -271,22 +293,36 @@ sudo systemctl enable --now restic-prune.timer
 
 ## 6. Verification
 
+### Verification Contract (NIST SP 800-209)
+
+This subsystem's verification contract follows **NIST SP 800-209** (Security
+Guidelines for Storage Systems):
+
+- **Periodic test restores**: every protected asset is periodically restored
+  into a scratch target and the result is recorded as evidence. A backup is
+  treated as unverified until a restore succeeds.
+- **Per-asset RPO**: every protected asset declares an RPO (via its DR tier),
+  and verification frequency is consistent with that tier - Tier1 assets are
+  verified **monthly**, Tier2 assets **quarterly**.
+- **Integrity checking**: `restic check` is enabled (not deployed disabled) and
+  its results are recorded.
+- **Failures are not swallowed**: a failed backup or verification propagates a
+  non-zero result and notifies an operator rather than exiting successfully.
+
 ### Confirm Backups Are Running
 
 **L5 - Application Data Backup:**
 
 ```bash
-# List L5 backup timers (systemd S3 pipe)
-systemctl list-timers "backup-db-*"
+# List L5 backup timers (unified engine + Tier1)
+systemctl list-timers "backup-engine-*" "backup-tier1.timer"
 
 # Check status of a specific app timer
-systemctl status backup-db-nocodb.timer
+systemctl status backup-engine-nocodb.timer
 
-# View L5 backup logs (systemd S3 pipe)
-journalctl -u backup-db-nocodb.service --since "1 hour ago"
+# View L5 backup logs
+journalctl -u backup-engine-nocodb.service --since "1 hour ago"
 ```
-
-> **Note**: The systemd S3-pipe timers listed above have **no retention** and **no Telegram notification**. A successful timer execution means the raw dump was uploaded to R2, but it does NOT mean the data is protected by Restic retention. For full-lifecycle verification (Restic snapshots, retention), run the playbook-based L5 backup and inspect the Restic repository directly.
 
 **L6 - Runtime Backup:**
 
@@ -312,7 +348,7 @@ docker run --rm \
   -e AWS_ACCESS_KEY_ID="<r2-key>" \
   -e AWS_SECRET_ACCESS_KEY="<r2-secret>" \
   -e AWS_DEFAULT_REGION="auto" \
-  restic/restic:0.19.0 \
+  restic/restic:0.19.1 \
   snapshots
 ```
 
@@ -333,7 +369,7 @@ sudo RESTIC_REPOSITORY="s3://<r2-endpoint>/nist-backups-prod/stack-restic/<hostn
 make deploy-backups
 
 # Or directly:
-ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-appdata.yml
+ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-engine.yml
 ```
 
 ### Telegram Notifications
@@ -357,7 +393,7 @@ Full disaster recovery procedures are documented in [`docs/operations/INCIDENT_R
    -e RESTIC_PASSWORD="<restic-password>" \
      -e AWS_ACCESS_KEY_ID="<r2-key>" \
      -e AWS_SECRET_ACCESS_KEY="<r2-secret>" \
-     restic/restic:0.19.0 \
+     restic/restic:0.19.1 \
      restore <snapshot-id> --target /data
    ```
 3. **Restore the database**:
@@ -392,7 +428,7 @@ If the SOPS age key is lost, follow the procedures in [`docs/operations/INCIDENT
 | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | [ADR-09 - Consolidated Backup Role (superseded)](../architecture/adr/ADR-09.md) | Rationale for the two-layer backup architecture (now consolidated into `roles/L6_runtime/backup/`) |
 | [INCIDENT_RESPONSE_DR.md](../operations/INCIDENT_RESPONSE_DR.md)                | Incident response, disaster recovery, and secrets recovery                                         |
-| [VERSION_PINS.md](../operations/VERSION_PINS.md)                                | Restic 0.19.0 version pin and rationale                                                            |
+| [VERSION_PINS.md](../operations/VERSION_PINS.md)                                | Restic 0.19.1 version pin and rationale                                                            |
 | [ARCHITECTURE.md](../architecture/ARCHITECTURE.md)                              | 7-layer model - L5/L6 layer boundaries                                                             |
 | [apps/\*/profile.yml](../../apps/)                                              | Canonical source of truth for per-app backup configuration                                         |
-| [playbooks/l6/backup-appdata.yml](../../playbooks/l6/backup-appdata.yml)        | L5 backup playbook entry point                                                                     |
+| [playbooks/l6/backup-engine.yml](../../playbooks/l6/backup-engine.yml)          | L5 unified backup engine entry point                                                               |

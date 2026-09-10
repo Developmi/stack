@@ -33,6 +33,7 @@ restic_password_debian12_backup: "molecule-test-restic-password" # pragma: allow
 
 # Fixture apps mirrored from apps/*/profile.yml (reduced schema).
 # legacy-app carries a stale `name` field on purpose (BPI-004-02 regression).
+# quiesce-app declares a `consistency: quiesce` volume (TIER-003).
 fixture_apps:
   - chatwoot
   - clickhouse
@@ -44,5 +45,23 @@ fixture_apps:
   - openlit
   - openwebui
   - postgresql
+  - quiesce-app
   - twenty-crm
   - uptime-kuma
+
+# Per-app database backup passwords (D8/CRED-001..003). In a real deployment
+# these live in SOPS (inventory/group_vars/all/secrets.sops.yml) as
+# backup_db_<app>_password; here they are dummy sentinels consumed by
+# tasks/db_credentials.yml to render /etc/restic/db-<app>.env (0600).
+# chatwoot uses a distinctive sentinel so the credential-leak test can prove
+# the value never reaches a command line or `docker inspect`.
+backup_db_chatwoot_password: "LEAKCANARY_chatwoot_pw" # pragma: allowlist secret
+backup_db_legacy_app_password: "molecule-test-legacy-pw" # pragma: allowlist secret
+backup_db_mariadb_password: "molecule-test-mariadb-pw" # pragma: allowlist secret
+backup_db_metabase_password: "molecule-test-metabase-pw" # pragma: allowlist secret
+backup_db_n8n_password: "molecule-test-n8n-pw" # pragma: allowlist secret #gitleaks:allow
+backup_db_nocodb_password: "molecule-test-nocodb-pw" # pragma: allowlist secret
+backup_db_openwebui_password: "molecule-test-openwebui-pw" # pragma: allowlist secret
+backup_db_postgresql_password: "molecule-test-postgresql-pw" # pragma: allowlist secret
+backup_db_quiesce_app_password: "molecule-test-quiesce-pw" # pragma: allowlist secret
+backup_db_twenty_crm_password: "molecule-test-twenty-pw" # pragma: allowlist secret

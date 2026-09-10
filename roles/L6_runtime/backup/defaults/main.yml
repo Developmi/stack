@@ -59,6 +59,16 @@ backup_engine_quiesce_lib: "/usr/local/bin/backup-engine-quiesce.sh"
 # GitHub download.
 backup_engine_install_restic: false
 
+# Host-level Tier1 schedule (TIER-001/D14). Tier1 databases are image-discovered
+# with no app declaration, so their schedule is per-host, not per-profile.
+backup_tier1_schedule: "*-*-* 01:00:00"
+
+# Credential-free EnvironmentFiles for ephemeral restic container runs
+# (CRED-005). The `-e NAME="value"` command-line form is forbidden because the
+# value is visible in `ps`; these 0600 files are passed with `--env-file`.
+restic_run_env_file: "/etc/restic/restic-run.env"
+restic_retention_env_file: "/etc/restic/restic-retention.env"
+
 # Retention policy (app-data backup)
 backup_keep_daily: 7
 backup_keep_weekly: 4
