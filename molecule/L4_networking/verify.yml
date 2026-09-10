@@ -298,12 +298,12 @@
       ansible.builtin.set_fact:
         compose_content: "{{ compose_slurp.content | b64decode }}"
 
-    - name: "THEN: Compose contains caddy-waf-ui service with exact v1.0.0 pin"
+    - name: "THEN: Compose contains caddy-waf-ui service with exact v1.1.0 pin"
       ansible.builtin.assert:
         that:
           - "'caddy-waf-ui:' in compose_content"
-          - "'ghcr.io/developmi/caddy-waf-ui:v1.0.0' in compose_content"
-          - "'ghcr.io/developmi/caddy-waf:v3.4.0' in compose_content"
+          - "'ghcr.io/developmi/caddy-waf-ui:v1.1.0' in compose_content"
+          - "'ghcr.io/developmi/caddy-waf:v3.5.2' in compose_content"
         fail_msg: "SDD Failed: compose missing UI service or exact image pins"
         success_msg: "Compose contains caddy-waf-ui service with correct image pins"
 
@@ -311,7 +311,7 @@
       ansible.builtin.assert:
         that:
           - "'CADDYFILE_SHA256' in compose_content.split('caddy:')[1].split('caddy-waf-ui:')[0].split('environment:')[1].split('healthcheck:')[0]"
-          - "'CADDYFILE_SHA256' in compose_content.split('caddy-waf-ui:v1.0.0')[1].split('depends_on:')[0]"
+          - "'CADDYFILE_SHA256' in compose_content.split('caddy-waf-ui:v1.1.0')[1].split('depends_on:')[0]"
         fail_msg: "SDD Failed: CADDYFILE_SHA256 fingerprint missing from a service environment (bind mounts are inode-sticky; recreate:auto needs the env change)"
         success_msg: "Both caddy and caddy-waf-ui carry the CADDYFILE_SHA256 env fingerprint"
 
@@ -400,8 +400,8 @@
       register: _e2e_image_check
       failed_when: false
       loop:
-        - ghcr.io/developmi/caddy-waf:v3.4.0
-        - ghcr.io/developmi/caddy-waf-ui:v1.0.0
+        - ghcr.io/developmi/caddy-waf:v3.5.2
+        - ghcr.io/developmi/caddy-waf-ui:v1.1.0
 
     - name: "GIVEN: Determine if e2e can run"
       ansible.builtin.set_fact:
@@ -411,8 +411,8 @@
     - name: "E2E | Warn and skip when ghcr images are not present locally"
       ansible.builtin.debug:
         msg: >-
-          ⚠️ E2E tests SKIPPED: ghcr.io/developmi/caddy-waf:v3.4.0 and/or
-          ghcr.io/developmi/caddy-waf-ui:v1.0.0 not found in local Docker daemon.
+          ⚠️ E2E tests SKIPPED: ghcr.io/developmi/caddy-waf:v3.5.2 and/or
+          ghcr.io/developmi/caddy-waf-ui:v1.1.0 not found in local Docker daemon.
           CI pre-pulls these images to enable e2e coverage. Static asserts above still run.
       when: not _e2e_images_present | bool
 
@@ -438,7 +438,7 @@
         # Step 0b: Assert digests match (judge finding F7)
         - name: "E2E | Assert caddy-waf image digest matches"
           community.docker.docker_image_info:
-            name: ghcr.io/developmi/caddy-waf:v3.4.0
+            name: ghcr.io/developmi/caddy-waf:v3.5.2
           register: _caddy_digest_check
 
         - name: "E2E | Fail if caddy-waf digest mismatch"
@@ -446,12 +446,12 @@
             that:
               - _caddy_digest_check.image.Digest == caddy_image_digest
             fail_msg: >-
-              caddy-waf v3.4.0 digest mismatch in e2e.
+              caddy-waf v3.5.2 digest mismatch in e2e.
               Expected {{ caddy_image_digest }}, got {{ _caddy_digest_check.image.Digest }}.
 
         - name: "E2E | Assert caddy-waf-ui image digest matches"
           community.docker.docker_image_info:
-            name: ghcr.io/developmi/caddy-waf-ui:v1.0.0
+            name: ghcr.io/developmi/caddy-waf-ui:v1.1.0
           register: _ui_digest_check
 
         - name: "E2E | Fail if caddy-waf-ui digest mismatch"
@@ -459,7 +459,7 @@
             that:
               - _ui_digest_check.image.Digest == caddy_ui_image_digest
             fail_msg: >-
-              caddy-waf-ui v1.0.0 digest mismatch in e2e.
+              caddy-waf-ui v1.1.0 digest mismatch in e2e.
               Expected {{ caddy_ui_image_digest }}, got {{ _ui_digest_check.image.Digest }}.
 
         # Step 1: UI health
