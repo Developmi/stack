@@ -63,6 +63,20 @@ backup_engine_install_restic: false
 # with no app declaration, so their schedule is per-host, not per-profile.
 backup_tier1_schedule: "*-*-* 01:00:00"
 
+# ── Restore verification (D13/VERIFY-001..004) ──
+# A backup is unverified until it is restored. The per-asset cadence follows the
+# profile's declared `backup.verification` policy (VERIFY-003): Tier1 assets are
+# verified monthly, Tier2 quarterly. Values are systemd OnCalendar expressions.
+backup_restore_verify_schedules:
+  monthly-restore-test: "*-*-01 04:00:00"
+  quarterly-restore-test: "*-01,04,07,10-01 04:00:00"
+# Scratch restore target + evidence store for the verification runner. The
+# runner restores into <root>/scratch/<app> and persists <root>/evidence/<app>.json.
+backup_restore_verify_root: "/var/lib/backup-restore-verify"
+backup_restore_verify_scratch_dir: "{{ backup_restore_verify_root }}/scratch"
+backup_restore_verify_evidence_dir: "{{ backup_restore_verify_root }}/evidence"
+backup_restore_verify_random_delay: 600
+
 # Credential-free EnvironmentFiles for ephemeral restic container runs
 # (CRED-005). The `-e NAME="value"` command-line form is forbidden because the
 # value is visible in `ps`; these 0600 files are passed with `--env-file`.

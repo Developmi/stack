@@ -1,0 +1,61 @@
+---
+# =============================================================================
+# Unified backup engine - restore verification (D13/VERIFY-001..004)
+# =============================================================================
+# A backup is unverified until it is restored (VERIFY-001). For every profile
+# whose `backup.verification` policy is a restore test, this worker deploys a
+# per-app runner + systemd unit pair. The runner restores the latest app
+# snapshot into a scratch target, smoke-checks the payload, writes an evidence
+# JSON and propagates a non-zero exit (with a Telegram notification) on failure.
+# The timer cadence follows the declared policy (VERIFY-003): Tier1 monthly,
+# Tier2 quarterly. `verification: none` deploys nothing (Tier3).
+#
+# Included from deploy_from_profile.yml, so `_p` and `_app_name` are in scope.
+# =============================================================================
+
+- name: "Restore verify | Ensure the verification state root exists (VERIFY-001)"
+  ansible.builtin.file:
+    path: "{{ backup_restore_verify_root }}"
+    state: directory
+    mode: "0700"
+    owner: root
+    group: root
+  tags: [l6-runtime, backup, backup_engine, backup_restore_verify]
+
+- name: "Restore verify | Resolve the cadence from the declared policy (VERIFY-003)"
+  ansible.builtin.set_fact:
+    _verify_schedule: "{{ backup_restore_verify_schedules[_p.backup.verification] }}"
+  tags: [l6-runtime, backup, backup_engine, backup_restore_verify]
+
+- name: "Restore verify | Deploy backup-restore-verify-{{ _app_name }}.sh"
+  ansible.builtin.template:
+    src: restore-verify.sh.j2
+    dest: "/usr/local/bin/backup-restore-verify-{{ _app_name }}.sh"
+    mode: "0755"
+    owner: root
+    group: root
+  tags: [l6-runtime, backup, backup_engine, backup_restore_verify]
+
+- name: "Restore verify | Deploy backup-restore-verify-{{ _app_name }}.service"
+  ansible.builtin.template:
+    src: restore-verify.service.j2
+    dest: "/etc/systemd/system/backup-restore-verify-{{ _app_name }}.service"
+    mode: "0644"
+  notify: reload systemd
+  tags: [l6-runtime, backup, backup_engine, backup_restore_verify]
+
+- name: "Restore verify | Deploy backup-restore-verify-{{ _app_name }}.timer"
+  ansible.builtin.template:
+    src: restore-verify.timer.j2
+    dest: "/etc/systemd/system/backup-restore-verify-{{ _app_name }}.timer"
+    mode: "0644"
+  notify: reload systemd
+  tags: [l6-runtime, backup, backup_engine, backup_restore_verify]
+
+- name: "Restore verify | Enable and start backup-restore-verify-{{ _app_name }}.timer"
+  ansible.builtin.systemd:
+    name: "backup-restore-verify-{{ _app_name }}.timer"
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: [l6-runtime, backup, backup_engine, backup_restore_verify]

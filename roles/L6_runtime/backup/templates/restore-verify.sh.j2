@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# Unified backup engine - restore verification runner for "{{ _app_name }}".
+# Managed by Ansible: roles/L6_runtime/backup/templates/restore-verify.sh.j2
+# DO NOT EDIT. Redeploy with `make deploy-backup-engine`.
+#
+# Runtime contract (design D13, VERIFY-001..004):
+#   * restore the latest app snapshot into a scratch target;
+#   * smoke-check the restored payload (non-empty + gzip/tar integrity);
+#   * persist an evidence JSON for EVERY completed run, success OR failure;
+#   * propagate a non-zero exit and notify Telegram on failure (VERIFY-004);
+#   * absent container -> exit 0 (host affinity, D6).
+# All shell interpolations are quoted (ENGINE-005, shell threat boundary).
+# The EXIT trap reads GLOBALS only (TIER-003 regression guard).
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+readonly APP="{{ _app_name }}"
+readonly CONTAINER="{{ _p.backup.db_container | default(_app_name) }}"
+readonly VERIFICATION="{{ _p.backup.verification }}"
+readonly RESTIC_ENV="/etc/restic/env"
+readonly SCRATCH_DIR="{{ backup_restore_verify_scratch_dir }}/${APP}"
+readonly EVIDENCE_DIR="{{ backup_restore_verify_evidence_dir }}"
+readonly EVIDENCE_FILE="${EVIDENCE_DIR}/${APP}.json"
+readonly HOST="$(hostname -s)"
+readonly STARTED_AT="$(date -Is)"
+
+log() { printf '%s backup-restore-verify[%s]: %s\n' "$(date -Is)" "$APP" "$*" >&2; }
+
+# Evidence state lives in GLOBALS so the EXIT trap can read it under `set -u`
+# (the function-local trap regression that bit the quiesce helper, TIER-003).
+EVIDENCE_RESULT="failure"
+EVIDENCE_MESSAGE="verification did not complete"
+EVIDENCE_SNAPSHOT=""
+
+notify_failure() {
+  local message="$1"
+  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || return 0
+  [ -n "${TELEGRAM_CHAT_ID:-}" ] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  # The bot token and message travel on stdin via `curl -K -`, never on the
+  # command line, so they never appear in `ps` (CRED-003).
+  curl -fsS --max-time 10 -K - >/dev/null 2>&1 <<CURLCONFIG || true
+url = "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
+data-urlencode = "chat_id=${TELEGRAM_CHAT_ID}"
+data-urlencode = "text=${message}"
+CURLCONFIG
+}
+
+write_evidence() {
+  local finished_at
+  finished_at="$(date -Is)"
+  mkdir -p "$EVIDENCE_DIR"
+  printf '{"app":"%s","host":"%s","verification":"%s","result":"%s","snapshot":"%s","started_at":"%s","finished_at":"%s","message":"%s"}\n' \
+    "$APP" "$HOST" "$VERIFICATION" "${EVIDENCE_RESULT}" "${EVIDENCE_SNAPSHOT}" \
+    "${STARTED_AT}" "${finished_at}" "${EVIDENCE_MESSAGE}" \
+    > "$EVIDENCE_FILE"
+}
+
+finish() {
+  # Clear the trap first so the explicit exit does not re-enter this function.
+  trap - EXIT
+  EVIDENCE_RESULT="$1"
+  # Sanitise the message so it is safe in both JSON and the curl config.
+  EVIDENCE_MESSAGE="$(printf '%s' "${2:-}" | tr -d '"' | tr '\n' ' ')"
+  write_evidence
+  if [ "${EVIDENCE_RESULT}" = "success" ]; then
+    log "OK: ${EVIDENCE_MESSAGE}"
+    exit 0
+  fi
+  log "FAILED: ${EVIDENCE_MESSAGE}"
+  notify_failure "Restore verification FAILED on ${HOST} for ${APP}: ${EVIDENCE_MESSAGE}"
+  exit 1
+}
+
+# smoke_check: the restored target MUST hold at least one regular file and every
+# gzip/tar payload MUST pass an integrity check.
+smoke_check() {
+  local dir="$1" file found=0
+  while IFS= read -r file; do
+    found=1
+    case "$file" in
+      *.tar.gz) tar -tzf "$file" >/dev/null 2>&1 || return 1 ;;
+      *.gz)     gzip -t "$file" >/dev/null 2>&1 || return 1 ;;
+    esac
+  done < <(find "$dir" -type f 2>/dev/null)
+  [ "$found" -eq 1 ]
+}
+
+if [ ! -r "$RESTIC_ENV" ]; then
+  log "FATAL: $RESTIC_ENV not readable - run deploy-backup-engine first"
+  exit 1
+fi
+# shellcheck source=/dev/null
+set -a; . "$RESTIC_ENV"; set +a
+
+# App-data repository owns app snapshots (D9); override the stack-config default
+# inherited from /etc/restic/env.
+export RESTIC_REPOSITORY="{{ restic_appdata_repo_url }}"
+
+# D6 host affinity: a host that does not run the container has nothing to verify.
+if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  log "container '$CONTAINER' absent on $HOST; nothing to verify"
+  exit 0
+fi
+
+trap 'finish failure "verification aborted unexpectedly"' EXIT
+
+# Best-effort snapshot id for the evidence record; never fatal on its own.
+EVIDENCE_SNAPSHOT="$(restic snapshots --json --tag "$APP" 2>/dev/null \
+  | grep -o '"short_id":"[^"]*"' | tail -n 1 | cut -d'"' -f4 || true)"
+
+log "restoring latest '$APP' snapshot into scratch target '$SCRATCH_DIR'"
+rm -rf "$SCRATCH_DIR"
+mkdir -p "$SCRATCH_DIR"
+if ! restic restore latest --target "$SCRATCH_DIR" --tag "$APP" >/dev/null 2>&1; then
+  finish failure "restic restore failed"
+fi
+
+if ! smoke_check "$SCRATCH_DIR"; then
+  finish failure "smoke check failed on the restored payload"
+fi
+
+rm -rf "$SCRATCH_DIR"
+finish success "restored and smoke-checked snapshot ${EVIDENCE_SNAPSHOT:-latest}"
