@@ -11,7 +11,7 @@
   ansible.builtin.shell:
     cmd: >
       docker run --rm
-      -e RESTIC_REPOSITORY="s3:{{ restic_r2_endpoint }}/{{ restic_r2_bucket }}/restic/{{ inventory_hostname }}"
+      -e RESTIC_REPOSITORY="{{ restic_appdata_repo_url }}"
       -e RESTIC_PASSWORD="{{ restic_password_brain_1 }}"
       -e AWS_ACCESS_KEY_ID="{{ restic_r2_access_key_id }}"
       -e AWS_SECRET_ACCESS_KEY="{{ restic_r2_secret_access_key }}"

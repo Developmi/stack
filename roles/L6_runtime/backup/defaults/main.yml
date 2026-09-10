@@ -30,12 +30,17 @@ restic_prune_time_by_group:
   local: "Sat 04:00"
 
 # ── Common (deduplicated) ──
-# R2 endpoint - shared across all three source roles
-restic_r2_endpoint: "https://{{ restic_r2_account_id }}.r2.cloudflarestorage.com"
-restic_r2_bucket: "nist-backups-prod"
+# Storage coordinates (endpoint/region/bucket) and the provider switch live in
+# inventory/group_vars/all/main.yml (STORAGE-004/005, design D10). The role
+# builds one repo base URL from them and appends its retention-owner prefix.
 
-# stack_backup: independent Restic repo prefix (stack-restic/)
-restic_repo_url: "s3:{{ restic_r2_endpoint }}/{{ restic_r2_bucket }}/stack-restic/{{ ansible_hostname }}"
+# ── Retention owners (D9/STORAGE-002) ──
+# Each repository prefix has exactly ONE owner so retention on one repository
+# can never prune the other:
+#   app-data     -> restic/<host>        (owner: app-data backup path)
+#   stack-config -> stack-restic/<host>  (owner: stack backup path)
+restic_appdata_repo_url: "{{ backup_repo_base_url }}/restic/{{ inventory_hostname }}"
+restic_repo_url: "{{ backup_repo_base_url }}/stack-restic/{{ ansible_hostname }}"
 
 # ── backup/ (app-data backup) defaults ──
 restic_image: "restic/restic:0.19.1"
