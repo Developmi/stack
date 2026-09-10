@@ -9,15 +9,14 @@
       tags: [always]
 
     # The role scans apps/*/profile.yml relative to inventory_dir (timers.yml
-    # uses the find module on the controller, which resolves to
-    # inventory_dir/../../apps). In Molecule the generated inventory lives
-    # under ~/.ansible/tmp/molecule.<run>.backup/, so inventory_dir/../../apps
-    # resolves to ~/.ansible/tmp/apps. Fixture profiles are staged there at
-    # runtime (control node) so the ROLE's real discovery path is exercised
-    # unchanged.
-    - name: "Molecule | Resolve role fileglob root (inventory_dir/../../apps)"
+    # runs `find <inventory_dir>/../apps -name profile.yml` on the controller).
+    # In Molecule the generated inventory lives under
+    # ~/.ansible/tmp/molecule.<run>.backup/, so inventory_dir/../apps resolves
+    # to ~/.ansible/tmp/apps. Fixture profiles are staged there at runtime
+    # (control node) so the ROLE's real discovery path is exercised unchanged.
+    - name: "Molecule | Resolve role fileglob root (inventory_dir/../apps)"
       ansible.builtin.set_fact:
-        _profile_root: "{{ (inventory_dir + '/../../apps') | realpath }}"
+        _profile_root: "{{ (inventory_dir + '/../apps') | realpath }}"
       tags: [always]
 
     - name: "Molecule | Ensure fixture app directories exist"

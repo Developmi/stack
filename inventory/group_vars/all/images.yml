@@ -10,21 +10,21 @@
 # -----------------------------------------------------------------------------
 # Custom image namespace
 image_namespace: "{{ vault_image_namespace }}"  # AC-3: value from secrets.sops.yml only
-# Caddy image (SSOT: caddy-waf repo releases; v3.4.0 = caddy 2.11.4, coraza-caddy 2.5.0, CRS 4.29.0)
-caddy_image: "ghcr.io/developmi/caddy-waf:v3.4.0"
+# Caddy image (SSOT: caddy-waf repo releases; v3.5.2 = caddy 2.11.4, coraza-caddy 2.6.0, coraza 3.7.0, CRS 4.29.0)
+caddy_image: "ghcr.io/developmi/caddy-waf:v3.5.2"
 
 # SHA256 digest (OCI index, multi-arch amd64+arm64) for supply chain verification.
 # Enforced as a verification gate by the L4 role (docker_image_info digest match,
 # tasks/caddy.yml 'Verify Caddy image digest if specified').
-caddy_image_digest: "sha256:5179ea2077aee18cfd7014a551459cf77e57dc2247aa04052d79f85a5bf4aaf4"
+caddy_image_digest: "sha256:c7fae3a8c49d67c8c143b6141f2dd56a05ebc4a78c5b4be7016a399905f04c6e"
 
-# Caddy WAF UI sidecar image (SSOT: caddy-waf-ui repo releases; v1.0.0)
-caddy_ui_image: "ghcr.io/developmi/caddy-waf-ui:v1.0.0"
+# Caddy WAF UI sidecar image (SSOT: caddy-waf-ui repo releases; v1.1.0)
+caddy_ui_image: "ghcr.io/developmi/caddy-waf-ui:v1.1.0"
 
 # SHA256 digest (OCI index, multi-arch amd64+arm64) for supply chain verification.
 # Enforced as a verification gate by the L4 role (docker_image_info digest match,
 # tasks/caddy.yml 'Verify UI image digest if specified').
-caddy_ui_image_digest: "sha256:305e3723db03cd36727ff54d6518d42ebfebea3ddef9d55993cc55aa4a6930bd"
+caddy_ui_image_digest: "sha256:866b696936c387caa65614cd18f8b3ab77a43ec726822e85381538a7ee1f773f"
 
 # -----------------------------------------------------------------------------
 # GITHUB CONTAINER REGISTRY

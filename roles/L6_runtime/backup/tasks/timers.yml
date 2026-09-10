@@ -42,7 +42,7 @@
     _app_profile_paths: >-
       {{ lookup('ansible.builtin.pipe',
            'find ' ~ (inventory_dir + '/../apps') | quote ~ ' -name profile.yml -type f')
-         | split('\n') | select('length') | list | sort }}
+         .splitlines() | reject('equalto', '') | list | sort }}
   tags: [l6-runtime, backup-timers]
 
 - name: "Process each app profile for backup timers"
