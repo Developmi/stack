@@ -21,6 +21,10 @@
     vault_backup_r2_access_key_id: "molecule-test-access-key"
     vault_backup_r2_secret_access_key: "molecule-test-secret-key" # pragma: allowlist secret
     backup_r2_endpoint: "https://molecule-test.example.com"
+    # Needed by the role's render path when the 004-05 threat test includes the
+    # role directly (deploy_from_profile.yml renders the runner template).
+    backup_provider: r2
+    backup_repo_base_url: "s3:https://molecule-test.example.com/molecule-backups"
   handlers:
     - name: Reload systemd
       ansible.builtin.systemd:
@@ -305,6 +309,13 @@
               ;;
             exec)
               cat >/dev/null 2>&1 || true
+              # ClickHouse adapter probe (task 4.7): report clickhouse-backup
+              # ABSENT when the marker exists so the fallback path is exercised.
+              case "$*" in
+                *"command -v clickhouse-backup"*)
+                  if [ -f "$log_dir/ch-no-binary" ]; then exit 1; else exit 0; fi
+                  ;;
+              esac
               exit 0
               ;;
             *)
@@ -662,3 +673,191 @@
           - (lookup('file', role_tasks_dir + '/restic_backup.yml')) is not search('-e AWS_ACCESS_KEY_ID="')
         fail_msg: "A backup password is still passed via -e on a command line (CRED-005)"
         success_msg: "No secret passed via -e on any command line (CRED-005)"
+
+    # ---------------------------------------------------------------------------
+    # ClickHouse adapter (task 4.7 / design Open Q2): when `clickhouse-backup`
+    # is absent, the engine MUST fall back to `clickhouse-client BACKUP` and
+    # still stream the archive into restic (ENGINE-005).
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Mark clickhouse-backup ABSENT in the stub container"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/ch-no-binary"
+        state: touch
+        mode: "0644"
+
+    - name: "GIVEN: Reset the restic stub log for the ClickHouse fallback run"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restic.log"
+        state: absent
+
+    - name: "WHEN: Run the clickhouse engine runner with clickhouse-backup absent"
+      ansible.builtin.command:
+        cmd: /usr/local/bin/backup-engine-clickhouse.sh
+      environment:
+        PATH: "{{ shim_dir }}:{{ ansible_env.PATH }}"
+      register: ch_fallback_run
+      changed_when: false
+      failed_when: false
+
+    - name: "GIVEN: Read the restic stub log after the ClickHouse run"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/restic.log"
+      register: ch_fallback_log
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: The clickhouse-client BACKUP fallback streamed into restic (4.7)"
+      ansible.builtin.assert:
+        that:
+          - ch_fallback_run.rc == 0
+          - "'clickhouse-client BACKUP' in (ch_fallback_run.stderr | default(''))"
+          - "'db,clickhouse,clickhouse' in ch_fallback_log.stdout"
+        fail_msg: >-
+          ClickHouse adapter did not fall back to clickhouse-client BACKUP and
+          stream to restic (rc={{ ch_fallback_run.rc }}).
+          log={{ ch_fallback_log.stdout }}
+        success_msg: "ClickHouse fell back to clickhouse-client BACKUP and streamed to restic"
+
+    - name: "GIVEN: Remove the clickhouse-backup-absent marker"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/ch-no-binary"
+        state: absent
+
+    # ---------------------------------------------------------------------------
+    # APP-PROFILE-SCHEMA-004 (tasks 4.1-4.8): the SHIPPED apps/*/profile.yml
+    # declarations. Molecule converges fixtures, so this section reads the real
+    # profiles from the control node and validates the shipped schema directly:
+    # databases[] requires db_name + user and no password (004-03); volumes[]
+    # requires name + mount_path + consistency in {quiesce, live} (004-04).
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Enumerate the shipped app profiles (004)"
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/../../apps"
+        patterns: "profile.yml"
+        recurse: true
+      delegate_to: localhost
+      become: false
+      register: real_profile_files
+
+    - name: "GIVEN: Load each shipped app profile (004)"
+      ansible.builtin.include_vars:
+        file: "{{ item.path }}"
+        name: _real
+      loop: "{{ real_profile_files.files }}"
+      loop_control:
+        label: "{{ item.path | dirname | basename }}"
+      register: real_profiles
+
+    - name: "THEN: Shipped profiles satisfy the 004 schema contract (004-03/-04)"
+      ansible.builtin.assert:
+        that:
+          - (p.backup.databases | default([])) | selectattr('db_name', 'undefined') | list | length == 0
+          - (p.backup.databases | default([])) | selectattr('user', 'undefined') | list | length == 0
+          - (p.backup.databases | default([])) | selectattr('password', 'defined') | list | length == 0
+          - (p.backup.volumes | default([])) | selectattr('name', 'undefined') | list | length == 0
+          - (p.backup.volumes | default([])) | selectattr('mount_path', 'undefined') | list | length == 0
+          - (p.backup.volumes | default([])) | rejectattr('consistency', 'in', ['quiesce', 'live']) | list | length == 0
+        fail_msg: >-
+          Shipped profile '{{ item.item.path | dirname | basename }}' violates
+          APP-PROFILE-SCHEMA-004: databases[] requires db_name + user with no
+          password; volumes[] requires name + mount_path + consistency in
+          {quiesce, live}.
+        success_msg: "Shipped profile '{{ item.item.path | dirname | basename }}' satisfies APP-PROFILE-SCHEMA-004"
+      loop: "{{ real_profiles.results }}"
+      loop_control:
+        label: "{{ item.item.path | dirname | basename }}"
+      vars:
+        p: "{{ item.ansible_facts._real }}"
+      when:
+        - item.ansible_facts is defined
+        - item.ansible_facts._real is defined
+        - item.ansible_facts._real.backup is defined
+
+    - name: "GIVEN: Load the shipped n8n / uptime-kuma / openlit / chatwoot profiles (004)"
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../apps/{{ item.app }}/profile.yml"
+        name: "{{ item.var }}"
+      loop:
+        - { app: n8n, var: real_n8n }
+        - { app: uptime-kuma, var: real_uptime_kuma }
+        - { app: openlit, var: real_openlit }
+        - { app: chatwoot, var: real_chatwoot }
+      loop_control:
+        label: "{{ item.app }}"
+
+    - name: "THEN: n8n backup block matches the dump-based theme (004-01)"
+      ansible.builtin.assert:
+        that:
+          - real_n8n.backup.method == 'pg_dump'
+          - real_n8n.backup.schedule == '*-*-* 00/4:00:00'
+          - real_n8n.backup.retention_daily == 7
+          - real_n8n.backup.retention_weekly == 4
+          - real_n8n.backup.retention_monthly == 12
+          - real_n8n.backup.verification == 'monthly-restore-test'
+          - real_n8n.backup.db_type is defined
+          - real_n8n.backup.db_name is defined
+          - real_n8n.backup.volumes | map(attribute='name') | list == ['n8n_data']
+          - real_n8n.backup.volumes | map(attribute='mount_path') | list == ['/home/node/.n8n']
+        fail_msg: "n8n profile does not match APP-PROFILE-SCHEMA-004-01"
+        success_msg: "n8n declares pg_dump + retention + db_type/db_name + n8n_data volume (004-01)"
+
+    - name: "THEN: uptime-kuma and openlit are file-volume with tier-appropriate verification (004-02)"
+      ansible.builtin.assert:
+        that:
+          - real_uptime_kuma.backup.method == 'file-volume'
+          - real_uptime_kuma.backup.verification == 'quarterly-restore-test'
+          - real_openlit.backup.method == 'file-volume'
+          - real_openlit.backup.verification == 'none'
+        fail_msg: "uptime-kuma/openlit do not match APP-PROFILE-SCHEMA-004-02"
+        success_msg: "uptime-kuma quarterly / openlit none, both file-volume (004-02)"
+
+    - name: "THEN: chatwoot declares a password-free database entry (004-03)"
+      ansible.builtin.assert:
+        that:
+          - real_chatwoot.backup.databases | length == 1
+          - real_chatwoot.backup.databases | map(attribute='db_name') | list == ['chatwoot']
+          - real_chatwoot.backup.databases | map(attribute='user') | list | length == 1
+          - real_chatwoot.backup.databases | selectattr('password', 'defined') | list | length == 0
+        fail_msg: "chatwoot databases[] must declare db_name + user and no password (004-03)"
+        success_msg: "chatwoot declares db_name chatwoot + backup user, no password (004-03)"
+
+    - name: "THEN: chatwoot declares a well-formed volume entry (004-04)"
+      ansible.builtin.assert:
+        that:
+          - real_chatwoot.backup.volumes | map(attribute='name') | list == ['chatwoot_storage']
+          - real_chatwoot.backup.volumes | map(attribute='mount_path') | list == ['/app/storage']
+          - real_chatwoot.backup.volumes | map(attribute='consistency') | list == ['live']
+        fail_msg: "chatwoot volumes[] must declare name + mount_path + consistency (004-04)"
+        success_msg: "chatwoot volume declares name/mount_path/consistency (004-04)"
+
+    # ---------------------------------------------------------------------------
+    # APP-PROFILE-SCHEMA-004-05: an invalid `consistency` MUST be rejected before
+    # any unit render. RED before the validation gate: the profile is accepted and
+    # a unit is written, so the explicit `fail` below trips and the rescue assert
+    # (no unit on disk) fails. GREEN after the gate: the assert rejects the entry
+    # and no unit exists.
+    # ---------------------------------------------------------------------------
+    - name: "THREAT: invalid volume consistency is rejected before render (004-05)"
+      block:
+        - name: "WHEN: The role processes a profile declaring consistency: eventual"
+          ansible.builtin.include_role:
+            name: L6_runtime/backup
+            tasks_from: deploy_from_profile.yml
+          loop:
+            - "{{ playbook_dir }}/fixtures/threat/bad-consistency/profile.yml"
+
+        - name: "THEN: An invalid consistency MUST have been rejected (004-05)"
+          ansible.builtin.fail:
+            msg: "consistency: eventual was accepted - APP-PROFILE-SCHEMA-004-05 violated"
+      rescue:
+        - name: "THEN: Stat the unit for the invalid-consistency profile"
+          ansible.builtin.stat:
+            path: "/etc/systemd/system/backup-engine-bad-consistency.timer"
+          register: bad_consistency_timer
+
+        - name: "THEN: Assert no invalid-consistency unit exists on disk (004-05)"
+          ansible.builtin.assert:
+            that:
+              - not bad_consistency_timer.stat.exists
+            fail_msg: "A unit was deployed despite consistency: eventual - 004-05 violated"
+            success_msg: "consistency: eventual rejected before any unit render (004-05)"

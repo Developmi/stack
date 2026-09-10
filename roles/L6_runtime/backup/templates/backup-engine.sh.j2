@@ -89,6 +89,30 @@ resolve_volume() {
   return 1
 }
 
+# ClickHouse adapter (task 4.7 / design Open Q2): prefer the `clickhouse-backup`
+# binary when it is present in the container; otherwise fall back to the native
+# `clickhouse-client BACKUP` statement. Both paths write into the container's
+# Disk('backups') directory, which is then tarred and streamed into restic
+# (ENGINE-005). The adapter runs inside the container, so no host-side password
+# ever crosses the command line (CRED-003/004).
+backup_clickhouse() {
+  local db_name="$1" stamp="${APP}_${TIMESTAMP}"
+  if docker exec "$CONTAINER" sh -c \
+      'command -v clickhouse-backup >/dev/null 2>&1'; then
+    log "clickhouse: clickhouse-backup present; using it for database '$db_name'"
+    docker exec "$CONTAINER" clickhouse-backup create "$stamp"
+  else
+    log "clickhouse: clickhouse-backup absent; falling back to clickhouse-client BACKUP"
+    docker exec "$CONTAINER" clickhouse-client --query \
+      "BACKUP DATABASE ${db_name} TO Disk('backups', '${stamp}')"
+  fi
+  docker exec -i "$CONTAINER" sh -c \
+    'tar -C /var/lib/clickhouse/backups -czf - .' \
+    | restic backup --stdin \
+        --stdin-filename "${stamp}.tar.gz" \
+        --tag "db,clickhouse,${APP}" --host "$HOST"
+}
+
 backup_db() {
   local engine="$1" db_name="$2" user="$3"
   case "$engine" in
@@ -107,8 +131,7 @@ backup_db() {
             --tag "db,mysql,${APP}" --host "$HOST"
       ;;
     clickhouse-backup)
-      docker exec -i "$CONTAINER" clickhouse-client --query \
-        "BACKUP DATABASE ${db_name} TO Disk('backups', '${APP}_${TIMESTAMP}')"
+      backup_clickhouse "$db_name"
       ;;
     *)
       log "skip: unsupported backup engine '$engine' for database '$db_name'"

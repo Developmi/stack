@@ -34,6 +34,31 @@
   # Threat matrix: shell metacharacters in profile paths are rejected before
   # any template render (ExecStart interpolation), so no unit is written.
 
+- name: "Validate declared volumes[] entries (APP-PROFILE-SCHEMA-004-04/-05)"
+  ansible.builtin.assert:
+    that:
+      - _vol.name is defined
+      - _vol.mount_path is defined
+      - _vol.consistency is defined
+      - _vol.consistency in ['quiesce', 'live']
+    fail_msg: >-
+      Invalid backup.volumes[] entry in profile '{{ _app_name }}': `name`,
+      `mount_path` and `consistency` are required, and `consistency` MUST be one
+      of 'quiesce' or 'live' (got
+      '{{ _vol.consistency | default("<missing>") }}'). See
+      APP-PROFILE-SCHEMA-004-04/-05.
+    quiet: true
+  loop: "{{ _p.backup.volumes | default([]) }}"
+  loop_control:
+    loop_var: _vol
+    label: "{{ _vol.name | default(_vol.mount_path) | default('volume') }}"
+  when:
+    - enable_backups | default(false) | bool
+    - _p.backup is defined
+  tags: [l6-runtime, backup, backup_engine]
+  # Only `quiesce` and `live` are accepted (APP-PROFILE-SCHEMA-004-05). The
+  # assert runs before any template render, so an invalid profile writes no unit.
+
 - name: "Resolve container/volume identity at runtime (D5)"
   ansible.builtin.include_tasks: resolve.yml
   when:

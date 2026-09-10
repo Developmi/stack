@@ -64,16 +64,23 @@ dump_valkey() {
 }
 
 dump_clickhouse() {
-  local container="$1"
-  if ! docker exec "$container" sh -c \
+  local container="$1" stamp="tier1_${TIMESTAMP}"
+  # Adapter (task 4.7 / design Open Q2): prefer the `clickhouse-backup` binary
+  # when present; otherwise fall back to the native `clickhouse-client BACKUP`
+  # statement. Both write into the container Disk('backups') directory, which is
+  # tarred and streamed into restic (ENGINE-005). Tier1 is undeclared, so the
+  # fallback backs up ALL TABLES rather than a single declared database.
+  if docker exec "$container" sh -c \
       'command -v clickhouse-backup >/dev/null 2>&1'; then
-    log "skip: clickhouse container '$container' lacks clickhouse-backup (adapter gated in Phase 4)"
-    return 0
+    log "clickhouse: clickhouse-backup present on '$container'; using it"
+    docker exec "$container" clickhouse-backup create "$stamp"
+  else
+    log "clickhouse: clickhouse-backup absent on '$container'; falling back to clickhouse-client BACKUP"
+    docker exec "$container" clickhouse-client --query \
+      "BACKUP ALL TABLES TO Disk('backups', '${stamp}')"
   fi
-  docker exec "$container" clickhouse-backup create "tier1_${TIMESTAMP}"
   docker exec -i "$container" sh -c \
-    "cat /var/lib/clickhouse/backups/tier1_${TIMESTAMP}.zip 2>/dev/null \
-     || tar -C /var/lib/clickhouse/backups -czf - ." \
+    'tar -C /var/lib/clickhouse/backups -czf - .' \
     | restic backup --stdin \
         --stdin-filename "tier1_${container}_${TIMESTAMP}.tar.gz" \
         --tag "tier1,clickhouse,${container}" --host "$HOST"

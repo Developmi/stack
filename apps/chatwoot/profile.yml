@@ -28,5 +28,22 @@ backup:
   retention_weekly: 4
   retention_monthly: 12
   verification: monthly-restore-test
+  # Legacy fields kept during migration (APP-PROFILE-SCHEMA-004); the unified
+  # engine dispatches from databases[]/volumes[], never from db_type/db_name.
   db_type: postgres
   db_name: chatwoot
+  databases:
+    # Declared DB intent (APP-PROFILE-SCHEMA-004-03): name + least-privilege
+    # backup user only. The password lives in SOPS as
+    # backup_db_chatwoot_password and MUST never appear in this profile (CRED-001).
+    - db_name: chatwoot
+      user: backup_chatwoot
+  volumes:
+    # Tier2 opt-in volume (APP-PROFILE-SCHEMA-004-04). The engine resolves the
+    # real Docker volume at runtime by mount_path (D5); Compose prefixes the
+    # declared name at runtime (chatwoot_chatwoot_storage). Uploads are
+    # append-only, so a live tarball is crash-consistent (the DB dump is the
+    # authoritative metadata source).
+    - name: chatwoot_storage
+      mount_path: /app/storage
+      consistency: live

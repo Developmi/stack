@@ -29,5 +29,15 @@ backup:
   retention_weekly: 4
   retention_monthly: 6
   verification: none
+  # Legacy fields kept during migration (APP-PROFILE-SCHEMA-004). Tier3
+  # best-effort (D14/TIER-004): `db_type: none` means the engine deploys no
+  # unit for openlit, so the volume below documents intent only until Tier3
+  # execution lands.
   db_type: none
   db_name: ""
+  volumes:
+    # Declared Tier2 volume (APP-PROFILE-SCHEMA-004-04). Resolved at runtime by
+    # mount_path (D5) if/when Tier3 execution is enabled.
+    - name: openlit-data
+      mount_path: /app/client/data
+      consistency: quiesce

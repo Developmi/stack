@@ -28,5 +28,13 @@ backup:
   retention_weekly: 4
   retention_monthly: 12
   verification: monthly-restore-test
+  # Legacy fields kept during migration (APP-PROFILE-SCHEMA-004); the unified
+  # engine dispatches from databases[]/volumes[], never from db_type/db_name.
   db_type: postgres
   db_name: metabase
+  databases:
+    # Declared DB intent (APP-PROFILE-SCHEMA-004-03). Password from SOPS
+    # (backup_db_metabase_password); never declared here (CRED-001). No
+    # volumes[] entry: Metabase application state lives in PostgreSQL.
+    - db_name: metabase
+      user: backup_metabase

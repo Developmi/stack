@@ -28,5 +28,21 @@ backup:
   retention_weekly: 4
   retention_monthly: 12
   verification: monthly-restore-test
+  # Legacy fields retained on purpose (APP-PROFILE-SCHEMA-004-01 requires
+  # db_type/db_name present); the unified engine dispatches from
+  # databases[]/volumes[], never from db_type/db_name.
   db_type: postgres
   db_name: n8n
+  databases:
+    # Declared DB intent (APP-PROFILE-SCHEMA-004-03). Password from SOPS
+    # (backup_db_n8n_password); never declared here (CRED-001).
+    - db_name: n8n
+      user: backup_n8n
+  volumes:
+    # Tier2 opt-in external volume (APP-PROFILE-SCHEMA-004-04, ENGINE-003): the
+    # compose file declares `n8n_data` external with a literal name, so the
+    # engine resolves the literal volume `n8n_data` at runtime by mount_path
+    # (D5). Holds the encryption key and local state, so it is quiesced (D12).
+    - name: n8n_data
+      mount_path: /home/node/.n8n
+      consistency: quiesce

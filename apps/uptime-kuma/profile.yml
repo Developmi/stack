@@ -25,6 +25,15 @@ backup:
   retention_weekly: 8
   retention_monthly: 12
   verification: quarterly-restore-test
+  # Legacy fields kept during migration (APP-PROFILE-SCHEMA-004); the unified
+  # engine dispatches from databases[]/volumes[], never from db_type/db_name.
+  # `sqlite` is not a dump engine: the volume tarball below is the payload.
   db_type: sqlite
   db_name: uptime_kuma
-  volume_name: uptime-kuma_data
+  volumes:
+    # Tier2 opt-in volume (APP-PROFILE-SCHEMA-004-04). Resolved at runtime by
+    # mount_path (D5): uptime-kuma_uptime-kuma_data. Holds the SQLite database,
+    # so it is quiesced for a consistent tarball (D12).
+    - name: uptime-kuma_data
+      mount_path: /app/data
+      consistency: quiesce

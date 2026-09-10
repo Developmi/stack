@@ -1,0 +1,35 @@
+---
+# Threat fixture (APP-PROFILE-SCHEMA-004-05): a Tier2 volume entry whose
+# `consistency` is neither `quiesce` nor `live`. The role MUST reject the entry
+# before rendering any unit. Referenced directly by path in verify.yml and never
+# staged as a deployable app (it is deliberately invalid).
+#
+# `method: file-volume` + `db_type: sqlite` keep the credential assert out of
+# the path so the ONLY rejection reason under test is the invalid consistency.
+supported_arch: [amd64]
+depends_on: []
+
+monitoring:
+  enabled: true
+  health_endpoint: "/"
+  health_port: 4100
+  scrape_port: 4100
+
+compliance_tags:
+  - cis-docker:4.1
+
+dr_tier: tier1
+
+backup:
+  method: file-volume
+  schedule: "*-*-* 02:30:00"
+  retention_daily: 7
+  retention_weekly: 4
+  retention_monthly: 12
+  verification: none
+  db_type: sqlite
+  db_name: badconsistency
+  volumes:
+    - name: badconsistency_data
+      mount_path: /app/bdata
+      consistency: eventual
