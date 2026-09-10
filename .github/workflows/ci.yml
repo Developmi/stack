@@ -115,8 +115,11 @@ jobs:
       # `--config` loads .gitleaks.toml (extends defaults + path allowlist).
       - name: Scan PR commits (gitleaks)
         if: github.event_name == 'pull_request'
+        env:
+          # GITHUB_BASE_SHA is not a default Actions variable; expose the PR base.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          MERGE_BASE=$(git merge-base "$GITHUB_BASE_SHA" HEAD)
+          MERGE_BASE=$(git merge-base "$BASE_SHA" HEAD)
           /tmp/gitleaks git --redact --config .gitleaks.toml --log-opts="${MERGE_BASE}..HEAD" .
 
       - name: Scan full history (gitleaks)
