@@ -30,6 +30,11 @@ backup:
   verification: monthly-restore-test
   db_type: postgres
   db_name: chatwoot
+  databases:
+    # Declared DB intent (APP-PROFILE-SCHEMA-004-03). Exercises the engine's
+    # databases[] dispatch branch (the declaration source, never db_type/db_name).
+    - db_name: chatwoot
+      user: backup_chatwoot
   volumes:
     # Declared Tier2 volume (Phase 4 schema). The engine resolves the real
     # Docker volume name at runtime by matching this mount_path (D5); the
