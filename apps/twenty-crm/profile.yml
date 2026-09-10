@@ -28,5 +28,19 @@ backup:
   retention_weekly: 4
   retention_monthly: 12
   verification: monthly-restore-test
+  # Legacy fields kept during migration (APP-PROFILE-SCHEMA-004); the unified
+  # engine dispatches from databases[]/volumes[], never from db_type/db_name.
   db_type: postgres
   db_name: twenty
+  databases:
+    # Declared DB intent (APP-PROFILE-SCHEMA-004-03). Password from SOPS
+    # (backup_db_twenty_crm_password); never declared here (CRED-001).
+    - db_name: twenty
+      user: backup_twenty_crm
+  volumes:
+    # Tier2 opt-in volume (APP-PROFILE-SCHEMA-004-04). Resolved at runtime by
+    # mount_path (D5): twenty-crm_twenty_storage. Attachments are append-only,
+    # so a live tarball is crash-consistent.
+    - name: twenty_storage
+      mount_path: /app/storage
+      consistency: live

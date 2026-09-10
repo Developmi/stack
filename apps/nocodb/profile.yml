@@ -28,5 +28,14 @@ backup:
   retention_weekly: 4
   retention_monthly: 12
   verification: monthly-restore-test
+  # Legacy fields kept during migration (APP-PROFILE-SCHEMA-004); the unified
+  # engine dispatches from databases[]/volumes[], never from db_type/db_name.
   db_type: postgres
   db_name: nocodb
+  databases:
+    # Declared DB intent (APP-PROFILE-SCHEMA-004-03). Password from SOPS
+    # (backup_db_nocodb_password); never declared here (CRED-001). No volumes[]
+    # entry: NocoDB keeps its relational data in PostgreSQL, so only the DB is
+    # declared for Tier1/Tier2 coverage.
+    - db_name: nocodb
+      user: backup_nocodb

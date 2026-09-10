@@ -28,5 +28,15 @@ backup:
   retention_weekly: 8
   retention_monthly: 12
   verification: quarterly-restore-test
+  # Legacy fields kept during migration (APP-PROFILE-SCHEMA-004); the unified
+  # engine dispatches from databases[]/volumes[], never from db_type/db_name.
   db_type: clickhouse
   db_name: clickhouse
+  databases:
+    # Declared DB intent (APP-PROFILE-SCHEMA-004-03). The engine adapter (task
+    # 4.7 / design Open Q2) uses `clickhouse-backup` when the binary is present
+    # in the container and otherwise falls back to `clickhouse-client BACKUP`;
+    # both stream the archive into restic (ENGINE-005). The adapter runs inside
+    # the container, so no host-side password is declared here (CRED-001).
+    - db_name: clickhouse
+      user: backup_clickhouse
