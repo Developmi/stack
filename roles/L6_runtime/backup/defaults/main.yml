@@ -42,6 +42,11 @@ restic_prune_time_by_group:
 restic_appdata_repo_url: "{{ backup_repo_base_url }}/restic/{{ inventory_hostname }}"
 restic_repo_url: "{{ backup_repo_base_url }}/stack-restic/{{ ansible_hostname }}"
 
+# ── Second medium (D1/3-2-1-1-0) ──
+# Local filesystem restic repository, seeded from R2 by `restic copy` so the
+# platform keeps a second, distinct-medium copy of every snapshot.
+restic_local_repo_path: "/var/backups/restic/{{ inventory_hostname }}"
+
 # ── backup/ (app-data backup) defaults ──
 restic_image: "restic/restic:0.19.1"
 

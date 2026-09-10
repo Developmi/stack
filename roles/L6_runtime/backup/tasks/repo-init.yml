@@ -55,3 +55,72 @@
     msg: "Restic repository at {{ restic_repo_url }} is accessible - {{ restic_stats_result.stdout }}"
   when: restic_stats_result.stdout is defined
   tags: [l6-runtime, stack_backup, restic]
+
+# ── Second medium: local FS repository seeded from R2 (D1/STORAGE-006) ──
+# The local repo is initialized with the SOURCE chunker parameters so that
+# deduplication works across both repositories, then seeded once via
+# `restic copy`. Subsequent runs are no-ops (marker file).
+
+- name: "Ensure local Restic repository directory exists"
+  ansible.builtin.file:
+    path: "{{ restic_local_repo_path }}"
+    state: directory
+    mode: "0700"
+    owner: root
+    group: root
+  tags: [l6-runtime, stack_backup, restic, restic_local]
+
+- name: "Check if local Restic repository is initialized"
+  ansible.builtin.stat:
+    path: "{{ restic_local_repo_path }}/config"
+  register: local_repo_config
+  tags: [l6-runtime, stack_backup, restic, restic_local]
+
+- name: "Initialize local Restic repository with source chunker params (D1)"  # noqa: command-instead-of-module
+  ansible.builtin.command: >
+    restic init
+    --repo "{{ restic_local_repo_path }}"
+    --password-file /etc/restic/password.key
+    --from-repo "{{ restic_repo_url }}"
+    --from-password-file /etc/restic/password.key
+    --copy-chunker-params
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ restic_r2_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ restic_r2_secret_access_key }}"
+    AWS_DEFAULT_REGION: "auto"
+  when: not local_repo_config.stat.exists
+  changed_when: true
+  no_log: true
+  tags: [l6-runtime, stack_backup, restic, restic_local]
+
+- name: "Check local repository seed marker"
+  ansible.builtin.stat:
+    path: /etc/restic/.local-seed-complete
+  register: local_seed_marker
+  tags: [l6-runtime, stack_backup, restic, restic_local]
+
+- name: "Seed local repository from R2 via restic copy (D1)"  # noqa: command-instead-of-module
+  ansible.builtin.command: >
+    restic copy
+    --repo "{{ restic_local_repo_path }}"
+    --password-file /etc/restic/password.key
+    --from-repo "{{ restic_repo_url }}"
+    --from-password-file /etc/restic/password.key
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ restic_r2_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ restic_r2_secret_access_key }}"
+    AWS_DEFAULT_REGION: "auto"
+  when: not local_seed_marker.stat.exists
+  changed_when: true
+  no_log: true
+  tags: [l6-runtime, stack_backup, restic, restic_local]
+
+- name: "Mark local repository seed complete"
+  ansible.builtin.file:
+    path: /etc/restic/.local-seed-complete
+    state: touch
+    mode: "0600"
+    owner: root
+    group: root
+  when: not local_seed_marker.stat.exists
+  tags: [l6-runtime, stack_backup, restic, restic_local]
