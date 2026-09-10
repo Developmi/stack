@@ -1,0 +1,15 @@
+# Jinja2 template: systemd timer unit for the unified backup engine.
+# Generates: backup-engine-{{ _app_name }}.timer
+# Schedule derived from profile.backup.schedule (ADR-03).
+
+[Unit]
+Description=Backup timer for {{ _app_name }}
+Requires=backup-engine-{{ _app_name }}.service
+
+[Timer]
+OnCalendar={{ _p.backup.schedule | default('*-*-* 02:00:00') }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

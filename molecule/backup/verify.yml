@@ -1,16 +1,21 @@
 ---
-# Verify: backup-profile-integration (SDD)
-# Proves timers/services deploy with directory-derived unit names against
+# Verify: backup-profile-integration + unified engine (SDD)
+# Proves the unified engine deploys dir-derived unit pairs against
 # reduced-schema profiles (no `name` field), preserves skip semantics for
-# db_type none/custom, keeps legacy-name profiles deterministic, and rejects
-# shell-metacharacter profile paths before any template render.
-- name: Verify Backup Profile Integration (BPI)
+# db_type none/custom, rejects shell-metacharacter profile paths before render,
+# asserts the rendered runner is executable (0755), and proves the runtime
+# resolution contract with a stubbed docker: absent container -> exit 0, volume
+# mount_path mismatch -> skip+log (D5/D6, ENGINE-003/004).
+- name: Verify Backup Profile Integration (BPI) + Unified Engine
   hosts: all
   gather_facts: true
   vars:
     fixture_root: "{{ playbook_dir }}/fixtures/apps"
     threat_profile: "{{ playbook_dir }}/fixtures/threat/bad;name/profile.yml"
     role_tasks_dir: "{{ playbook_dir }}/../../roles/L6_runtime/backup/tasks"
+    # NOT /tmp: the Molecule platform mounts /tmp as a noexec tmpfs, so the
+    # executable docker/restic stubs must live on an exec-capable filesystem.
+    shim_dir: /usr/local/lib/engine-shims
     enable_backups: true
     backup_r2_account_id: "molecule-test-account"
     vault_backup_r2_access_key_id: "molecule-test-access-key"
@@ -71,43 +76,56 @@
         success_msg: "Derived {{ _expected_apps | length }} dump-able apps and {{ _skip_apps | length }} skip apps from {{ fixture_files.files | length }} fixtures"
 
     # ---------------------------------------------------------------------------
-    # THEN: timer + service units exist for every dump-able app (BPI-004-01)
+    # THEN: engine timer + service units exist for every dump-able app (BPI-004-01)
     # ---------------------------------------------------------------------------
-    - name: "GIVEN: Stat expected timer units"
+    - name: "GIVEN: Stat expected engine timer units"
       ansible.builtin.stat:
-        path: "/etc/systemd/system/backup-db-{{ item }}.timer"
+        path: "/etc/systemd/system/backup-engine-{{ item }}.timer"
       loop: "{{ _expected_apps | sort }}"
       register: expected_timer_stats
 
-    - name: "THEN: Every dump-able app has a dir-derived timer unit"
+    - name: "THEN: Every dump-able app has a dir-derived engine timer unit"
       ansible.builtin.assert:
         that:
           - expected_timer_stats.results | map(attribute='stat.exists') | list | min == true
-        fail_msg: "Missing timer units: {{ expected_timer_stats.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
-        success_msg: "All {{ _expected_apps | length }} expected timer units exist"
+        fail_msg: "Missing engine timer units: {{ expected_timer_stats.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+        success_msg: "All {{ _expected_apps | length }} expected engine timer units exist"
 
-    - name: "GIVEN: Stat expected service units"
+    - name: "GIVEN: Stat expected engine service units"
       ansible.builtin.stat:
-        path: "/etc/systemd/system/backup-db-{{ item }}.service"
+        path: "/etc/systemd/system/backup-engine-{{ item }}.service"
       loop: "{{ _expected_apps | sort }}"
       register: expected_service_stats
 
-    - name: "THEN: Every dump-able app has a dir-derived service unit"
+    - name: "THEN: Every dump-able app has a dir-derived engine service unit"
       ansible.builtin.assert:
         that:
           - expected_service_stats.results | map(attribute='stat.exists') | list | min == true
-        fail_msg: "Missing service units: {{ expected_service_stats.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
-        success_msg: "All {{ _expected_apps | length }} expected service units exist"
+        fail_msg: "Missing engine service units: {{ expected_service_stats.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+        success_msg: "All {{ _expected_apps | length }} expected engine service units exist"
 
-    - name: "GIVEN: Stat skip-app timer units"
+    - name: "THEN: No retired backup-db-* unit remains on disk (ENGINE-001)"
+      ansible.builtin.find:
+        paths: /etc/systemd/system
+        patterns: "backup-db-*"
+      register: legacy_units
+
+    - name: "THEN: Assert the retired backup-db-* prefix is gone"
+      ansible.builtin.assert:
+        that:
+          - legacy_units.matched == 0
+        fail_msg: "Retired backup-db-* units still present: {{ legacy_units.files | map(attribute='path') | list }}"
+        success_msg: "No backup-db-* units on disk - engine naming only"
+
+    - name: "GIVEN: Stat skip-app engine timer units"
       ansible.builtin.stat:
-        path: "/etc/systemd/system/backup-db-{{ item }}.timer"
+        path: "/etc/systemd/system/backup-engine-{{ item }}.timer"
       loop: "{{ _skip_apps | sort }}"
       register: skip_timer_stats
 
-    - name: "GIVEN: Stat skip-app service units"
+    - name: "GIVEN: Stat skip-app engine service units"
       ansible.builtin.stat:
-        path: "/etc/systemd/system/backup-db-{{ item }}.service"
+        path: "/etc/systemd/system/backup-engine-{{ item }}.service"
       loop: "{{ _skip_apps | sort }}"
       register: skip_service_stats
 
@@ -122,61 +140,61 @@
     # ---------------------------------------------------------------------------
     # THEN: rendered units are internally consistent (BPI-002-02)
     # ---------------------------------------------------------------------------
-    - name: "GIVEN: Slurp rendered timer units"
+    - name: "GIVEN: Slurp rendered engine timer units"
       ansible.builtin.slurp:
-        path: "/etc/systemd/system/backup-db-{{ item }}.timer"
+        path: "/etc/systemd/system/backup-engine-{{ item }}.timer"
       loop: "{{ _expected_apps | sort }}"
       register: timer_contents
 
-    - name: "THEN: Every timer Requires= references its own unit name (BPI-002-02)"
+    - name: "THEN: Every engine timer Requires= references its own unit name (BPI-002-02)"
       ansible.builtin.assert:
         that:
-          - item.content | b64decode | regex_search('Requires=backup-db-' ~ item.item ~ '\.service') is not none
-        fail_msg: "Timer backup-db-{{ item.item }}.timer does not Require= its matching service"
-        success_msg: "Timer backup-db-{{ item.item }}.timer Requires= backup-db-{{ item.item }}.service"
+          - item.content | b64decode | regex_search('Requires=backup-engine-' ~ item.item ~ '\.service') is not none
+        fail_msg: "Timer backup-engine-{{ item.item }}.timer does not Require= its matching service"
+        success_msg: "Timer backup-engine-{{ item.item }}.timer Requires= backup-engine-{{ item.item }}.service"
       loop: "{{ timer_contents.results }}"
 
     # ---------------------------------------------------------------------------
-    # THEN: templates render the derived name everywhere (BPI-002-01)
+    # THEN: templates render the derived name everywhere (BPI-002-01/-02)
     # ---------------------------------------------------------------------------
     - name: "GIVEN: Slurp the chatwoot timer unit"
       ansible.builtin.slurp:
-        path: "/etc/systemd/system/backup-db-chatwoot.timer"
+        path: "/etc/systemd/system/backup-engine-chatwoot.timer"
       register: chatwoot_timer
 
     - name: "GIVEN: Slurp the chatwoot service unit"
       ansible.builtin.slurp:
-        path: "/etc/systemd/system/backup-db-chatwoot.service"
+        path: "/etc/systemd/system/backup-engine-chatwoot.service"
       register: chatwoot_service
 
     - name: "THEN: chatwoot timer renders Description and Requires from the derived name (BPI-002-01)"
       ansible.builtin.assert:
         that:
-          - chatwoot_timer.content | b64decode | regex_search('^Description=Backup timer for database chatwoot$', multiline=True) is not none
-          - chatwoot_timer.content | b64decode | regex_search('^Requires=backup-db-chatwoot\.service$', multiline=True) is not none
-        fail_msg: "chatwoot timer did not render the derived name"
-        success_msg: "chatwoot timer renders the derived name in Description and Requires"
+          - chatwoot_timer.content | b64decode | regex_search('^Description=Backup timer for chatwoot$', multiline=True) is not none
+          - chatwoot_timer.content | b64decode | regex_search('^Requires=backup-engine-chatwoot\.service$', multiline=True) is not none
+        fail_msg: "chatwoot engine timer did not render the derived name"
+        success_msg: "chatwoot engine timer renders the derived name in Description and Requires"
 
-    - name: "THEN: chatwoot service renders derived name and default db_container (BPI-002-01)"
+    - name: "THEN: chatwoot service invokes the unified engine, never aws s3 cp (BPI-002-02)"
       ansible.builtin.assert:
         that:
-          - chatwoot_service.content | b64decode | regex_search('^Description=Database backup for chatwoot \(postgres\)$', multiline=True) is not none
-          - chatwoot_service.content | b64decode | regex_search('^Environment=DB_CONTAINER=chatwoot-db$', multiline=True) is not none
-          - chatwoot_service.content | b64decode | regex_search('s3://\$BUCKET/db/chatwoot/') is not none
-        fail_msg: "chatwoot service did not render the derived name/container/bucket path"
-        success_msg: "chatwoot service renders derived name, DB_CONTAINER=chatwoot-db and bucket path"
+          - chatwoot_service.content | b64decode | regex_search('^Description=Unified backup engine for chatwoot$', multiline=True) is not none
+          - chatwoot_service.content | b64decode | regex_search('^ExecStart=/usr/local/bin/backup-engine-chatwoot\.sh$', multiline=True) is not none
+          - chatwoot_service.content | b64decode is not search('aws s3 cp')
+        fail_msg: "chatwoot engine service did not render the engine invocation"
+        success_msg: "chatwoot engine service invokes the unified engine and never aws s3 cp"
 
     # ---------------------------------------------------------------------------
     # THEN: legacy profile with a `name` field stays deterministic (BPI-004-02)
     # ---------------------------------------------------------------------------
     - name: "GIVEN: Stat the legacy dir-derived unit"
       ansible.builtin.stat:
-        path: "/etc/systemd/system/backup-db-legacy-app.timer"
+        path: "/etc/systemd/system/backup-engine-legacy-app.timer"
       register: legacy_dir_unit
 
     - name: "GIVEN: Stat the legacy name-derived unit"
       ansible.builtin.stat:
-        path: "/etc/systemd/system/backup-db-legacy-name.timer"
+        path: "/etc/systemd/system/backup-engine-legacy-name.timer"
       register: legacy_name_unit
 
     - name: "THEN: Directory-derived name takes precedence over the stale name field (BPI-004-02)"
@@ -185,7 +203,24 @@
           - legacy_dir_unit.stat.exists
           - not legacy_name_unit.stat.exists
         fail_msg: "Legacy profile unit naming is not deterministic (dir-derived name must win)"
-        success_msg: "Legacy profile deploys backup-db-legacy-app.timer; stale name field ignored"
+        success_msg: "Legacy profile deploys backup-engine-legacy-app.timer; stale name field ignored"
+
+    # ---------------------------------------------------------------------------
+    # THREAT: executable-file - rendered runner is fixed 0755 (task 2.2)
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Stat the rendered chatwoot engine runner (threat executable-file)"
+      ansible.builtin.stat:
+        path: /usr/local/bin/backup-engine-chatwoot.sh
+      register: chatwoot_runner
+
+    - name: "THEN: The rendered engine runner exists with fixed mode 0755"
+      ansible.builtin.assert:
+        that:
+          - chatwoot_runner.stat.exists
+          - chatwoot_runner.stat.mode == '0755'
+          - chatwoot_runner.stat.pw_name == 'root'
+        fail_msg: "backup-engine-chatwoot.sh must exist as 0755 root (got mode={{ chatwoot_runner.stat.mode | default('absent') }})"
+        success_msg: "backup-engine-chatwoot.sh is 0755 root"
 
     # ---------------------------------------------------------------------------
     # STORAGE-003 / D7: /etc/restic/env MUST exist on every backup host
@@ -210,6 +245,108 @@
       when: enable_backups | default(false) | bool
 
     # ---------------------------------------------------------------------------
+    # RUNTIME RESOLUTION (tasks 2.1): stub docker + restic, run the REAL runner.
+    #   absent container -> exit 0 (ENGINE-004/D6)
+    #   volume mount_path mismatch -> skip + log (ENGINE-003/D5)
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Create the stub bin directory"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: "GIVEN: Write the docker stub (container-present marker gate)"
+      ansible.builtin.copy:
+        dest: "{{ shim_dir }}/docker"
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          # Stub docker: with the marker present the container is 'running' and
+          # exposes a volume at /app/storage (NOT chatwoot's declared /app/data).
+          if [ -f "{{ shim_dir }}/container-present" ]; then
+            case "$1" in
+              inspect) printf 'stubvol /app/storage\n'; exit 0 ;;
+              *) exit 0 ;;
+            esac
+          fi
+          exit 1
+
+    - name: "GIVEN: Write the restic stub (records invocations, drains stdin)"
+      ansible.builtin.copy:
+        dest: "{{ shim_dir }}/restic"
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          printf 'restic %s\n' "$*" >> "{{ shim_dir }}/restic.log"
+          cat >/dev/null || true
+          exit 0
+
+    - name: "GIVEN: Ensure the absent-container marker is removed"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/container-present"
+        state: absent
+
+    - name: "WHEN: Run the engine runner with the container ABSENT"
+      ansible.builtin.command:
+        cmd: /usr/local/bin/backup-engine-chatwoot.sh
+      environment:
+        PATH: "{{ shim_dir }}:{{ ansible_env.PATH }}"
+      register: engine_absent_run
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: Absent container exits 0 and logs the skip (ENGINE-004/D6)"
+      ansible.builtin.assert:
+        that:
+          - engine_absent_run.rc == 0
+          - "'absent' in (engine_absent_run.stderr | default(''))"
+        fail_msg: "Runner did not skip cleanly on an absent container (rc={{ engine_absent_run.rc }})"
+        success_msg: "Absent container -> exit 0 with skip log"
+
+    - name: "GIVEN: Mark the container present and reset the restic log"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/container-present"
+        state: touch
+        mode: "0644"
+
+    - name: "GIVEN: Remove any previous restic stub log"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restic.log"
+        state: absent
+
+    - name: "WHEN: Run the engine runner with a mount_path MISMATCH"
+      ansible.builtin.command:
+        cmd: /usr/local/bin/backup-engine-chatwoot.sh
+      environment:
+        PATH: "{{ shim_dir }}:{{ ansible_env.PATH }}"
+      register: engine_mismatch_run
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: Volume mismatch is skipped and logged, run still exits 0 (ENGINE-003/D5)"
+      ansible.builtin.assert:
+        that:
+          - engine_mismatch_run.rc == 0
+          - "'no volume mounted at' in (engine_mismatch_run.stderr | default(''))"
+          - "'/app/data' in (engine_mismatch_run.stderr | default(''))"
+        fail_msg: "Runner did not skip+log an unmatched mount_path (rc={{ engine_mismatch_run.rc }})"
+        success_msg: "Unmatched mount_path -> skip+log, run continues"
+
+    - name: "THEN: The declared DB was still dumped and streamed to restic"
+      ansible.builtin.command:
+        cmd: "grep -c 'backup --stdin' {{ shim_dir }}/restic.log"
+      register: restic_invocations
+      changed_when: false
+      failed_when: false
+
+    - name: "THEN: Assert the DB dump reached restic after the volume skip"
+      ansible.builtin.assert:
+        that:
+          - restic_invocations.stdout | int >= 1
+        fail_msg: "The DB dump did not reach restic after the volume skip"
+        success_msg: "DB dump streamed to restic ({{ restic_invocations.stdout }} invocation(s))"
+
+    # ---------------------------------------------------------------------------
     # THREAT MATRIX: shell metacharacters in profile paths fail before render
     # ---------------------------------------------------------------------------
     # The included task file (deploy_from_profile.yml) runs the REAL role logic:
@@ -232,7 +369,7 @@
 
         - name: "THEN: No unit was written for the metachar app"
           ansible.builtin.stat:
-            path: "/etc/systemd/system/backup-db-bad;name.timer"
+            path: "/etc/systemd/system/backup-engine-bad;name.timer"
           register: metachar_timer_unit
 
         - name: "THEN: Assert no metachar unit exists on disk"

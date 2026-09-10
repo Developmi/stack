@@ -1,0 +1,32 @@
+---
+# ==============================================================================
+# Developmi Stack | L6 Runtime Backup - Unified Engine
+# ==============================================================================
+# One profile-declarative engine backs up every app on every backup host.
+# It replaces the retired backup-appdata.yml, backup-timers.yml and
+# backup-databases.yml paths (ENGINE-001: no backup path may bypass the engine).
+# /etc/restic/env is provisioned by the role for every enable_backups host (D7).
+# ==============================================================================
+# Usage:
+#   make deploy-backup-engine
+#   ansible-playbook -i inventory/hosts.ini playbooks/l6/backup-engine.yml
+# ==============================================================================
+
+- name: "L6 | Unified Backup Engine (Restic → R2)"
+  hosts: all
+  gather_facts: true
+  become: true
+  tags: [l6-runtime, backup, backup_engine]
+  vars:
+    backup_role_source: engine
+    # Install the pinned restic binary as part of the engine deploy (D3). The
+    # stack path also installs it; this keeps the engine self-sufficient.
+    backup_engine_install_restic: true
+  pre_tasks:
+    - name: "Gate - skip backup when backups are disabled"
+      ansible.builtin.meta: end_play
+      when: not (enable_backups | default(true))
+      tags: [always]
+  roles:
+    - role: L6_runtime/backup
+      tags: [l6-runtime, backup, backup_engine]

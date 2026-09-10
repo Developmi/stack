@@ -1,0 +1,50 @@
+---
+# =============================================================================
+# Unified backup engine - dispatch (D11/ENGINE-001)
+# =============================================================================
+# Source of truth: apps/*/profile.yml on the controller (ADR-03). The engine
+# scans profiles, deploys the shared quiesce library, and renders one
+# self-skipping systemd unit pair per dump-able app. It replaces the retired
+# `backup-db` role and the per-path backup playbooks (backup-appdata,
+# backup-timers, backup-databases).
+#
+# NOTE: with_fileglob cannot express `apps/*/profile.yml` under ansible-core
+# 2.21.1 (the dir segment is resolved via the search path). The controller-side
+# `find` via the pipe lookup is used instead - profiles live on the controller,
+# not on managed hosts.
+# =============================================================================
+
+- name: "Engine | Ensure the engine script directory exists"
+  ansible.builtin.file:
+    path: /usr/local/bin
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  tags: [l6-runtime, backup, backup_engine]
+
+- name: "Engine | Deploy the ordered quiesce library (D12/TIER-003)"
+  ansible.builtin.include_tasks: quiesce.yml
+  tags: [l6-runtime, backup, backup_engine]
+
+- name: "Engine | Optionally install the pinned restic binary (D3)"
+  ansible.builtin.include_tasks: install.yml
+  when: backup_engine_install_restic | default(false) | bool
+  tags: [l6-runtime, backup, backup_engine, restic_install]
+
+- name: "Engine | Collect app profile files (controller side)"
+  ansible.builtin.set_fact:
+    _app_profile_paths: >-
+      {{ lookup('ansible.builtin.pipe',
+           'find ' ~ (inventory_dir + '/../apps') | quote ~ ' -name profile.yml -type f')
+         .splitlines() | reject('equalto', '') | list | sort }}
+  tags: [l6-runtime, backup, backup_engine]
+
+- name: "Engine | Render the unit pair for each app profile"
+  ansible.builtin.include_tasks: deploy_from_profile.yml
+  loop: "{{ _app_profile_paths }}"
+  tags: [l6-runtime, backup, backup_engine]
+
+- name: "Engine | Flush handlers (systemd daemon-reload)"
+  ansible.builtin.meta: flush_handlers
+  tags: [l6-runtime, backup, backup_engine]

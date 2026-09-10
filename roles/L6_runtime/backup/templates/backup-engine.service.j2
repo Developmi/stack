@@ -1,0 +1,18 @@
+# Jinja2 template: systemd service unit for the unified backup engine.
+# Generates: backup-engine-{{ _app_name }}.service
+# The runner self-skips when the app container is absent (D6) and streams
+# dumps/tarballs into restic (ENGINE-005).
+
+[Unit]
+Description=Unified backup engine for {{ _app_name }}
+Documentation=man:restic(1)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup-engine-{{ _app_name }}.sh
+EnvironmentFile=-/etc/restic/env
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+StandardOutput=journal
+StandardError=journal

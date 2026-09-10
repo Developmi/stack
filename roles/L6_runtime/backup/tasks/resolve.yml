@@ -1,0 +1,76 @@
+---
+# =============================================================================
+# Unified backup engine - runtime resource resolution (D5/ENGINE-003)
+# =============================================================================
+# The engine MUST resolve the real container and Docker volume at runtime via
+# `docker inspect`; it MUST NOT string-build volume names (external volumes use
+# literal names while Compose volumes are project-prefixed). This deploy-time
+# pass inspects the container and matches each declared `mount_path`, logging
+# skips for an absent container or an unmatched path. The rendered runner
+# repeats the same resolution at backup time (self-skipping, D6).
+# =============================================================================
+
+- name: "Resolve | Set the container identity from the app declaration (D5)"
+  ansible.builtin.set_fact:
+    _engine_container: "{{ _p.backup.db_container | default(_app_name) }}"
+  tags: [l6-runtime, backup, backup_engine]
+
+- name: "Resolve | Discover the docker CLI (D5)"
+  ansible.builtin.stat:
+    path: /usr/bin/docker
+  register: _engine_docker_cli
+  changed_when: false
+  tags: [l6-runtime, backup, backup_engine]
+
+- name: "Resolve | Inspect the real container mounts (D5)"
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/docker
+      - inspect
+      - "{{ _engine_container }}"
+      - --format
+      - "{% raw %}{{range .Mounts}}{{.Name}} {{.Destination}}{% endraw %}"
+  register: _engine_mounts
+  changed_when: false
+  failed_when: false
+  when: _engine_docker_cli.stat.exists | default(false)
+  tags: [l6-runtime, backup, backup_engine]
+
+- name: "Resolve | Log container-absent skip (D6)"
+  ansible.builtin.debug:
+    msg: >-
+      engine[{{ _app_name }}]: container '{{ _engine_container }}' absent on
+      {{ inventory_hostname }} - resources skipped, host affinity honoured.
+  when: >-
+    not (_engine_docker_cli.stat.exists | default(false))
+    or (_engine_mounts.rc | default(1)) != 0
+  tags: [l6-runtime, backup, backup_engine]
+
+- name: "Resolve | Log declared volume resolved by mount_path (D5)"
+  ansible.builtin.debug:
+    msg: >-
+      engine[{{ _app_name }}]: declared volume
+      '{{ item.name | default(item.mount_path) }}' resolves at mount_path
+      '{{ item.mount_path }}'.
+  loop: "{{ _p.backup.volumes | default([]) }}"
+  loop_control:
+    label: "{{ item.mount_path }}"
+  when:
+    - _engine_docker_cli.stat.exists | default(false)
+    - (_engine_mounts.rc | default(1)) == 0
+    - (_engine_mounts.stdout | default('')) is search(item.mount_path)
+  tags: [l6-runtime, backup, backup_engine]
+
+- name: "Resolve | Log unmatched mount_path skip (D5)"
+  ansible.builtin.debug:
+    msg: >-
+      engine[{{ _app_name }}]: no volume mounted at '{{ item.mount_path }}' on
+      '{{ _engine_container }}' - skipping that resource.
+  loop: "{{ _p.backup.volumes | default([]) }}"
+  loop_control:
+    label: "{{ item.mount_path }}"
+  when:
+    - _engine_docker_cli.stat.exists | default(false)
+    - (_engine_mounts.rc | default(1)) == 0
+    - (_engine_mounts.stdout | default('')) is not search(item.mount_path)
+  tags: [l6-runtime, backup, backup_engine]
