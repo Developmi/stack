@@ -40,6 +40,12 @@ restic_prune_time_by_group:
 #   app-data     -> restic/<host>        (owner: app-data backup path)
 #   stack-config -> stack-restic/<host>  (owner: stack backup path)
 restic_appdata_repo_url: "{{ backup_repo_base_url }}/restic/{{ inventory_hostname }}"
+# The stack-config repo deliberately keeps the HISTORICAL ansible_hostname key
+# (design D4 / open Q1). It is the pre-migration URL and the `restic copy`
+# fallback source when ansible_hostname != inventory_hostname. Do NOT rewrite it
+# to inventory_hostname: that would point at a different repository and orphan
+# the existing stack snapshots. The engine's own repo is restic_appdata_repo_url,
+# which is keyed by inventory_hostname.
 restic_repo_url: "{{ backup_repo_base_url }}/stack-restic/{{ ansible_hostname }}"
 
 # ── Second medium (D1/3-2-1-1-0) ──
@@ -96,8 +102,14 @@ restic_keep_monthly: 3
 
 # ── backup-timers/ defaults ──
 # backup_db_services/backup_volume_services replaced by fileglob scan of apps/*/profile.yml (ADR-03)
-backup_r2_access_key_id: "{{ vault_backup_r2_access_key_id | default('') }}"
-backup_r2_secret_access_key: "{{ vault_backup_r2_secret_access_key | default('') }}"
+#
+# Legacy `backup_r2_*` aliases REMOVED (design D4 / STORAGE-005): the single
+# credential namespace is `restic_r2_*` (non-secret coordinates in
+# inventory/group_vars/all/main.yml, secrets in the SOPS file). The encrypted
+# SOPS file still carries `backup_r2_account_id` / `vault_backup_r2_*` during
+# the migration transition because it cannot be re-encrypted mid-flight, but NO
+# code consumes them. Remove them from SOPS after the migration gate passes
+# (see docs/operations/BACKUP_MIGRATION_RUNBOOK.md §Transition).
 
 # ── Gate - shared across all source roles ──
 enable_backups: true
