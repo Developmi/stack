@@ -6,7 +6,7 @@
 # restic-run.env token so uploads can never delete snapshots.
 
 RESTIC_REPOSITORY={{ restic_appdata_repo_url }}
-RESTIC_PASSWORD={{ lookup('vars', 'restic_password_' ~ ansible_hostname | replace('-', '_')) }}
+RESTIC_PASSWORD={{ lookup('vars', 'restic_password_' ~ inventory_hostname | replace('-', '_')) }}
 AWS_ACCESS_KEY_ID={{ restic_r2_retention_access_key_id | default(restic_r2_access_key_id) }}
 AWS_SECRET_ACCESS_KEY={{ restic_r2_retention_secret_access_key | default(restic_r2_secret_access_key) }}
 AWS_DEFAULT_REGION=auto

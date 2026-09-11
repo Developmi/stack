@@ -7,14 +7,11 @@
 # timer/service units are deployed and asserted.
 
 enable_backups: true
-backup_r2_account_id: "molecule-test-account"
-vault_backup_r2_access_key_id: "molecule-test-access-key"
-vault_backup_r2_secret_access_key: "molecule-test-secret-key" # pragma: allowlist secret
-backup_r2_endpoint: "https://molecule-test.example.com"
-backup_r2_bucket: "molecule-backups"
 
 # Storage provider + repository base URL (STORAGE-004/005, D10). The role
 # defaults build restic_repo_url / restic_appdata_repo_url from this value.
+# The legacy `backup_r2_*` / `vault_backup_r2_*` namespace is retired (D4);
+# `restic_r2_*` is the single credential namespace (STORAGE-005).
 backup_provider: r2
 backup_repo_base_url: "s3:https://molecule-test.example.com/molecule-backups"
 
@@ -27,8 +24,8 @@ restic_telegram_bot_token: "molecule-test-bot-token"
 restic_telegram_chat_id: "molecule-test-chat-id"
 
 # Per-host repository password. credentials.yml resolves
-# restic_password_<ansible_hostname with "-" -> "_">; the Molecule platform is
-# debian12-backup, so the container hostname is debian12-backup.
+# restic_password_<inventory_hostname with "-" -> "_"> (design D4); the Molecule
+# platform is debian12-backup, so the container hostname is debian12-backup.
 restic_password_debian12_backup: "molecule-test-restic-password" # pragma: allowlist secret
 
 # Fixture apps mirrored from apps/*/profile.yml (reduced schema).

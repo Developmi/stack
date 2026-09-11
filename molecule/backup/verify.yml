@@ -13,18 +13,23 @@
     fixture_root: "{{ playbook_dir }}/fixtures/apps"
     threat_profile: "{{ playbook_dir }}/fixtures/threat/bad;name/profile.yml"
     role_tasks_dir: "{{ playbook_dir }}/../../roles/L6_runtime/backup/tasks"
+    role_templates_dir: "{{ playbook_dir }}/../../roles/L6_runtime/backup/templates"
+    role_defaults_file: "{{ playbook_dir }}/../../roles/L6_runtime/backup/defaults/main.yml"
+    group_vars_main_file: "{{ playbook_dir }}/../../inventory/group_vars/all/main.yml"
     # NOT /tmp: the Molecule platform mounts /tmp as a noexec tmpfs, so the
     # executable docker/restic stubs must live on an exec-capable filesystem.
     shim_dir: /usr/local/lib/engine-shims
     enable_backups: true
-    backup_r2_account_id: "molecule-test-account"
-    vault_backup_r2_access_key_id: "molecule-test-access-key"
-    vault_backup_r2_secret_access_key: "molecule-test-secret-key" # pragma: allowlist secret
-    backup_r2_endpoint: "https://molecule-test.example.com"
     # Needed by the role's render path when the 004-05 threat test includes the
     # role directly (deploy_from_profile.yml renders the runner template).
     backup_provider: r2
     backup_repo_base_url: "s3:https://molecule-test.example.com/molecule-backups"
+  pre_tasks:
+    # vars.yml carries the per-host restic password sentinel consumed by the
+    # role's credential/repo-init lookups (restic_password_debian12_backup).
+    - name: "Verify | Include backup test variables"
+      ansible.builtin.include_vars:
+        file: vars.yml
   handlers:
     - name: Reload systemd
       ansible.builtin.systemd:
@@ -1097,3 +1102,205 @@
           - "'OnCalendar=*-01,04,07,10-01 04:00:00' in (verify_timer_contents.results[1].content | b64decode)"
         fail_msg: "Restore-verification timers do not encode the tier cadence (VERIFY-003)"
         success_msg: "Monthly + quarterly restore-verification cadences rendered (VERIFY-003)"
+
+    # ===========================================================================
+    # PHASE 6 - MIGRATION + GATES (tasks 6.1-6.7)
+    # The on-host gates (restic snapshots on brain-1/muscle-1, restore evidence
+    # on real data) are operator-run; see docs/operations/BACKUP_MIGRATION_RUNBOOK.md.
+    # The assertions below prove the IMPLEMENTABLE contract of this slice:
+    #   * one credential namespace (STORAGE-005) + resolved endpoint (STORAGE-004)
+    #   * inventory_hostname host key for passwords and the app-data repo (D4)
+    #   * no re-init (marker guard) and the app-data seed source (D1/6.5)
+    #   * the divergent-host fallback (open Q1/6.4)
+    #   * the migration/rollback runbook ships (6.6/6.7)
+    # ===========================================================================
+
+    # 6.1 / STORAGE-005: no code consumes the legacy backup_r2_* / vault_* names.
+    # The patterns are anchored to uncommented YAML keys (multiline), so the
+    # transition-note COMMENTS that mention the retired names do not trip the gate.
+    - name: "GATE 6.1: The legacy R2 namespace has no code consumers (STORAGE-005)"
+      ansible.builtin.assert:
+        that:
+          - (lookup('file', role_defaults_file)) is not search('^\s*backup_r2_access_key_id\s*:', multiline=True)
+          - (lookup('file', role_defaults_file)) is not search('^\s*vault_backup_r2_', multiline=True)
+          - (lookup('file', group_vars_main_file)) is not search('^\s*backup_r2_endpoint\s*:', multiline=True)
+        fail_msg: >-
+          A legacy backup_r2_* / vault_backup_r2_* alias is still consumed in
+          code (STORAGE-005). The single credential namespace is restic_r2_*.
+        success_msg: "No legacy R2 namespace consumer remains in code (STORAGE-005)"
+
+    # 6.1 / STORAGE-004: the repo base URL is built from restic_r2_* only.
+    - name: "GATE 6.1: The repo base URL resolves from restic_r2_* (STORAGE-004)"
+      ansible.builtin.assert:
+        that:
+          - (lookup('file', group_vars_main_file)) is search('restic_r2_endpoint')
+          - (lookup('file', group_vars_main_file)) is search('backup_repo_base_url')
+        fail_msg: "backup_repo_base_url does not resolve from restic_r2_endpoint (STORAGE-004)"
+        success_msg: "Repo base URL resolves from restic_r2_* (STORAGE-004)"
+
+    # 6.2 / D4: every password lookup is keyed by inventory_hostname.
+    - name: "GATE 6.2: Password lookups use inventory_hostname, not ansible_hostname (D4)"
+      ansible.builtin.assert:
+        that:
+          - (lookup('file', role_tasks_dir + '/credentials.yml')) is not search("restic_password_' ~ ansible_hostname")
+          - (lookup('file', role_tasks_dir + '/credentials.yml')) is search("restic_password_' ~ inventory_hostname")
+          - (lookup('file', role_tasks_dir + '/repo-init.yml')) is not search("restic_password_' ~ ansible_hostname")
+          - (lookup('file', role_tasks_dir + '/repo-init.yml')) is search("restic_password_' ~ inventory_hostname")
+          - (lookup('file', role_templates_dir + '/restic-run-env.j2')) is not search("restic_password_' ~ ansible_hostname")
+          - (lookup('file', role_templates_dir + '/restic-run-env.j2')) is search("restic_password_' ~ inventory_hostname")
+          - (lookup('file', role_templates_dir + '/restic-retention-env.j2')) is not search("restic_password_' ~ ansible_hostname")
+          - (lookup('file', role_templates_dir + '/restic-retention-env.j2')) is search("restic_password_' ~ inventory_hostname")
+        fail_msg: "A password lookup is still keyed by ansible_hostname (D4)"
+        success_msg: "All password lookups keyed by inventory_hostname (D4)"
+
+    # 6.2 / D4: the no-re-init contract is expressed as an existence guard.
+    - name: "GATE 6.2: R2 init is marker-guarded, never unconditional (D4)"
+      ansible.builtin.assert:
+        that:
+          - (lookup('file', role_tasks_dir + '/repo-init.yml')) is search('/etc/restic/.repo-initialized')
+          - (lookup('file', role_tasks_dir + '/repo-init.yml')) is search('repo_init_marker.stat.exists')
+        fail_msg: "repo-init.yml does not guard `restic init` behind the marker (D4 no-re-init)"
+        success_msg: "restic init is marker-guarded (D4 no-re-init)"
+
+    # 6.4 / open Q1: the divergent-host copy falls back to the stack-config repo.
+    - name: "GATE 6.4: Divergent host resolves to the stack-config repo (open Q1)"
+      ansible.builtin.assert:
+        that:
+          - (lookup('file', role_tasks_dir + '/repo-init.yml')) is search('_repo_init_host_key_divergent')
+          - (lookup('file', role_tasks_dir + '/repo-init.yml')) is search('ansible_hostname != inventory_hostname')
+          - (lookup('file', role_tasks_dir + '/repo-init.yml')) is search('_repo_init_copy_source')
+        fail_msg: "repo-init.yml does not resolve the ansible_hostname/inventory_hostname divergence (open Q1)"
+        success_msg: "Divergent-host guard resolves the seed source explicitly (open Q1)"
+
+    # ---------------------------------------------------------------------------
+    # GATE 6.5 (RED -> GREEN): the local second medium seeds from the APP-DATA
+    # repo `restic/<host>`, NOT the stack-config repo. RED before the fix: the
+    # copy source was restic_repo_url (stack-restic) and the seed-source
+    # assertion below fails. GREEN after: --from-repo is restic_appdata_repo_url.
+    # The second run proves the marker semantics are preserved (idempotence).
+    # ---------------------------------------------------------------------------
+    - name: "GATE 6.5: Create the R2 init marker so no re-init can occur (D4)"
+      ansible.builtin.file:
+        path: /etc/restic/.repo-initialized
+        state: touch
+        mode: "0600"
+
+    - name: "GATE 6.5: Ensure the local repo directory exists (D1)"
+      ansible.builtin.file:
+        path: "/var/backups/restic/{{ inventory_hostname }}"
+        state: directory
+        mode: "0700"
+
+    - name: "GATE 6.5: Pre-create the local repo config so only the seed runs (D1)"
+      ansible.builtin.file:
+        path: "/var/backups/restic/{{ inventory_hostname }}/config"
+        state: touch
+        mode: "0600"
+
+    - name: "GATE 6.5: Remove the local seed marker to force exactly one seed run"
+      ansible.builtin.file:
+        path: /etc/restic/.local-seed-complete
+        state: absent
+
+    - name: "GATE 6.5: Reset the restic stub log for the seed run"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restic.log"
+        state: absent
+
+    # repo-init.yml invokes bare `restic` (no PATH override), so expose the stub
+    # on the default PATH for this test. The real restic binary is not installed
+    # in the Molecule container (backup_engine_install_restic defaults false).
+    - name: "GATE 6.5: Expose the restic stub on the default PATH"
+      ansible.builtin.copy:
+        src: "{{ shim_dir }}/restic"
+        dest: /usr/local/bin/restic
+        remote_src: true
+        mode: "0755"
+
+    - name: "GATE 6.5: Run repo-init (stack path) with the stubbed restic"
+      ansible.builtin.include_role:
+        name: L6_runtime/backup
+        tasks_from: repo-init.yml
+
+    - name: "GATE 6.5: Read the restic stub log after the first seed"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/restic.log"
+      register: repo_init_first_log
+      changed_when: false
+      failed_when: false
+
+    - name: "GATE 6.5: The seed copy sources the APP-DATA repo, not the stack repo (D1)"
+      ansible.builtin.assert:
+        that:
+          - "'copy' in repo_init_first_log.stdout"
+          - "'--from-repo ' ~ backup_repo_base_url ~ '/restic/' ~ inventory_hostname in repo_init_first_log.stdout"
+          - "'--from-repo ' ~ backup_repo_base_url ~ '/stack-restic/' not in repo_init_first_log.stdout"
+        fail_msg: >-
+          The local second medium was seeded from the wrong repository (D1).
+          Expected --from-repo {{ backup_repo_base_url }}/restic/{{ inventory_hostname }}.
+          log={{ repo_init_first_log.stdout }}
+        success_msg: "Local second medium seeded from the app-data repo (D1/6.5)"
+
+    - name: "GATE 6.5: No R2 re-init occurred (marker honoured, D4)"
+      ansible.builtin.assert:
+        that:
+          - "'init --repo ' ~ backup_repo_base_url ~ '/stack-restic/' not in repo_init_first_log.stdout"
+        fail_msg: "repo-init re-initialized the R2 repo despite the marker (D4)"
+        success_msg: "No R2 re-init: the marker guard held (D4)"
+
+    - name: "GATE 6.5: Stat the local seed marker after the copy"
+      ansible.builtin.stat:
+        path: /etc/restic/.local-seed-complete
+      register: local_seed_marker_after
+
+    - name: "GATE 6.5: The seed marker is written after a successful copy (D1)"
+      ansible.builtin.assert:
+        that:
+          - local_seed_marker_after.stat.exists
+        fail_msg: "The local seed marker was not written after the copy (D1)"
+        success_msg: "Local seed marker written after the copy (D1)"
+
+    - name: "GATE 6.5: Reset the restic stub log for the idempotence run"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restic.log"
+        state: absent
+
+    - name: "GATE 6.5: Re-run repo-init with the seed marker present"
+      ansible.builtin.include_role:
+        name: L6_runtime/backup
+        tasks_from: repo-init.yml
+
+    - name: "GATE 6.5: Read the restic stub log after the second run"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/restic.log"
+      register: repo_init_second_log
+      changed_when: false
+      failed_when: false
+
+    - name: "GATE 6.5: The second run performs no copy and no init (marker idempotence, D1)"
+      ansible.builtin.assert:
+        that:
+          - "'copy' not in repo_init_second_log.stdout"
+          - "'init' not in repo_init_second_log.stdout"
+        fail_msg: >-
+          repo-init is not idempotent: a second run re-copied or re-initialized.
+          log={{ repo_init_second_log.stdout }}
+        success_msg: "repo-init is idempotent on the second run (markers honoured)"
+
+    # ---------------------------------------------------------------------------
+    # GATE 6.6 / 6.7: the migration + rollback runbook ships with the change, so
+    # an operator has the executable gate steps and the rollback boundary.
+    # ---------------------------------------------------------------------------
+    - name: "GATE 6.6/6.7: Stat the migration + rollback runbook"
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../docs/operations/BACKUP_MIGRATION_RUNBOOK.md"
+      register: migration_runbook
+      delegate_to: localhost
+      become: false
+
+    - name: "GATE 6.6/6.7: The migration + rollback runbook ships with the change"
+      ansible.builtin.assert:
+        that:
+          - migration_runbook.stat.exists
+        fail_msg: "docs/operations/BACKUP_MIGRATION_RUNBOOK.md is missing (6.6/6.7)"
+        success_msg: "Migration + rollback runbook present (6.6/6.7)"

@@ -227,10 +227,10 @@ backup_repo_base_url: >-
   {{ ('s3:' ~ restic_r2_endpoint ~ '/' ~ restic_r2_bucket) if backup_provider == 'r2'
      else ('s3:' ~ backup_s3_endpoint ~ '/' ~ backup_s3_bucket) }}
 
-# Legacy alias retained only for the pre-engine backup-db timer path. It fixes
-# the previously undefined reference in the rendered backup-db units; the
-# unified engine (PR2) drops the S3 pipe and this alias (STORAGE-004).
-backup_r2_endpoint: "{{ restic_r2_endpoint }}"
+# The legacy `backup_r2_endpoint` alias was removed (design D10 / STORAGE-004):
+# the undefined reference is resolved by `restic_r2_endpoint` above and every
+# template consumes `backup_repo_base_url`. The `backup_r2_*` namespace is
+# retired; `restic_r2_*` is the single credential namespace (STORAGE-005).
 
 # =============================================================================
 # L6 RUNTIME ADAPTER
