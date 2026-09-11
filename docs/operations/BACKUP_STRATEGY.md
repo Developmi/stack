@@ -428,6 +428,7 @@ If the SOPS age key is lost, follow the procedures in [`docs/operations/INCIDENT
 | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | [ADR-09 - Consolidated Backup Role (superseded)](../architecture/adr/ADR-09.md) | Rationale for the two-layer backup architecture (now consolidated into `roles/L6_runtime/backup/`) |
 | [INCIDENT_RESPONSE_DR.md](../operations/INCIDENT_RESPONSE_DR.md)                | Incident response, disaster recovery, and secrets recovery                                         |
+| [BACKUP_MIGRATION_RUNBOOK.md](../operations/BACKUP_MIGRATION_RUNBOOK.md)        | Operator migration/rollback procedure for the unified engine (gates 1-3, no re-init)               |
 | [VERSION_PINS.md](../operations/VERSION_PINS.md)                                | Restic 0.19.1 version pin and rationale                                                            |
 | [ARCHITECTURE.md](../architecture/ARCHITECTURE.md)                              | 7-layer model - L5/L6 layer boundaries                                                             |
 | [apps/\*/profile.yml](../../apps/)                                              | Canonical source of truth for per-app backup configuration                                         |
