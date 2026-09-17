@@ -1,0 +1,101 @@
+# ---
+# COMPLIANCE WARNING:
+# Restic repository initialization creates the S3 repository structure at R2.
+# Credentials are supplied through the environment and never logged (no_log: true).
+#
+# VIRGIN-HOST RATIONALE (Fix 4): the app-data repository
+# `restic/<inventory_hostname>` (restic_appdata_repo_url) is the target of every
+# engine runner (backup-tier1.sh, backup-engine-<app>.sh, restore-verify.sh and
+# the restic-run-env.j2 / restic-retention-env.j2 EnvironmentFiles). Historically
+# only the stack-config repository (restic_repo_url) was initialized, by
+# repo-init.yml on the `stack` source path. On a genuinely fresh host/bucket the
+# first app-data backup therefore failed with "repository does not exist".
+# This file closes that gap on the `engine` source path.
+#
+# NO-RE-INIT CONTRACT (design D4): an existence probe (`restic cat config`) runs
+# READ-ONLY before any init. `restic init` executes ONLY when the probe shows the
+# repository does not exist. Re-initializing a live repository would orphan every
+# existing snapshot, so it MUST never happen.
+# ---
+---
+- name: "App-data repo | Stat the restic binary"
+  ansible.builtin.stat:
+    path: "{{ restic_install_path }}"
+  register: _appdata_restic_binary
+  changed_when: false
+  tags: [l6-runtime, backup, backup_engine, restic_init]
+
+- name: "App-data repo | Skip when the restic binary is not installed"
+  ansible.builtin.debug:
+    msg: >-
+      repo-init-appdata[{{ inventory_hostname }}]: restic not found at
+      {{ restic_install_path }} - app-data repository init skipped.
+  when: not (_appdata_restic_binary.stat.exists | default(false))
+  tags: [l6-runtime, backup, backup_engine, restic_init]
+
+# Read-only existence probe. `restic cat config` succeeds only when the
+# repository already exists; it never mutates the repository (no-re-init, D4).
+- name: "App-data repo | Probe repository existence read-only (no-re-init, D4)"  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - "{{ restic_install_path }}"
+      - cat
+      - config
+      - --repo
+      - "{{ restic_appdata_repo_url }}"
+  environment:
+    RESTIC_PASSWORD: "{{ lookup('vars', 'restic_password_' ~ inventory_hostname | replace('-', '_')) }}"
+    AWS_ACCESS_KEY_ID: "{{ restic_r2_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ restic_r2_secret_access_key }}"
+    AWS_DEFAULT_REGION: "auto"
+  register: _appdata_repo_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: _appdata_restic_binary.stat.exists | default(false)
+  tags: [l6-runtime, backup, backup_engine, restic_init]
+
+- name: "App-data repo | Initialize only when the repository is absent (Fix 4)"  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - "{{ restic_install_path }}"
+      - init
+      - --repo
+      - "{{ restic_appdata_repo_url }}"
+  environment:
+    RESTIC_PASSWORD: "{{ lookup('vars', 'restic_password_' ~ inventory_hostname | replace('-', '_')) }}"
+    AWS_ACCESS_KEY_ID: "{{ restic_r2_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ restic_r2_secret_access_key }}"
+    AWS_DEFAULT_REGION: "auto"
+  when:
+    - _appdata_restic_binary.stat.exists | default(false)
+    - (_appdata_repo_probe.rc | default(1)) != 0
+  no_log: true
+  register: _appdata_repo_init
+  tags: [l6-runtime, backup, backup_engine, restic_init]
+
+- name: "App-data repo | Verify the repository is accessible (restic stats)"  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - "{{ restic_install_path }}"
+      - stats
+      - --repo
+      - "{{ restic_appdata_repo_url }}"
+  environment:
+    RESTIC_PASSWORD: "{{ lookup('vars', 'restic_password_' ~ inventory_hostname | replace('-', '_')) }}"
+    AWS_ACCESS_KEY_ID: "{{ restic_r2_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ restic_r2_secret_access_key }}"
+    AWS_DEFAULT_REGION: "auto"
+  changed_when: false
+  no_log: true
+  register: _appdata_repo_stats
+  when: _appdata_restic_binary.stat.exists | default(false)
+  tags: [l6-runtime, backup, backup_engine, restic_init]
+
+- name: "App-data repo | Report the repository is accessible (Fix 4)"
+  ansible.builtin.debug:
+    msg: >-
+      repo-init-appdata[{{ inventory_hostname }}]:
+      {{ restic_appdata_repo_url }} is accessible.
+  when: _appdata_restic_binary.stat.exists | default(false)
+  tags: [l6-runtime, backup, backup_engine, restic_init]
