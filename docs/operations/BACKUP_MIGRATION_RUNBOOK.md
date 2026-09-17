@@ -135,7 +135,7 @@ uv run ansible brain-1,muscle-1 -i inventory/hosts.ini -m setup \
 
 - **Not divergent (expected)**: the two names match. The local seed (Gate 3)
   copies from the app-data repo `restic/<inventory_hostname>`.
-- **Divergent (defensive path)**: `roles/L6_runtime/backup/tasks/repo-init.yml`
+- **Divergent (defensive path)**: `roles/L6_runtime/backup/tasks/repo-init-local.yml`
   detects the mismatch and seeds from the pre-migration stack-config repo
   `stack-restic/<ansible_hostname>` instead, because the app-data repo path is
   keyed by `inventory_hostname` and would be empty on a divergent host. The role
@@ -156,35 +156,29 @@ medium for the **app-data** repo `restic/<host>` (design D1). It is initialized
 with the source chunker parameters and seeded once via `restic copy`; both steps
 are marker-guarded and idempotent.
 
-The role runs this on **brain** through the stack path:
+`make deploy-backup-engine` now creates and seeds this local second medium on
+**every** backup host (the engine path runs `repo-init-local.yml` after the
+app-data repo init), so no manual `restic init` / `restic copy` step is required
+— including on `muscle`. The engine probes the source repository read-only
+first: when the app-data repo is absent/unreachable (e.g. a host that runs no
+apps), the seed is skipped without failing the play and without writing the
+marker, so a later deploy retries.
 
 ```bash
-make deploy-backup-stack
+make deploy-backup-engine
 ```
 
-On **muscle** (and any host not covered by the brain-only stack play), run the
-same seed explicitly — the source is the app-data repo, never the stack repo:
-
-```bash
-# Per host (substitute the app-data URL from /etc/restic/env):
-APPDATA="s3:https://<account>.r2.cloudflarestorage.com/<bucket>/restic/$(hostname)"
-sudo bash -c "set -a; . /etc/restic/env; set +a; \
-  restic init --repo /var/backups/restic/$(hostname) \
-    --password-file /etc/restic/password.key \
-    --from-repo '$APPDATA' --from-password-file /etc/restic/password.key \
-    --copy-chunker-params && \
-  restic copy --repo /var/backups/restic/$(hostname) \
-    --password-file /etc/restic/password.key \
-    --from-repo '$APPDATA' --from-password-file /etc/restic/password.key"
-```
-
-Expected: the copy completes, `/etc/restic/.local-seed-complete` is written, and
-a second invocation performs no work (markers honoured).
+Expected: the local repository is created under `/var/backups/restic/`, seeded
+from the app-data repo, and `/etc/restic/.local-seed-complete` is written. A
+second invocation performs no work (markers honoured).
 
 ```bash
 # Per host — prove the local repo holds the copied snapshots:
 sudo restic -r /var/backups/restic/$(hostname) \
   --password-file /etc/restic/password.key snapshots
+
+# Per host — the marker is the evidence the seed completed:
+ls -l /etc/restic/.local-seed-complete
 ```
 
 ## 7. Re-enable timers + evidence gate (task 6.6)
