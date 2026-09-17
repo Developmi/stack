@@ -348,6 +348,12 @@
               printf '[{"short_id":"abc12345","id":"abc12345","time":"2026-09-10T00:00:00Z"}]\n'
               exit 0
               ;;
+            cat)
+              # App-data repo existence probe (Fix 4): report the repo EXISTS
+              # only when the marker is present, so a virgin repo forces an init
+              # while an existing repo is never re-initialized.
+              if [ -f "$log_dir/appdata-repo-exists" ]; then exit 0; else exit 1; fi
+              ;;
             restore)
               if [ -f "$log_dir/restore-fail" ]; then
                 printf 'stub restic: restore failed\n' >&2
@@ -622,6 +628,34 @@
         state: absent
 
     # ---------------------------------------------------------------------------
+    # D6 DEPLOY-TIME HOST AFFINITY (Fix 3): the DB credential EnvironmentFile is
+    # rendered ONLY when `resolve.yml` proved the container is present on this
+    # host. RED before the fix: db_credentials.yml ran unconditionally and failed
+    # on any pg_dump app whose container (and SOPS password) was absent here.
+    # This setup re-runs the REAL deploy path with the container present so the
+    # credential file exists for the CRED-003 assertions below.
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Expose the docker stub as the real CLI for deploy-time inspect (Fix 3)"
+      ansible.builtin.copy:
+        src: "{{ shim_dir }}/docker"
+        dest: /usr/bin/docker
+        remote_src: true
+        mode: "0755"
+
+    - name: "GIVEN: Mark the app container present for deploy-time affinity (Fix 3)"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/container-present"
+        state: touch
+        mode: "0644"
+
+    - name: "WHEN: Deploy the chatwoot profile with its container present (Fix 3)"
+      ansible.builtin.include_role:
+        name: L6_runtime/backup
+        tasks_from: deploy_from_profile.yml
+      loop:
+        - "{{ fixture_root }}/chatwoot/profile.yml"
+
+    # ---------------------------------------------------------------------------
     # CRED-003 (task 3.4): per-app DB EnvironmentFile, 0600 root.
     # ---------------------------------------------------------------------------
     - name: "GIVEN: Stat the rendered per-app DB credential file"
@@ -721,6 +755,75 @@
           - (lookup('file', role_tasks_dir + '/restic_backup.yml')) is not search('-e AWS_ACCESS_KEY_ID="')
         fail_msg: "A backup password is still passed via -e on a command line (CRED-005)"
         success_msg: "No secret passed via -e on any command line (CRED-005)"
+
+    # ---------------------------------------------------------------------------
+    # CRED-001/002 fail-loud (Fix 3): a PRESENT container with a missing/empty
+    # SOPS password must STILL fail the deploy. Only the absent-container case
+    # becomes a skip.
+    # ---------------------------------------------------------------------------
+    - name: "THEN: A present container with a missing SOPS password fails loudly (Fix 3)"
+      block:
+        - name: "WHEN: Deploy the absent-db profile with its container present and no password"
+          ansible.builtin.include_role:
+            name: L6_runtime/backup
+            tasks_from: deploy_from_profile.yml
+          loop:
+            - "{{ fixture_root }}/absent-db/profile.yml"
+
+        - name: "THEN: A missing credential MUST have failed the deploy (CRED-001/002)"
+          ansible.builtin.fail:
+            msg: "A present container with a missing SOPS password did not fail - CRED-001/002 violated"
+      rescue:
+        - name: "THEN: The failure names the missing SOPS key (CRED-001/002)"
+          ansible.builtin.assert:
+            that:
+              - "'backup_db_absent_db_password' in (ansible_failed_result.msg | default(''))"
+            fail_msg: >-
+              The fail-loud path did not report the missing SOPS key
+              (msg={{ ansible_failed_result.msg | default('') }}).
+            success_msg: "Present container + missing password fails naming the SOPS key (CRED-001/002)"
+
+    # ---------------------------------------------------------------------------
+    # D6 host affinity (Fix 3): an ABSENT container deploys the pg_dump profile
+    # without requiring its SOPS password and renders no credential file.
+    # ---------------------------------------------------------------------------
+    - name: "GIVEN: Remove the container-present marker (absent container)"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/container-present"
+        state: absent
+
+    - name: "THEN: An absent container deploys without its SOPS password (Fix 3)"
+      block:
+        - name: "WHEN: Deploy the absent-db profile with its container absent"
+          ansible.builtin.include_role:
+            name: L6_runtime/backup
+            tasks_from: deploy_from_profile.yml
+          loop:
+            - "{{ fixture_root }}/absent-db/profile.yml"
+      rescue:
+        - name: "THEN: An absent-container deploy MUST NOT fail on the credential assert (Fix 3)"
+          ansible.builtin.fail:
+            msg: >-
+              Absent-container deploy failed (host affinity broken):
+              {{ ansible_failed_result.msg | default('') }}
+
+    - name: "THEN: Stat the credential file for the absent-container app (Fix 3)"
+      ansible.builtin.stat:
+        path: /etc/restic/db-absent-db.env
+      register: absent_db_cred
+
+    - name: "THEN: No credential file is rendered for an absent-container app (Fix 3)"
+      ansible.builtin.assert:
+        that:
+          - not absent_db_cred.stat.exists
+        fail_msg: "/etc/restic/db-absent-db.env exists for an absent container (host affinity violated)"
+        success_msg: "No credential file rendered for the absent-container app (Fix 3)"
+
+    - name: "GIVEN: Restore the container-present marker for later runtime tests"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/container-present"
+        state: touch
+        mode: "0644"
 
     # ---------------------------------------------------------------------------
     # ClickHouse adapter (task 4.7 / design Open Q2): when `clickhouse-backup`
@@ -1166,10 +1269,10 @@
     - name: "GATE 6.4: Divergent host resolves to the stack-config repo (open Q1)"
       ansible.builtin.assert:
         that:
-          - (lookup('file', role_tasks_dir + '/repo-init.yml')) is search('_repo_init_host_key_divergent')
-          - (lookup('file', role_tasks_dir + '/repo-init.yml')) is search('ansible_hostname != inventory_hostname')
-          - (lookup('file', role_tasks_dir + '/repo-init.yml')) is search('_repo_init_copy_source')
-        fail_msg: "repo-init.yml does not resolve the ansible_hostname/inventory_hostname divergence (open Q1)"
+          - (lookup('file', role_tasks_dir + '/repo-init-local.yml')) is search('_repo_init_host_key_divergent')
+          - (lookup('file', role_tasks_dir + '/repo-init-local.yml')) is search('ansible_hostname != inventory_hostname')
+          - (lookup('file', role_tasks_dir + '/repo-init-local.yml')) is search('_repo_init_copy_source')
+        fail_msg: "repo-init-local.yml does not resolve the ansible_hostname/inventory_hostname divergence (open Q1)"
         success_msg: "Divergent-host guard resolves the seed source explicitly (open Q1)"
 
     # ---------------------------------------------------------------------------
@@ -1184,6 +1287,14 @@
         path: /etc/restic/.repo-initialized
         state: touch
         mode: "0600"
+
+    # The extracted local seed now probes the source repo read-only first. Mark
+    # the app-data source reachable so the stack-path seed still copies from it.
+    - name: "GATE 6.5: Mark the app-data source repo reachable for the seed probe (D1)"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/appdata-repo-exists"
+        state: touch
+        mode: "0644"
 
     - name: "GATE 6.5: Ensure the local repo directory exists (D1)"
       ansible.builtin.file:
@@ -1286,6 +1397,269 @@
           repo-init is not idempotent: a second run re-copied or re-initialized.
           log={{ repo_init_second_log.stdout }}
         success_msg: "repo-init is idempotent on the second run (markers honoured)"
+
+    # ---------------------------------------------------------------------------
+    # FIX 4 (virgin-host gap): the APP-DATA repo restic/<inventory_hostname> is
+    # the target of every engine runner, yet no code path ever initialized it.
+    # repo-init-appdata.yml probes read-only, inits only when absent, and never
+    # re-initializes an existing repo (D4 no-re-init).
+    # ---------------------------------------------------------------------------
+    - name: "FIX 4: Ensure the stubbed restic is at restic_install_path"
+      ansible.builtin.copy:
+        src: "{{ shim_dir }}/restic"
+        dest: /usr/local/bin/restic
+        remote_src: true
+        mode: "0755"
+
+    - name: "FIX 4: Simulate a virgin app-data repo (probe fails, no repo)"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/appdata-repo-exists"
+        state: absent
+
+    - name: "FIX 4: Reset the restic stub log for the app-data init run"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restic.log"
+        state: absent
+
+    - name: "FIX 4: Initialize the app-data repo on a virgin host"
+      ansible.builtin.include_role:
+        name: L6_runtime/backup
+        tasks_from: repo-init-appdata.yml
+
+    - name: "FIX 4: Read the restic stub log after the app-data init"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/restic.log"
+      register: appdata_init_log
+      changed_when: false
+      failed_when: false
+
+    - name: "FIX 4: A virgin host probes, inits and verifies the APP-DATA repo"
+      ansible.builtin.assert:
+        that:
+          - "'cat config --repo ' ~ backup_repo_base_url ~ '/restic/' ~ inventory_hostname in appdata_init_log.stdout"
+          - "'init --repo ' ~ backup_repo_base_url ~ '/restic/' ~ inventory_hostname in appdata_init_log.stdout"
+          - "'stats --repo ' ~ backup_repo_base_url ~ '/restic/' ~ inventory_hostname in appdata_init_log.stdout"
+        fail_msg: >-
+          repo-init-appdata did not probe+init+verify the app-data repo on a
+          virgin host. log={{ appdata_init_log.stdout }}
+        success_msg: "Virgin host initialized and verified the app-data repo (Fix 4)"
+
+    - name: "FIX 4: Mark the app-data repo as existing (post-init)"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/appdata-repo-exists"
+        state: touch
+        mode: "0644"
+
+    - name: "FIX 4: Reset the restic stub log for the no-re-init run"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restic.log"
+        state: absent
+
+    - name: "FIX 4: Re-run the app-data init against the existing repo"
+      ansible.builtin.include_role:
+        name: L6_runtime/backup
+        tasks_from: repo-init-appdata.yml
+
+    - name: "FIX 4: Read the restic stub log after the no-re-init run"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/restic.log"
+      register: appdata_reinit_log
+      changed_when: false
+      failed_when: false
+
+    - name: "FIX 4: An existing app-data repo is never re-initialized (D4)"
+      ansible.builtin.assert:
+        that:
+          - "'init --repo ' ~ backup_repo_base_url ~ '/restic/' ~ inventory_hostname not in appdata_reinit_log.stdout"
+          - "'cat config --repo ' ~ backup_repo_base_url ~ '/restic/' ~ inventory_hostname in appdata_reinit_log.stdout"
+        fail_msg: >-
+          repo-init-appdata re-initialized an existing repo - every snapshot
+          would be orphaned (D4). log={{ appdata_reinit_log.stdout }}
+        success_msg: "Existing app-data repo probed, never re-initialized (D4)"
+
+    # ---------------------------------------------------------------------------
+    # LOCAL SEED (D1/STORAGE-006): the ENGINE path must also create and seed the
+    # local second medium /var/backups/restic/<host>, not only the stack path.
+    # repo-init-local.yml probes the source repo read-only, inits the local repo
+    # with the source chunker params, seeds it via `restic copy`, and writes
+    # /etc/restic/.local-seed-complete. A second run is a no-op; an unavailable
+    # source skips without failing and without writing the marker.
+    # ---------------------------------------------------------------------------
+    - name: "LOCAL SEED: Ensure the stubbed restic is on PATH (D1)"
+      ansible.builtin.copy:
+        src: "{{ shim_dir }}/restic"
+        dest: /usr/local/bin/restic
+        remote_src: true
+        mode: "0755"
+
+    - name: "LOCAL SEED: Mark the app-data source repo reachable (D1)"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/appdata-repo-exists"
+        state: touch
+        mode: "0644"
+
+    - name: "LOCAL SEED: Force a virgin local repo and no seed marker (D1)"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/var/backups/restic/{{ inventory_hostname }}/config"
+        - /etc/restic/.local-seed-complete
+
+    - name: "LOCAL SEED: Reset the restic stub log for the engine seed run"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restic.log"
+        state: absent
+
+    - name: "LOCAL SEED: Run the engine-path local seed with the stubbed restic (D1)"
+      ansible.builtin.include_role:
+        name: L6_runtime/backup
+        tasks_from: repo-init-local.yml
+
+    - name: "LOCAL SEED: Read the restic stub log after the engine seed"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/restic.log"
+      register: local_seed_engine_log
+      changed_when: false
+      failed_when: false
+
+    - name: "LOCAL SEED: The engine path probes, inits and seeds from APP-DATA (D1)"
+      ansible.builtin.assert:
+        that:
+          - "'cat config --repo ' ~ backup_repo_base_url ~ '/restic/' ~ inventory_hostname in local_seed_engine_log.stdout"
+          - "'init --repo /var/backups/restic/' ~ inventory_hostname in local_seed_engine_log.stdout"
+          - "'--from-repo ' ~ backup_repo_base_url ~ '/restic/' ~ inventory_hostname in local_seed_engine_log.stdout"
+          - "'--copy-chunker-params' in local_seed_engine_log.stdout"
+          - "'copy --repo /var/backups/restic/' ~ inventory_hostname in local_seed_engine_log.stdout"
+        fail_msg: >-
+          The engine path did not create and seed the local second medium from
+          the app-data repo (D1). log={{ local_seed_engine_log.stdout }}
+        success_msg: "Engine path probed + initialized + seeded the local second medium from the app-data repo (D1)"
+
+    - name: "LOCAL SEED: Stat the local repo directory after the engine seed (D1)"
+      ansible.builtin.stat:
+        path: "/var/backups/restic/{{ inventory_hostname }}"
+      register: local_seed_engine_dir
+
+    - name: "LOCAL SEED: Stat the seed marker after the engine seed (D1)"
+      ansible.builtin.stat:
+        path: /etc/restic/.local-seed-complete
+      register: local_seed_marker_after_engine
+
+    - name: "LOCAL SEED: The engine path created the local repo dir (0700 root) and wrote the marker (D1)"
+      ansible.builtin.assert:
+        that:
+          - local_seed_engine_dir.stat.exists
+          - local_seed_engine_dir.stat.isdir
+          - local_seed_engine_dir.stat.mode == '0700'
+          - local_seed_engine_dir.stat.pw_name == 'root'
+          - local_seed_marker_after_engine.stat.exists
+        fail_msg: >-
+          The engine path did not create the local second medium directory or the
+          seed marker (D1). dir={{ local_seed_engine_dir.stat | default({}) }}
+        success_msg: "Engine path created the local repo dir (0700 root) and the seed marker (D1)"
+
+    # The restic stub does not create <local>/config (a real `restic init` does),
+    # so simulate it before the idempotence run, mirroring GATE 6.5.
+    - name: "LOCAL SEED: Simulate the config written by restic init (stub limitation)"
+      ansible.builtin.file:
+        path: "/var/backups/restic/{{ inventory_hostname }}/config"
+        state: touch
+        mode: "0600"
+
+    - name: "LOCAL SEED: Reset the restic stub log for the engine idempotence run"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restic.log"
+        state: absent
+
+    - name: "LOCAL SEED: Re-run the engine-path local seed with the marker present (D1)"
+      ansible.builtin.include_role:
+        name: L6_runtime/backup
+        tasks_from: repo-init-local.yml
+
+    - name: "LOCAL SEED: Read the restic stub log after the idempotence run"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/restic.log"
+      register: local_seed_engine_second_log
+      changed_when: false
+      failed_when: false
+
+    - name: "LOCAL SEED: A second engine run performs no init and no copy (D1 idempotence)"
+      ansible.builtin.assert:
+        that:
+          - "'init --repo ' not in local_seed_engine_second_log.stdout"
+          - "'copy --repo ' not in local_seed_engine_second_log.stdout"
+          - "'cat config --repo ' ~ backup_repo_base_url ~ '/restic/' ~ inventory_hostname in local_seed_engine_second_log.stdout"
+        fail_msg: >-
+          The engine local seed is not idempotent: a second run re-initialized or
+          re-copied. log={{ local_seed_engine_second_log.stdout }}
+        success_msg: "Engine local seed is idempotent on the second run (marker honoured, D1)"
+
+    # ---------------------------------------------------------------------------
+    # LOCAL SEED: an unavailable source repo (e.g. a host that runs no apps) must
+    # SKIP without failing the play and WITHOUT writing the seed marker, so a
+    # later deploy retries.
+    # ---------------------------------------------------------------------------
+    - name: "LOCAL SEED: Simulate an unavailable app-data source repo (D1)"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/appdata-repo-exists"
+        state: absent
+
+    - name: "LOCAL SEED: Force a virgin local repo and no seed marker for the skip run (D1)"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/var/backups/restic/{{ inventory_hostname }}/config"
+        - /etc/restic/.local-seed-complete
+
+    - name: "LOCAL SEED: Reset the restic stub log for the unavailable-source run"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/restic.log"
+        state: absent
+
+    - name: "LOCAL SEED: An unavailable source skips without failing the play (D1)"
+      block:
+        - name: "WHEN: Run the engine-path local seed with the source repo unavailable"
+          ansible.builtin.include_role:
+            name: L6_runtime/backup
+            tasks_from: repo-init-local.yml
+      rescue:
+        - name: "THEN: An unavailable source MUST NOT fail the local seed (D1)"
+          ansible.builtin.fail:
+            msg: >-
+              The local seed failed when the source repo was unavailable; it must
+              skip gracefully (D1). {{ ansible_failed_result.msg | default('') }}
+
+    - name: "LOCAL SEED: Read the restic stub log after the unavailable-source run"
+      ansible.builtin.command:
+        cmd: "cat {{ shim_dir }}/restic.log"
+      register: local_seed_skip_log
+      changed_when: false
+      failed_when: false
+
+    - name: "LOCAL SEED: Stat the seed marker after the unavailable-source run (D1)"
+      ansible.builtin.stat:
+        path: /etc/restic/.local-seed-complete
+      register: local_seed_marker_after_skip
+
+    - name: "LOCAL SEED: An unavailable source performs no init/copy and writes no marker (D1)"
+      ansible.builtin.assert:
+        that:
+          - "'init --repo ' not in local_seed_skip_log.stdout"
+          - "'copy --repo ' not in local_seed_skip_log.stdout"
+          - not local_seed_marker_after_skip.stat.exists
+        fail_msg: >-
+          The local seed mutated state when the source repo was unavailable (D1):
+          the marker must stay absent so a later deploy retries.
+          log={{ local_seed_skip_log.stdout }}
+        success_msg: "Unavailable source -> skip, no init/copy, no seed marker (D1)"
+
+    - name: "LOCAL SEED: Restore the app-data source marker for later gates (D1)"
+      ansible.builtin.file:
+        path: "{{ shim_dir }}/appdata-repo-exists"
+        state: touch
+        mode: "0644"
 
     # ---------------------------------------------------------------------------
     # GATE 6.6 / 6.7: the migration + rollback runbook ships with the change, so

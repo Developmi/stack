@@ -31,7 +31,10 @@ restic_password_debian12_backup: "molecule-test-restic-password" # pragma: allow
 # Fixture apps mirrored from apps/*/profile.yml (reduced schema).
 # legacy-app carries a stale `name` field on purpose (BPI-004-02 regression).
 # quiesce-app declares a `consistency: quiesce` volume (TIER-003).
+# absent-db declares pg_dump/postgres with NO SOPS password and NO container to
+# prove deploy-time host affinity (Fix 3 / D6).
 fixture_apps:
+  - absent-db
   - chatwoot
   - clickhouse
   - legacy-app
