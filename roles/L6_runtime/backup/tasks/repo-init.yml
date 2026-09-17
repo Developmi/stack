@@ -7,9 +7,10 @@
 #
 # NO-RE-INIT CONTRACT (design D4 / task 6.2): the migration reuses the EXISTING
 # repository URLs and the EXISTING per-host password. This file must never
-# re-initialize a live repository - both `restic init` calls are guarded by an
-# existence check (marker file / repo config). A re-init would orphan every
-# existing snapshot.
+# re-initialize a live repository - the `restic init` call is guarded by an
+# existence check (marker file). A re-init would orphan every existing snapshot.
+# The local second medium init/seed lives in repo-init-local.yml (D1); it is
+# included below so the stack path keeps its previous net behaviour.
 #
 # HOST KEY (design D4): the password key is `restic_password_<inventory_hostname>`
 # for every host, matching the app-data repo path `restic/<inventory_hostname>`.
@@ -65,110 +66,10 @@
   when: restic_stats_result.stdout is defined
   tags: [l6-runtime, stack_backup, restic]
 
-# ── Host-key resolution guard (design D4 / open Q1 / task 6.4) ──
-# After the L1 baseline role runs, `ansible_hostname == inventory_hostname` on
-# brain-1/muscle-1 (roles/L1_os_baseline/general/tasks/hostname.yml sets the
-# kernel hostname from inventory_hostname). This guard makes the assumption
-# EXPLICIT and DEFENSIVE: it never fails a migration run, but when the two
-# diverge the local seed copies from the pre-migration stack-config repo
-# `stack-restic/<ansible_hostname>` (restic_repo_url) instead of the app-data
-# repo, because the app-data repo path is keyed by inventory_hostname and would
-# be empty on a divergent host. Recorded as a warning so an operator sees it.
-- name: "Resolve ansible_hostname vs inventory_hostname (D4 / open Q1)"
-  ansible.builtin.set_fact:
-    _repo_init_host_key_divergent: "{{ ansible_hostname != inventory_hostname }}"
-    _repo_init_copy_source: >-
-      {{ restic_repo_url if (ansible_hostname != inventory_hostname)
-         else restic_appdata_repo_url }}
-  tags: [l6-runtime, stack_backup, restic, restic_local]
-
-- name: "Report the migration copy source (D4 / open Q1)"
-  ansible.builtin.debug:
-    msg: >-
-      repo-init[{{ inventory_hostname }}]: ansible_hostname={{ ansible_hostname }},
-      inventory_hostname={{ inventory_hostname }},
-      divergent={{ _repo_init_host_key_divergent }}; local second medium seeds
-      from {{ _repo_init_copy_source }}.
-  tags: [l6-runtime, stack_backup, restic, restic_local]
-
-- name: "Warn when host keys diverge - copy falls back to the stack-config repo (open Q1)"
-  ansible.builtin.debug:
-    msg: >-
-      WARNING: ansible_hostname ({{ ansible_hostname }}) != inventory_hostname
-      ({{ inventory_hostname }}). The app-data repo restic/<inventory_hostname>
-      is keyed by inventory_hostname and may be empty on this host, so the local
-      seed copies from the pre-migration stack-config repo
-      stack-restic/<ansible_hostname>. Confirm the resolved URL before relying on
-      the local copy. See docs/operations/BACKUP_MIGRATION_RUNBOOK.md §Gate 2.
-  when: _repo_init_host_key_divergent | bool
-  tags: [l6-runtime, stack_backup, restic, restic_local]
-
 # ── Second medium: local FS repository seeded from R2 (D1/STORAGE-006) ──
-# The local repo is the second medium for the APP-DATA repo `restic/<host>`
-# (design D1). It is initialized with the SOURCE chunker parameters so that
-# deduplication works across both repositories, then seeded once via
-# `restic copy`. Subsequent runs are no-ops (marker file).
-
-- name: "Ensure local Restic repository directory exists"
-  ansible.builtin.file:
-    path: "{{ restic_local_repo_path }}"
-    state: directory
-    mode: "0700"
-    owner: root
-    group: root
-  tags: [l6-runtime, stack_backup, restic, restic_local]
-
-- name: "Check if local Restic repository is initialized"
-  ansible.builtin.stat:
-    path: "{{ restic_local_repo_path }}/config"
-  register: local_repo_config
-  tags: [l6-runtime, stack_backup, restic, restic_local]
-
-- name: "Initialize local Restic repository with source chunker params (D1)"  # noqa: command-instead-of-module
-  ansible.builtin.command: >
-    restic init
-    --repo "{{ restic_local_repo_path }}"
-    --password-file /etc/restic/password.key
-    --from-repo "{{ _repo_init_copy_source }}"
-    --from-password-file /etc/restic/password.key
-    --copy-chunker-params
-  environment:
-    AWS_ACCESS_KEY_ID: "{{ restic_r2_access_key_id }}"
-    AWS_SECRET_ACCESS_KEY: "{{ restic_r2_secret_access_key }}"
-    AWS_DEFAULT_REGION: "auto"
-  when: not local_repo_config.stat.exists
-  changed_when: true
-  no_log: true
-  tags: [l6-runtime, stack_backup, restic, restic_local]
-
-- name: "Check local repository seed marker"
-  ansible.builtin.stat:
-    path: /etc/restic/.local-seed-complete
-  register: local_seed_marker
-  tags: [l6-runtime, stack_backup, restic, restic_local]
-
-- name: "Seed local repository from R2 via restic copy (D1)"  # noqa: command-instead-of-module
-  ansible.builtin.command: >
-    restic copy
-    --repo "{{ restic_local_repo_path }}"
-    --password-file /etc/restic/password.key
-    --from-repo "{{ _repo_init_copy_source }}"
-    --from-password-file /etc/restic/password.key
-  environment:
-    AWS_ACCESS_KEY_ID: "{{ restic_r2_access_key_id }}"
-    AWS_SECRET_ACCESS_KEY: "{{ restic_r2_secret_access_key }}"
-    AWS_DEFAULT_REGION: "auto"
-  when: not local_seed_marker.stat.exists
-  changed_when: true
-  no_log: true
-  tags: [l6-runtime, stack_backup, restic, restic_local]
-
-- name: "Mark local repository seed complete"
-  ansible.builtin.file:
-    path: /etc/restic/.local-seed-complete
-    state: touch
-    mode: "0600"
-    owner: root
-    group: root
-  when: not local_seed_marker.stat.exists
+# Extracted to repo-init-local.yml (design D1) so the engine path can create and
+# seed the same local second medium. It carries the host-key divergence guard
+# (D4 / open Q1) that only the local seed depends on.
+- name: "Include the local second medium init/seed (D1)"
+  ansible.builtin.include_tasks: repo-init-local.yml
   tags: [l6-runtime, stack_backup, restic, restic_local]

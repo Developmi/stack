@@ -1,0 +1,20 @@
+---
+# absent-db - regression fixture for deploy-time host affinity (Fix 3 / D6).
+# A pg_dump/postgres profile with NO running container on this host and NO
+# `backup_db_absent_db_password` in SOPS. An app that is not deployed on this
+# host must NOT force this host to carry its database password: the credential
+# EnvironmentFile is skipped while the engine unit pair still deploys.
+supported_arch: [amd64, arm64]
+depends_on: []
+
+dr_tier: tier2
+
+backup:
+  method: pg_dump
+  schedule: "*-*-* 05:00:00"
+  retention_daily: 7
+  retention_weekly: 4
+  retention_monthly: 12
+  verification: none
+  db_type: postgres
+  db_name: absent_db

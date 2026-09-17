@@ -32,6 +32,22 @@
   when: backup_engine_install_restic | default(false) | bool
   tags: [l6-runtime, backup, backup_engine, restic_install]
 
+# Fix 4 (virgin-host gap): every engine runner targets the app-data repository
+# restic/<inventory_hostname>, which no code path ever initialized. Probe then
+# init it once here; a live repository is never re-initialized (D4).
+- name: "Engine | Initialize the app-data repository on a virgin host (Fix 4)"
+  ansible.builtin.include_tasks: repo-init-appdata.yml
+  tags: [l6-runtime, backup, backup_engine, restic_init]
+
+# D1 second medium: create and seed the local FS repository
+# /var/backups/restic/<inventory_hostname> from the app-data repo. This must run
+# AFTER repo-init-appdata.yml so the source repository exists before the seed.
+# It probes the source read-only and skips without failing when the source is
+# absent (e.g. a host that does not run apps).
+- name: "Engine | Create and seed the local second medium (D1)"
+  ansible.builtin.include_tasks: repo-init-local.yml
+  tags: [l6-runtime, backup, backup_engine, restic_local]
+
 # ---------------------------------------------------------------------------
 # Tier1 guaranteed databases (TIER-001/D14): postgres / clickhouse / redis-valkey
 # are protected with NO app declaration. Discovery happens at backup time in

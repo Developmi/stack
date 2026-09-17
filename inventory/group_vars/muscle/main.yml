@@ -25,4 +25,6 @@ enable_metrics_exporters: true
 monitoring_port: 9100
 
 # Backup configuration
-enable_backups: false # Workers are stateless - Restic is brain-only
+# muscle hosts the production app workloads (brain is the observability center
+# and runs no apps), so muscle needs the restic engine and backup care too.
+enable_backups: true
