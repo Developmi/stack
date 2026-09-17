@@ -23,8 +23,11 @@
     # stack path also installs it; this keeps the engine self-sufficient.
     backup_engine_install_restic: true
   pre_tasks:
-    - name: "Gate - skip backup when backups are disabled"
-      ansible.builtin.meta: end_play
+    # `end_host` (not `end_play`): a host with backups disabled is skipped on its
+    # own, while every other host in the play still runs. `end_play` terminated
+    # the play for ALL hosts, so one disabled host silently aborted the whole run.
+    - name: "Gate - skip this host when backups are disabled"
+      ansible.builtin.meta: end_host
       when: not (enable_backups | default(true))
       tags: [always]
   roles:
