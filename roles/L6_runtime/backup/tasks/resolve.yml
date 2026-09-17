@@ -36,6 +36,17 @@
   when: _engine_docker_cli.stat.exists | default(false)
   tags: [l6-runtime, backup, backup_engine]
 
+- name: "Resolve | Record container presence for deploy-time host affinity (D6)"
+  # `_engine_container_present` is the single source of truth for deploy-time
+  # host affinity: true ONLY when the docker CLI exists AND `docker inspect`
+  # succeeded (rc == 0 means the container is really on this host). It is always
+  # defined after this file runs, so consumers can gate on it safely.
+  ansible.builtin.set_fact:
+    _engine_container_present: >-
+      {{ (_engine_docker_cli.stat.exists | default(false))
+         and ((_engine_mounts.rc | default(1)) == 0) }}
+  tags: [l6-runtime, backup, backup_engine]
+
 - name: "Resolve | Log container-absent skip (D6)"
   ansible.builtin.debug:
     msg: >-

@@ -59,6 +59,16 @@
   # Only `quiesce` and `live` are accepted (APP-PROFILE-SCHEMA-004-05). The
   # assert runs before any template render, so an invalid profile writes no unit.
 
+# D6 host affinity applies at DEPLOY time too: an app that is not deployed on
+# this host must not force this host to carry its database password. Reset the
+# presence fact to false on every loop iteration so it can never be stale from a
+# previous app; resolve.yml overwrites it with the real runtime value.
+- name: "Reset deploy-time host affinity before resolving this app (D6)"
+  ansible.builtin.set_fact:
+    _engine_container_present: false
+  when: enable_backups | default(false) | bool
+  tags: [l6-runtime, backup, backup_engine]
+
 - name: "Resolve container/volume identity at runtime (D5)"
   ansible.builtin.include_tasks: resolve.yml
   when:
@@ -67,12 +77,17 @@
     - _p.backup.db_type | default('') not in ['none', 'custom']
   tags: [l6-runtime, backup, backup_engine]
 
+# The credential EnvironmentFile is rendered ONLY when the container was proven
+# present on this host (D6 host affinity). A present container with a missing or
+# empty SOPS password still fails loudly inside db_credentials.yml
+# (CRED-001/002); an absent container skips the credential entirely.
 - name: "Render per-app DB credential EnvironmentFile (D8/CRED-001..004)"
   ansible.builtin.include_tasks: db_credentials.yml
   when:
     - enable_backups | default(false) | bool
     - _p.backup is defined
     - (_p.backup.method | default(_p.backup.db_type)) in ['pg_dump', 'postgres', 'mysqldump', 'mysql']
+    - _engine_container_present | bool
   tags: [l6-runtime, backup, backup_engine, backup_creds]
 
 - name: "Deploy restore-verification runner + units (D13/VERIFY-001..004)"
